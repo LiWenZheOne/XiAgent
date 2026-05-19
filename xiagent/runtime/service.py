@@ -7,7 +7,7 @@ from typing import Any
 
 import aiosqlite
 
-from xiagent.core.errors import NotFoundError, ValidationError, XiAgentError
+from xiagent.core.errors import NotFoundError, PermissionDeniedError, ValidationError, XiAgentError
 from xiagent.core.ids import new_id
 from xiagent.core.schemas import validate_json_value
 from xiagent.core.services import UserService
@@ -61,29 +61,14 @@ class SqliteRuntimeService:
 
         workflow = contract["workflow"]
         now = _utc_now()
-        template_id = new_id("workflow_template")
         task_id = new_id("task")
         async with connect_db(self._database_path) as db:
-            await db.execute(
-                """
-                insert into workflow_templates (
-                  template_id, workflow_id, version, scope, project_id, name, description,
-                  contract_json, status, created_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    template_id,
-                    workflow["id"],
-                    workflow["version"],
-                    workflow["scope"],
-                    workflow.get("project_id"),
-                    workflow["name"],
-                    workflow.get("description"),
-                    dump_json(contract),
-                    "active",
-                    now,
-                    now,
-                ),
+            template_id = await _find_or_create_workflow_template(
+                db,
+                workflow=workflow,
+                project_id=project_id,
+                contract=contract,
+                now=now,
             )
             await db.execute(
                 """
@@ -124,14 +109,27 @@ class SqliteRuntimeService:
                 created_at=now,
             )
 
-        return await self._continue_task(
-            task_id=task_id,
-            user_id=user_id,
-            project_id=project_id,
-            contract=contract,
-            workflow_input=input_data,
-            start_node_id=_START,
-        )
+        try:
+            return await self._continue_task(
+                task_id=task_id,
+                user_id=user_id,
+                project_id=project_id,
+                contract=contract,
+                workflow_input=input_data,
+                start_node_id=_START,
+            )
+        except XiAgentError as exc:
+            await self._fail_task(
+                task_id,
+                {"code": exc.code, "message": exc.message, "details": exc.details},
+            )
+            raise
+        except Exception as exc:
+            await self._fail_task(
+                task_id,
+                {"code": "task_execution_failed", "message": str(exc), "details": {}},
+            )
+            raise
 
     async def resume_task(
         self,
@@ -148,8 +146,7 @@ class SqliteRuntimeService:
             action="task:resume",
         )
         task, contract = await self._get_task_and_contract(task_id)
-        if task.user_id != user_id or task.project_id != project_id:
-            raise NotFoundError("task_not_found", "Task was not found", {"task_id": task_id})
+        _ensure_task_belongs_to_project(task, user_id=user_id, project_id=project_id)
         if task.status != "waiting":
             raise ValidationError(
                 code="task_not_waiting",
@@ -159,16 +156,29 @@ class SqliteRuntimeService:
 
         node_def = _node_by_id(contract, node_id)
         validate_json_value(node_def["outputs"], output)
-        waiting_execution = await self._get_waiting_execution(task_id, node_id)
         now = _utc_now()
         async with connect_db(self._database_path) as db:
-            await db.execute(
+            cursor = await db.execute(
                 """
                 update node_executions
                 set output_snapshot_json = ?, status = ?, finished_at = ?, updated_at = ?
-                where node_execution_id = ?
+                where task_id = ? and node_id = ? and status = 'waiting'
                 """,
-                (dump_json(output), "succeeded", now, now, waiting_execution.node_execution_id),
+                (dump_json(output), "succeeded", now, now, task_id, node_id),
+            )
+            if cursor.rowcount != 1:
+                await cursor.close()
+                raise ValidationError(
+                    code="node_not_waiting",
+                    message="Node is not waiting for resume input",
+                    details={"task_id": task_id, "node_id": node_id},
+                )
+            await cursor.close()
+            waiting_execution = await _fetch_execution_by_task_node_status(
+                db,
+                task_id=task_id,
+                node_id=node_id,
+                status="succeeded",
             )
             await db.execute(
                 """
@@ -196,26 +206,72 @@ class SqliteRuntimeService:
                 created_at=now,
             )
 
-        return await self._continue_task(
-            task_id=task_id,
-            user_id=user_id,
-            project_id=project_id,
-            contract=contract,
-            workflow_input=task.input_data,
-            start_node_id=node_id,
-        )
+        try:
+            return await self._continue_task(
+                task_id=task_id,
+                user_id=user_id,
+                project_id=project_id,
+                contract=contract,
+                workflow_input=task.input_data,
+                start_node_id=node_id,
+            )
+        except XiAgentError as exc:
+            await self._fail_task(
+                task_id,
+                {"code": exc.code, "message": exc.message, "details": exc.details},
+            )
+            raise
+        except Exception as exc:
+            await self._fail_task(
+                task_id,
+                {"code": "task_execution_failed", "message": str(exc), "details": {}},
+            )
+            raise
 
-    async def list_node_executions(self, task_id: str) -> list[NodeExecutionRecord]:
+    async def list_node_executions(
+        self,
+        *,
+        user_id: str,
+        project_id: str,
+        task_id: str,
+    ) -> list[NodeExecutionRecord]:
+        await self._authorize_task_read(user_id=user_id, project_id=project_id, task_id=task_id)
         return await self._store.list_node_executions(task_id)
 
-    async def list_events(self, task_id: str) -> list[TaskEventRecord]:
+    async def list_events(
+        self,
+        *,
+        user_id: str,
+        project_id: str,
+        task_id: str,
+    ) -> list[TaskEventRecord]:
+        await self._authorize_task_read(user_id=user_id, project_id=project_id, task_id=task_id)
         return await self._store.list_events(task_id)
 
-    async def get_task(self, task_id: str) -> TaskRecord:
+    async def get_task(self, *, user_id: str, project_id: str, task_id: str) -> TaskRecord:
+        await self._authorize_task_read(user_id=user_id, project_id=project_id, task_id=task_id)
+        return await self._get_task_by_id(task_id)
+
+    async def _get_task_by_id(self, task_id: str) -> TaskRecord:
         task = await self._store.fetch_task(task_id)
         if task is None:
             raise NotFoundError("task_not_found", "Task was not found", {"task_id": task_id})
         return task
+
+    async def _authorize_task_read(
+        self,
+        *,
+        user_id: str,
+        project_id: str,
+        task_id: str,
+    ) -> None:
+        await self._user_service.ensure_project_access(
+            user_id=user_id,
+            project_id=project_id,
+            action="task:read",
+        )
+        task = await self._get_task_by_id(task_id)
+        _ensure_task_belongs_to_project(task, user_id=user_id, project_id=project_id)
 
     async def _continue_task(
         self,
@@ -249,9 +305,9 @@ class SqliteRuntimeService:
                 node_outputs=node_outputs,
             )
             if execution.status == "waiting":
-                return await self.get_task(task_id)
+                return await self._get_task_by_id(task_id)
             if execution.status == "failed":
-                return await self.get_task(task_id)
+                return await self._get_task_by_id(task_id)
             current_node_id = next_node_id
 
     async def _start_node_execution(
@@ -476,6 +532,27 @@ class SqliteRuntimeService:
             )
         return await self._get_execution(node_execution_id)
 
+    async def _fail_task(self, task_id: str, error: dict[str, Any]) -> None:
+        now = _utc_now()
+        async with connect_db(self._database_path) as db:
+            executions = await _fetch_node_executions(db, task_id)
+            current_view = build_current_view("failed", executions)
+            await db.execute(
+                """
+                update tasks
+                set status = ?, current_view_json = ?, finished_at = ?, updated_at = ?
+                where task_id = ? and status != 'failed'
+                """,
+                ("failed", dump_json(current_view), now, now, task_id),
+            )
+            await insert_event(
+                db,
+                task_id=task_id,
+                event_type="task_failed",
+                payload={"error": error},
+                created_at=now,
+            )
+
     async def _finish_task(self, task_id: str, status: str) -> TaskRecord:
         now = _utc_now()
         async with connect_db(self._database_path) as db:
@@ -497,10 +574,10 @@ class SqliteRuntimeService:
                 payload={},
                 created_at=now,
             )
-        return await self.get_task(task_id)
+        return await self._get_task_by_id(task_id)
 
     async def _load_node_outputs(self, task_id: str) -> dict[str, dict[str, Any]]:
-        executions = await self.list_node_executions(task_id)
+        executions = await self._store.list_node_executions(task_id)
         return _latest_node_outputs(executions)
 
     async def _next_attempt(self, task_id: str, node_id: str) -> int:
@@ -638,6 +715,97 @@ async def _fetch_node_executions(
     return [node_execution_from_row(row) for row in rows]
 
 
+async def _fetch_execution_by_task_node_status(
+    db: aiosqlite.Connection,
+    *,
+    task_id: str,
+    node_id: str,
+    status: str,
+) -> NodeExecutionRecord:
+    cursor = await db.execute(
+        """
+        select *
+        from node_executions
+        where task_id = ? and node_id = ? and status = ?
+        order by updated_at desc, rowid desc
+        limit 1
+        """,
+        (task_id, node_id, status),
+    )
+    row = await cursor.fetchone()
+    await cursor.close()
+    if row is None:
+        raise ValidationError(
+            code="node_execution_not_found",
+            message="Node execution was not found",
+            details={"task_id": task_id, "node_id": node_id, "status": status},
+        )
+    return node_execution_from_row(row)
+
+
+async def _find_or_create_workflow_template(
+    db: aiosqlite.Connection,
+    *,
+    workflow: dict[str, Any],
+    project_id: str,
+    contract: dict[str, Any],
+    now: str,
+) -> str:
+    template_project_id = None
+    if workflow["scope"] == "project":
+        template_project_id = workflow.get("project_id", project_id)
+    cursor = await db.execute(
+        """
+        select template_id
+        from workflow_templates
+        where workflow_id = ?
+          and version = ?
+          and scope = ?
+          and (
+            (? is null and project_id is null)
+            or project_id = ?
+          )
+        order by created_at asc
+        limit 1
+        """,
+        (
+            workflow["id"],
+            workflow["version"],
+            workflow["scope"],
+            template_project_id,
+            template_project_id,
+        ),
+    )
+    row = await cursor.fetchone()
+    await cursor.close()
+    if row is not None:
+        return str(row["template_id"])
+
+    template_id = new_id("workflow_template")
+    await db.execute(
+        """
+        insert into workflow_templates (
+          template_id, workflow_id, version, scope, project_id, name, description,
+          contract_json, status, created_at, updated_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            template_id,
+            workflow["id"],
+            workflow["version"],
+            workflow["scope"],
+            template_project_id,
+            workflow["name"],
+            workflow.get("description"),
+            dump_json(contract),
+            "active",
+            now,
+            now,
+        ),
+    )
+    return template_id
+
+
 def _latest_node_outputs(executions: list[NodeExecutionRecord]) -> dict[str, dict[str, Any]]:
     outputs: dict[str, dict[str, Any]] = {}
     for execution in executions:
@@ -657,3 +825,18 @@ def _loads_contract(value: str) -> dict[str, Any]:
 
 def _utc_now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _ensure_task_belongs_to_project(
+    task: TaskRecord,
+    *,
+    user_id: str,
+    project_id: str,
+) -> None:
+    if task.user_id == user_id and task.project_id == project_id:
+        return
+    raise PermissionDeniedError(
+        code="project_access_denied",
+        message="User does not have access to this project",
+        details={"action": "task:read", "project_id": project_id},
+    )
