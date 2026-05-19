@@ -81,6 +81,31 @@ def test_collect_image_artifacts_detects_path_object_and_data_url(tmp_path: Path
     assert artifacts[2].path.parent == output_dir / "images"
 
 
+def test_collect_image_artifacts_skips_invalid_data_url(tmp_path: Path) -> None:
+    artifacts = collect_image_artifacts(
+        [_execution({"bad": "data:image/png;base64,not-valid@@"})],
+        output_dir=tmp_path / "run",
+    )
+
+    assert artifacts == []
+
+
+def test_collect_image_artifacts_skips_missing_paths_and_urls(tmp_path: Path) -> None:
+    artifacts = collect_image_artifacts(
+        [
+            _execution(
+                {
+                    "missing": str(tmp_path / "missing.png"),
+                    "url": "https://example.com/a.png",
+                }
+            )
+        ],
+        output_dir=tmp_path / "run",
+    )
+
+    assert artifacts == []
+
+
 def test_generate_html_preview_contains_node_json_and_image(tmp_path: Path) -> None:
     image_path = tmp_path / "sample.png"
     image_path.write_bytes(b"png")
@@ -119,6 +144,28 @@ def test_generate_html_preview_contains_node_json_and_image(tmp_path: Path) -> N
     assert "task_succeeded" in html
     assert "sample.png" in html
     assert "<img" in html
+
+
+def test_generate_html_preview_uses_absolute_file_uri_once(tmp_path: Path) -> None:
+    image_path = tmp_path / "sample & one.png"
+    image_path.write_bytes(b"png")
+    artifact = ImageArtifact(
+        node_id="render",
+        node_ref="tool.render.v1",
+        snapshot_kind="output",
+        field_path="output.image",
+        path=image_path,
+        mime_type="image/png",
+        source_type="path",
+    )
+    preview_path = tmp_path / "preview.html"
+
+    generated = generate_html_preview(_task(), [], [], [artifact], preview_path)
+
+    html = generated.read_text(encoding="utf-8")
+    assert "file:///" in html
+    assert "sample%20%26%20one.png" in html
+    assert "&amp;amp;" not in html
 
 
 def test_open_artifact_paths_uses_injected_opener(tmp_path: Path) -> None:

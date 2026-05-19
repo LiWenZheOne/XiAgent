@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import json
 import mimetypes
 import os
@@ -242,8 +243,13 @@ def _artifact_from_path_string(
     snapshot_kind: str,
     field_path: str,
 ) -> ImageArtifact | None:
+    if _is_non_local_path_reference(value):
+        return None
+
     path = Path(value)
     if path.suffix.lower() not in _IMAGE_SUFFIXES:
+        return None
+    if not path.is_file():
         return None
 
     return ImageArtifact(
@@ -273,9 +279,14 @@ def _artifact_from_data_url(
     mime_type = match.group(1)
     suffix = "." + mime_type.split("/", 1)[1].split("+", 1)[0]
     filename = f"{execution.node_execution_id}-{snapshot_kind}-{counter}{suffix}"
+    try:
+        image_data = base64.b64decode(match.group(2), validate=True)
+    except (binascii.Error, ValueError):
+        return None
+
     image_dir.mkdir(parents=True, exist_ok=True)
     path = image_dir / filename
-    path.write_bytes(base64.b64decode(match.group(2), validate=True))
+    path.write_bytes(image_data)
     return ImageArtifact(
         node_id=execution.node_id,
         node_ref=execution.node_ref,
@@ -291,8 +302,13 @@ def _mime_type_for_path(path: Path) -> str:
     return mimetypes.guess_type(path.name)[0] or "application/octet-stream"
 
 
+def _is_non_local_path_reference(value: str) -> bool:
+    lower_value = value.lower()
+    return lower_value.startswith(("http://", "https://", "data:"))
+
+
 def _render_artifact_image(artifact: ImageArtifact) -> str:
-    src = artifact.path.resolve().as_uri() if artifact.path.is_absolute() else escape(str(artifact.path))
+    src = artifact.path.resolve().as_uri()
     label = f"{artifact.node_id} {artifact.field_path} {artifact.path.name}"
     return (
         "<figure>"
