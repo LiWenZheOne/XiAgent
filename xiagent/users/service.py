@@ -101,7 +101,13 @@ class SqliteUserService(UserService):
         name: str,
         description: str | None = None,
     ) -> ProjectRecord:
-        await self.get_user(user_id=owner_user_id)
+        owner = await self.get_user(user_id=owner_user_id)
+        if owner.status != "active":
+            raise PermissionDeniedError(
+                "user_inactive",
+                "Inactive users cannot create projects",
+                {"user_id": owner_user_id},
+            )
         clean_name = name.strip()
         if not clean_name:
             raise ValidationError("project_name_required", "Project name must not be empty")
@@ -137,23 +143,17 @@ class SqliteUserService(UserService):
         )
 
     async def get_project(self, *, user_id: str, project_id: str) -> ProjectRecord:
-        await self.ensure_project_access(
-            user_id=user_id,
-            project_id=project_id,
-            action="project:get",
-        )
         async with connect_db(self._database_path) as db:
-            row = await _fetch_one(
+            row = await _fetch_authorized_active_project(
                 db,
-                "select * from projects where project_id = ? and status = 'active'",
-                (project_id,),
+                user_id=user_id,
+                project_id=project_id,
             )
 
         if row is None:
-            raise NotFoundError(
-                "project_not_found",
-                "Project was not found",
-                {"project_id": project_id},
+            raise _project_access_denied(
+                action="project:get",
+                project_id=project_id,
             )
         return _project_from_row(row)
 
@@ -175,24 +175,14 @@ class SqliteUserService(UserService):
 
     async def ensure_project_access(self, *, user_id: str, project_id: str, action: str) -> None:
         async with connect_db(self._database_path) as db:
-            row = await _fetch_one(
+            row = await _fetch_authorized_active_project(
                 db,
-                "select * from projects where project_id = ? and status = 'active'",
-                (project_id,),
+                user_id=user_id,
+                project_id=project_id,
             )
 
         if row is None:
-            raise NotFoundError(
-                "project_not_found",
-                "Project was not found",
-                {"project_id": project_id},
-            )
-        if row["owner_user_id"] != user_id:
-            raise PermissionDeniedError(
-                "project_access_denied",
-                "User does not have access to this project",
-                {"action": action, "project_id": project_id},
-            )
+            raise _project_access_denied(action=action, project_id=project_id)
 
 
 def _utc_now() -> str:
@@ -211,10 +201,35 @@ async def _fetch_one(
         await cursor.close()
 
 
+async def _fetch_authorized_active_project(
+    db: aiosqlite.Connection,
+    *,
+    user_id: str,
+    project_id: str,
+) -> aiosqlite.Row | None:
+    return await _fetch_one(
+        db,
+        """
+        select *
+        from projects
+        where project_id = ? and owner_user_id = ? and status = 'active'
+        """,
+        (project_id, user_id),
+    )
+
+
 def _invalid_credentials() -> PermissionDeniedError:
     return PermissionDeniedError(
         "invalid_credentials",
         "Username or password is invalid",
+    )
+
+
+def _project_access_denied(*, action: str, project_id: str) -> PermissionDeniedError:
+    return PermissionDeniedError(
+        "project_access_denied",
+        "User does not have access to this project",
+        {"action": action, "project_id": project_id},
     )
 
 
