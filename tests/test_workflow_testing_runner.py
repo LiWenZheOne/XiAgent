@@ -308,6 +308,35 @@ async def test_runner_preview_false_does_not_generate_preview(tmp_path: Path) ->
     assert not (result.run_dir / "preview.html").exists()
 
 
+async def test_runner_preview_generates_html_and_prints_path(tmp_path: Path) -> None:
+    output_lines: list[str] = []
+    session = await (
+        WorkflowTestBuilder()
+        .with_database_path(tmp_path / "workflow-test.sqlite3")
+        .with_asset_storage_dir(tmp_path / "assets")
+        .with_workflow_dir(tmp_path / "workflows")
+        .with_run_output_dir(tmp_path / "runs")
+        .build()
+    )
+    runner = WorkflowTestRunner(
+        session=session,
+        console=ConsoleIO(output_func=output_lines.append),
+    )
+
+    result = await runner.run_contract(
+        _echo_contract(),
+        input_data={"topic": "hello"},
+        preview=True,
+    )
+
+    assert result.preview_path == result.run_dir / "preview.html"
+    assert result.preview_path.exists()
+    assert any(
+        line.startswith("preview:") and "preview.html" in line
+        for line in output_lines
+    )
+
+
 async def test_runner_resumes_waiting_task_from_console(tmp_path: Path) -> None:
     answers = iter(['{"decision":"approve"}'])
     output_lines: list[str] = []
