@@ -4,7 +4,6 @@ from pathlib import Path
 
 from xiagent.infrastructure.database import connect_db
 
-
 SCHEMA_SQL = """
 create table if not exists users (
   user_id text primary key,
@@ -28,7 +27,7 @@ create table if not exists projects (
 create table if not exists assets (
   asset_id text primary key,
   scope text not null,
-  project_id text,
+  project_id text references projects(project_id),
   asset_type text not null,
   name text not null,
   mime_type text,
@@ -59,8 +58,8 @@ create table if not exists asset_project_bindings (
 create table if not exists asset_collections (
   collection_id text primary key,
   scope text not null,
-  project_id text,
-  parent_id text,
+  project_id text references projects(project_id),
+  parent_id text references asset_collections(collection_id),
   name text not null,
   description text,
   sort_order integer not null default 0,
@@ -72,7 +71,7 @@ create table if not exists asset_collections (
 create table if not exists asset_tags (
   tag_id text primary key,
   scope text not null,
-  project_id text,
+  project_id text references projects(project_id),
   name text not null,
   description text,
   created_by text not null references users(user_id),
@@ -83,10 +82,10 @@ create table if not exists asset_tags (
 create table if not exists asset_index_entries (
   entry_id text primary key,
   scope text not null,
-  project_id text,
+  project_id text references projects(project_id),
   asset_id text not null references assets(asset_id),
-  collection_id text,
-  tag_id text,
+  collection_id text references asset_collections(collection_id),
+  tag_id text references asset_tags(tag_id),
   search_text text not null,
   created_at text not null,
   updated_at text not null
@@ -104,7 +103,7 @@ create table if not exists workflow_templates (
   workflow_id text not null,
   version text not null,
   scope text not null,
-  project_id text,
+  project_id text references projects(project_id),
   name text not null,
   description text,
   contract_json text not null,
