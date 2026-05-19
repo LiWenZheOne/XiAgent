@@ -17,7 +17,7 @@ class WorkflowCatalog:
         self._identities: set[str] = set()
 
     def load_directory(self, directory: Path) -> None:
-        for path in sorted(directory.glob("*.workflow.yaml")):
+        for path in sorted(directory.glob("**/*.workflow.yaml")):
             contract = load_workflow_file(path)
             validate_workflow_contract(contract, self._registry)
             workflow = contract["workflow"]

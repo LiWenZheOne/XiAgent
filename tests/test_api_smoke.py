@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from fastapi.testclient import TestClient
 
 from xiagent.api.app import create_app
@@ -204,3 +206,60 @@ def test_wrong_project_access_uses_standard_error_shape(test_settings) -> None:
             "details": {"action": "task:read", "project_id": other_project["project_id"]},
         }
     }
+
+
+def test_workflows_endpoint_loads_nested_workflow_files(test_settings) -> None:
+    workflow_dir = test_settings.workflow_dir
+    nested_dir = workflow_dir / "global"
+    nested_dir.mkdir(parents=True)
+    (nested_dir / "sample.workflow.yaml").write_text(
+        """
+workflow:
+  id: nested-sample
+  version: 1.0.0
+  scope: global
+  name: Nested Sample
+  input_schema:
+    type: object
+    required:
+      - topic
+    properties:
+      topic:
+        type: string
+nodes:
+  - id: echo
+    ref: tool.echo.v1
+    inputs:
+      topic:
+        from: $workflow.input.topic
+    outputs:
+      type: object
+edges:
+  - from: START
+    to: echo
+  - from: echo
+    to: END
+""".lstrip(),
+        encoding="utf-8",
+    )
+    app = create_app(settings=replace(test_settings, workflow_dir=workflow_dir))
+
+    with TestClient(app) as client:
+        response = client.get("/api/workflows")
+
+    assert response.status_code == 200
+    workflow_ids = {item["workflow"]["id"] for item in response.json()["items"]}
+    assert "nested-sample" in workflow_ids
+
+
+def test_request_validation_errors_use_standard_error_shape(test_settings) -> None:
+    app = create_app(settings=test_settings)
+    with TestClient(app) as client:
+        response = client.post("/api/auth/register", json={"username": "missing-password"})
+
+    assert response.status_code == 422
+    body = response.json()
+    assert "detail" not in body
+    assert body["error"]["code"] == "request_validation_failed"
+    assert body["error"]["message"]
+    assert body["error"]["details"]

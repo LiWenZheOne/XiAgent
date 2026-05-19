@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from xiagent.core.errors import (
@@ -14,6 +15,7 @@ from xiagent.core.errors import (
 
 def register_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(XiAgentError, xiagent_error_handler)
+    app.add_exception_handler(RequestValidationError, request_validation_error_handler)
 
 
 async def xiagent_error_handler(_request: Request, exc: Exception) -> JSONResponse:
@@ -24,6 +26,17 @@ async def xiagent_error_handler(_request: Request, exc: Exception) -> JSONRespon
         exc.code,
         exc.message,
         exc.details,
+    )
+
+
+async def request_validation_error_handler(_request: Request, exc: Exception) -> JSONResponse:
+    if not isinstance(exc, RequestValidationError):
+        return _error_response(500, "internal_error", "Internal server error", {})
+    return _error_response(
+        422,
+        "request_validation_failed",
+        "Request validation failed",
+        {"errors": exc.errors()},
     )
 
 
