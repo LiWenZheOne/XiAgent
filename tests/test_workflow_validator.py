@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from xiagent.core.errors import ConflictError, NotFoundError, ValidationError
+from xiagent.nodes.ai.deepseek_chat import DeepSeekChatNode
 from xiagent.nodes.registry import NodeRegistry
 from xiagent.nodes.system.human_approval import HumanApprovalNode
 from xiagent.nodes.tools.echo_tool import EchoToolNode
@@ -252,6 +255,25 @@ def test_workflow_catalog_returns_deep_copied_contracts(tmp_path) -> None:
     listed_contract["workflow"]["name"] = "Also Mutated"
 
     assert catalog.get("echo")["workflow"]["name"] == "Echo"
+
+
+def test_deepseek_echo_workflow_contract_declares_node_outputs() -> None:
+    contract = load_workflow_file(Path("workflows/global/deepseek_echo.workflow.yaml"))
+
+    assert contract["workflow"]["id"] == "deepseek_echo"
+    chat_node = next(node for node in contract["nodes"] if node["id"] == "chat")
+    assert set(chat_node["outputs"]["required"]) == {"text", "model", "usage"}
+
+    registry = NodeRegistry()
+    registry.register(
+        DeepSeekChatNode(
+            api_key=None,
+            base_url="https://api.deepseek.com",
+            model="deepseek-v4-flash",
+        )
+    )
+
+    validate_workflow_contract(contract, registry)
 
 
 def test_load_workflow_file_loads_yaml_object(tmp_path) -> None:
