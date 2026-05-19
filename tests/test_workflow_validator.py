@@ -111,7 +111,6 @@ def test_cycle_in_edges_is_rejected() -> None:
         {"from": "START", "to": "echo"},
         {"from": "echo", "to": "second"},
         {"from": "second", "to": "echo"},
-        {"from": "second", "to": "END"},
     ]
 
     with pytest.raises(ValidationError) as exc_info:
@@ -120,14 +119,102 @@ def test_cycle_in_edges_is_rejected() -> None:
     assert exc_info.value.code == "workflow_cycle_detected"
 
 
+def test_start_fanout_is_rejected_for_mvp_runtime() -> None:
+    registry = _registry()
+    contract = _two_node_contract()
+    contract["edges"] = [
+        {"from": "START", "to": "a"},
+        {"from": "START", "to": "b"},
+        {"from": "a", "to": "END"},
+        {"from": "b", "to": "END"},
+    ]
+
+    with pytest.raises(ValidationError) as exc_info:
+        validate_workflow_contract(contract, registry)
+
+    assert exc_info.value.code == "unsupported_workflow_fanout"
+    assert exc_info.value.details == {"from": "START"}
+
+
+def test_node_fanout_is_rejected_for_mvp_runtime() -> None:
+    registry = _registry()
+    contract = _two_node_contract()
+    contract["nodes"].append(
+        {"id": "c", "ref": "tool.echo.v1", "inputs": {}, "outputs": _output_schema()}
+    )
+    contract["edges"] = [
+        {"from": "START", "to": "a"},
+        {"from": "a", "to": "b"},
+        {"from": "a", "to": "c"},
+        {"from": "b", "to": "END"},
+        {"from": "c", "to": "END"},
+    ]
+
+    with pytest.raises(ValidationError) as exc_info:
+        validate_workflow_contract(contract, registry)
+
+    assert exc_info.value.code == "unsupported_workflow_fanout"
+    assert exc_info.value.details == {"from": "a"}
+
+
 def test_condition_path_referencing_unknown_node_is_rejected() -> None:
     registry = NodeRegistry()
     registry.register(EchoToolNode())
     contract = _valid_contract()
     contract["edges"] = [
-        {"from": "START", "to": "echo", "when": {"path": "$nodes.planner.output.approved"}},
+        {
+            "from": "START",
+            "to": "echo",
+            "when": {"path": "$nodes.planner.output.approved", "equals": True},
+        },
         {"from": "echo", "to": "END"},
     ]
+
+    with pytest.raises(ValidationError) as exc_info:
+        validate_workflow_contract(contract, registry)
+
+    assert exc_info.value.code == "invalid_workflow_reference"
+
+
+def test_edge_condition_requires_path_and_equals_only() -> None:
+    registry = _registry()
+    contract = _two_node_contract()
+    contract["edges"][1]["when"] = {
+        "path": "$nodes.a.output.ok",
+        "not_equals": "reject",
+    }
+
+    with pytest.raises(ValidationError) as exc_info:
+        validate_workflow_contract(contract, registry)
+
+    assert exc_info.value.code == "unsupported_workflow_condition"
+    assert exc_info.value.details == {"keys": ["not_equals", "path"]}
+
+
+def test_edge_condition_requires_path_and_equals_keys() -> None:
+    registry = _registry()
+    contract = _two_node_contract()
+    contract["edges"][1]["when"] = {"path": "$nodes.a.output.ok"}
+
+    with pytest.raises(ValidationError) as exc_info:
+        validate_workflow_contract(contract, registry)
+
+    assert exc_info.value.code == "invalid_workflow_condition"
+    assert exc_info.value.details == {"missing_keys": ["equals"]}
+
+
+def test_edge_condition_path_can_reference_workflow_input() -> None:
+    registry = _registry()
+    contract = _two_node_contract()
+    contract["edges"][1]["when"] = {"path": "$workflow.input.topic", "equals": "approve"}
+
+    validate_workflow_contract(contract, registry)
+
+
+def test_edge_condition_path_referencing_unknown_workflow_input_is_rejected() -> None:
+    registry = _registry()
+    contract = _two_node_contract()
+    contract["edges"][1]["when"] = {"path": "$workflow.input.missing", "equals": "approve"}
 
     with pytest.raises(ValidationError) as exc_info:
         validate_workflow_contract(contract, registry)
@@ -193,7 +280,7 @@ def test_node_output_reference_to_unknown_field_is_rejected() -> None:
 def test_edge_condition_path_referencing_downstream_node_is_rejected() -> None:
     registry = _registry()
     contract = _two_node_contract()
-    contract["edges"][1]["when"] = {"path": "$nodes.b.output.ok"}
+    contract["edges"][1]["when"] = {"path": "$nodes.b.output.ok", "equals": "yes"}
 
     with pytest.raises(ValidationError) as exc_info:
         validate_workflow_contract(contract, registry)
@@ -204,7 +291,7 @@ def test_edge_condition_path_referencing_downstream_node_is_rejected() -> None:
 def test_edge_condition_path_referencing_unknown_output_field_is_rejected() -> None:
     registry = _registry()
     contract = _two_node_contract()
-    contract["edges"][1]["when"] = {"path": "$nodes.a.output.missing"}
+    contract["edges"][1]["when"] = {"path": "$nodes.a.output.missing", "equals": "yes"}
 
     with pytest.raises(ValidationError) as exc_info:
         validate_workflow_contract(contract, registry)

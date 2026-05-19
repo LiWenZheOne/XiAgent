@@ -5,6 +5,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from xiagent.core.errors import (
+    AuthenticationError,
     ConflictError,
     NotFoundError,
     PermissionDeniedError,
@@ -41,6 +42,8 @@ async def request_validation_error_handler(_request: Request, exc: Exception) ->
 
 
 def _status_code(exc: XiAgentError) -> int:
+    if isinstance(exc, AuthenticationError):
+        return 401
     if isinstance(exc, PermissionDeniedError):
         return 403
     if isinstance(exc, NotFoundError):

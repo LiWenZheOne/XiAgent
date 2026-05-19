@@ -102,6 +102,20 @@ async def _workflow_template_count(test_settings) -> int:
     return int(row["count"])
 
 
+async def _list_workflow_templates(test_settings) -> list[dict]:
+    async with connect_db(test_settings.database_path) as db:
+        cursor = await db.execute(
+            """
+            select workflow_id, scope, project_id
+            from workflow_templates
+            order by created_at asc
+            """
+        )
+        rows = await cursor.fetchall()
+        await cursor.close()
+    return [dict(row) for row in rows]
+
+
 async def _list_tasks(test_settings) -> list[dict]:
     async with connect_db(test_settings.database_path) as db:
         cursor = await db.execute("select task_id, status from tasks order by created_at asc")
@@ -334,7 +348,7 @@ async def test_missing_optional_input_reference_fails_persisted_task(test_settin
     assert events[-1].event_type == "task_failed"
 
 
-async def test_unsupported_condition_operator_fails_persisted_task(test_settings) -> None:
+async def test_unsupported_condition_operator_fails_before_task_persisted(test_settings) -> None:
     registry = NodeRegistry()
     registry.register(HumanApprovalNode())
     registry.register(EchoToolNode())
@@ -345,34 +359,65 @@ async def test_unsupported_condition_operator_fails_persisted_task(test_settings
         "not_equals": "reject",
     }
 
-    task = await runtime.create_task_from_contract(
-        user_id=user_id,
-        project_id=project_id,
-        contract=contract,
-        input_data={"topic": "测试"},
-    )
     with pytest.raises(ValidationError) as exc_info:
-        await runtime.resume_task(
+        await runtime.create_task_from_contract(
             user_id=user_id,
             project_id=project_id,
-            task_id=task.task_id,
-            node_id="review",
-            output={"decision": "approve"},
+            contract=contract,
+            input_data={"topic": "condition"},
         )
 
     assert exc_info.value.code == "unsupported_workflow_condition"
-    failed_task = await runtime.get_task(
+    assert await _list_tasks(test_settings) == []
+
+
+async def test_project_workflow_contract_project_id_must_match_call_context(test_settings) -> None:
+    registry = NodeRegistry()
+    registry.register(EchoToolNode())
+    runtime, user_id, project_id = await _runtime(test_settings, registry)
+    contract = _echo_contract()
+    contract["workflow"]["scope"] = "project"
+    contract["workflow"]["project_id"] = "different-project"
+
+    with pytest.raises(ValidationError) as exc_info:
+        await runtime.create_task_from_contract(
+            user_id=user_id,
+            project_id=project_id,
+            contract=contract,
+            input_data={"topic": "project"},
+        )
+
+    assert exc_info.value.code == "workflow_project_mismatch"
+    assert await _list_tasks(test_settings) == []
+
+
+async def test_workflow_template_project_id_uses_call_context(test_settings) -> None:
+    registry = NodeRegistry()
+    registry.register(EchoToolNode())
+    runtime, user_id, project_id = await _runtime(test_settings, registry)
+    project_contract = _echo_contract()
+    project_contract["workflow"]["scope"] = "project"
+    project_contract["workflow"]["project_id"] = project_id
+
+    project_task = await runtime.create_task_from_contract(
         user_id=user_id,
         project_id=project_id,
-        task_id=task.task_id,
+        contract=project_contract,
+        input_data={"topic": "project"},
     )
-    events = await runtime.list_events(
+    global_task = await runtime.create_task_from_contract(
         user_id=user_id,
         project_id=project_id,
-        task_id=task.task_id,
+        contract=_echo_contract(),
+        input_data={"topic": "global"},
     )
-    assert failed_task.status == "failed"
-    assert events[-1].event_type == "task_failed"
+
+    assert project_task.status == "succeeded"
+    assert global_task.status == "succeeded"
+    assert await _list_workflow_templates(test_settings) == [
+        {"workflow_id": "echo", "scope": "project", "project_id": project_id},
+        {"workflow_id": "echo", "scope": "global", "project_id": None},
+    ]
 
 
 async def test_repeated_resume_does_not_duplicate_downstream_work(test_settings) -> None:

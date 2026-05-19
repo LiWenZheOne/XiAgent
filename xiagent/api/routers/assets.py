@@ -4,15 +4,17 @@ from dataclasses import asdict
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
-from xiagent.api.dependencies import ApiServices, get_services
+from xiagent.api.dependencies import ApiServices, get_current_user, get_services
+from xiagent.users.models import UserRecord
 
 router = APIRouter(prefix="/api/assets", tags=["assets"])
 
 
 class CreateTextAssetRequest(BaseModel):
-    user_id: str
+    model_config = ConfigDict(extra="forbid")
+
     scope: str
     project_id: str | None = None
     name: str
@@ -24,9 +26,10 @@ class CreateTextAssetRequest(BaseModel):
 async def create_text_asset(
     request: CreateTextAssetRequest,
     services: Annotated[ApiServices, Depends(get_services)],
+    current_user: Annotated[UserRecord, Depends(get_current_user)],
 ) -> dict:
     asset = await services.assets.create_text_asset(
-        user_id=request.user_id,
+        user_id=current_user.user_id,
         scope=request.scope,
         project_id=request.project_id,
         name=request.name,
@@ -38,16 +41,16 @@ async def create_text_asset(
 
 @router.get("/search")
 async def search_assets(
-    user_id: str,
     scope: str,
     services: Annotated[ApiServices, Depends(get_services)],
+    current_user: Annotated[UserRecord, Depends(get_current_user)],
     project_id: str | None = None,
     keyword: str | None = None,
     asset_type: str | None = None,
     mime_type: str | None = None,
 ) -> dict:
     result = await services.assets.search_assets(
-        user_id=user_id,
+        user_id=current_user.user_id,
         scope=scope,
         project_id=project_id,
         keyword=keyword,

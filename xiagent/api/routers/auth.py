@@ -31,4 +31,8 @@ async def login(
     services: Annotated[ApiServices, Depends(get_services)],
 ) -> dict:
     result = await services.users.authenticate(username=request.username, password=request.password)
-    return asdict(result)
+    return {
+        "user": asdict(result.user),
+        "access_token": services.issue_access_token(user_id=result.user.user_id),
+        "token_type": "bearer",
+    }

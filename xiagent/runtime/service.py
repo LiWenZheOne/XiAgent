@@ -57,6 +57,7 @@ class SqliteRuntimeService:
             action="task:create",
         )
         validate_workflow_contract(contract, self._node_registry)
+        _validate_workflow_project_scope(contract["workflow"], project_id=project_id)
         validate_json_value(contract["workflow"]["input_schema"], input_data)
 
         workflow = contract["workflow"]
@@ -686,6 +687,18 @@ def _edge_matches(
     )
 
 
+def _validate_workflow_project_scope(workflow: dict[str, Any], *, project_id: str) -> None:
+    if workflow["scope"] != "project":
+        return
+    contract_project_id = workflow.get("project_id")
+    if contract_project_id is not None and contract_project_id != project_id:
+        raise ValidationError(
+            code="workflow_project_mismatch",
+            message="Workflow project_id does not match the task project scope",
+            details={"contract_project_id": contract_project_id, "project_id": project_id},
+        )
+
+
 def _node_by_id(contract: dict[str, Any], node_id: str) -> dict[str, Any]:
     for node in contract["nodes"]:
         if node["id"] == node_id:
@@ -753,7 +766,7 @@ async def _find_or_create_workflow_template(
 ) -> str:
     template_project_id = None
     if workflow["scope"] == "project":
-        template_project_id = workflow.get("project_id", project_id)
+        template_project_id = project_id
     cursor = await db.execute(
         """
         select template_id

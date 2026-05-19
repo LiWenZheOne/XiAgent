@@ -1,14 +1,18 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import secrets
+from dataclasses import dataclass, field
+from typing import Annotated
 
-from fastapi import Request
+from fastapi import Depends, Header, Request
 
 from xiagent.assets.service import SqliteAssetService
+from xiagent.core.errors import AuthenticationError, NotFoundError, ValidationError
 from xiagent.infrastructure.config import Settings
 from xiagent.nodes import build_node_registry
 from xiagent.nodes.registry import NodeRegistry
 from xiagent.runtime.service import SqliteRuntimeService
+from xiagent.users.models import UserRecord
 from xiagent.users.service import SqliteUserService
 from xiagent.workflows.service import WorkflowCatalog
 
@@ -20,6 +24,12 @@ class ApiServices:
     node_registry: NodeRegistry
     runtime: SqliteRuntimeService
     workflows: WorkflowCatalog
+    access_tokens: dict[str, str] = field(default_factory=dict)
+
+    def issue_access_token(self, *, user_id: str) -> str:
+        token = secrets.token_urlsafe(32)
+        self.access_tokens[token] = user_id
+        return token
 
 
 def build_services(settings: Settings) -> ApiServices:
@@ -49,3 +59,40 @@ def build_services(settings: Settings) -> ApiServices:
 
 def get_services(request: Request) -> ApiServices:
     return request.app.state.services
+
+
+async def get_current_user(
+    request: Request,
+    services: Annotated[ApiServices, Depends(get_services)],
+    authorization: Annotated[str | None, Header()] = None,
+) -> UserRecord:
+    if "user_id" in request.query_params:
+        raise ValidationError(
+            code="unsupported_user_id_parameter",
+            message="user_id query parameter is not supported for protected routes",
+            details={},
+        )
+    token = _bearer_token(authorization)
+    user_id = services.access_tokens.get(token)
+    if user_id is None:
+        raise _invalid_access_token()
+    try:
+        return await services.users.get_user(user_id=user_id)
+    except NotFoundError as exc:
+        raise _invalid_access_token() from exc
+
+
+def _bearer_token(authorization: str | None) -> str:
+    if authorization is None:
+        raise _invalid_access_token()
+    scheme, separator, token = authorization.partition(" ")
+    if separator != " " or scheme.lower() != "bearer" or not token.strip():
+        raise _invalid_access_token()
+    return token.strip()
+
+
+def _invalid_access_token() -> AuthenticationError:
+    return AuthenticationError(
+        code="invalid_access_token",
+        message="Access token is missing or invalid",
+    )

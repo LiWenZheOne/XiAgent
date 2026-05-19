@@ -100,6 +100,25 @@ async def test_get_project_denies_inactive_project_for_owner(test_settings) -> N
     }
 
 
+async def test_get_project_denies_inactive_user(test_settings) -> None:
+    await migrate(test_settings.database_path)
+    service = SqliteUserService(test_settings.database_path)
+    alice = await service.create_user(username="alice", password="secret-123")
+    project = await service.create_project(owner_user_id=alice.user_id, name="Project A")
+
+    async with connect_db(test_settings.database_path) as db:
+        await db.execute(
+            "update users set status = 'disabled' where user_id = ?",
+            (alice.user_id,),
+        )
+
+    with pytest.raises(PermissionDeniedError) as exc_info:
+        await service.get_project(user_id=alice.user_id, project_id=project.project_id)
+
+    assert exc_info.value.code == "user_inactive"
+    assert exc_info.value.details == {"user_id": alice.user_id}
+
+
 async def test_inactive_user_cannot_create_project(test_settings) -> None:
     await migrate(test_settings.database_path)
     service = SqliteUserService(test_settings.database_path)
@@ -113,6 +132,29 @@ async def test_inactive_user_cannot_create_project(test_settings) -> None:
 
     with pytest.raises(PermissionDeniedError) as exc_info:
         await service.create_project(owner_user_id=alice.user_id, name="X")
+
+    assert exc_info.value.code == "user_inactive"
+    assert exc_info.value.details == {"user_id": alice.user_id}
+
+
+async def test_inactive_user_cannot_ensure_project_access(test_settings) -> None:
+    await migrate(test_settings.database_path)
+    service = SqliteUserService(test_settings.database_path)
+    alice = await service.create_user(username="alice", password="secret-123")
+    project = await service.create_project(owner_user_id=alice.user_id, name="Project A")
+
+    async with connect_db(test_settings.database_path) as db:
+        await db.execute(
+            "update users set status = 'disabled' where user_id = ?",
+            (alice.user_id,),
+        )
+
+    with pytest.raises(PermissionDeniedError) as exc_info:
+        await service.ensure_project_access(
+            user_id=alice.user_id,
+            project_id=project.project_id,
+            action="task:create",
+        )
 
     assert exc_info.value.code == "user_inactive"
     assert exc_info.value.details == {"user_id": alice.user_id}
@@ -158,3 +200,22 @@ async def test_list_projects_for_user_returns_only_owned_active_projects(test_se
     projects = await service.list_projects_for_user(user_id=alice.user_id)
 
     assert [project.project_id for project in projects] == [first.project_id]
+
+
+async def test_list_projects_for_user_denies_inactive_user(test_settings) -> None:
+    await migrate(test_settings.database_path)
+    service = SqliteUserService(test_settings.database_path)
+    alice = await service.create_user(username="alice", password="secret-123")
+    await service.create_project(owner_user_id=alice.user_id, name="Project A")
+
+    async with connect_db(test_settings.database_path) as db:
+        await db.execute(
+            "update users set status = 'disabled' where user_id = ?",
+            (alice.user_id,),
+        )
+
+    with pytest.raises(PermissionDeniedError) as exc_info:
+        await service.list_projects_for_user(user_id=alice.user_id)
+
+    assert exc_info.value.code == "user_inactive"
+    assert exc_info.value.details == {"user_id": alice.user_id}

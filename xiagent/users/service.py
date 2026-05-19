@@ -143,6 +143,7 @@ class SqliteUserService(UserService):
         )
 
     async def get_project(self, *, user_id: str, project_id: str) -> ProjectRecord:
+        await self._ensure_active_user(user_id=user_id)
         async with connect_db(self._database_path) as db:
             row = await _fetch_authorized_active_project(
                 db,
@@ -158,6 +159,7 @@ class SqliteUserService(UserService):
         return _project_from_row(row)
 
     async def list_projects_for_user(self, *, user_id: str) -> list[ProjectRecord]:
+        await self._ensure_active_user(user_id=user_id)
         async with connect_db(self._database_path) as db:
             cursor = await db.execute(
                 """
@@ -174,6 +176,7 @@ class SqliteUserService(UserService):
         return [_project_from_row(row) for row in rows]
 
     async def ensure_project_access(self, *, user_id: str, project_id: str, action: str) -> None:
+        await self._ensure_active_user(user_id=user_id)
         async with connect_db(self._database_path) as db:
             row = await _fetch_authorized_active_project(
                 db,
@@ -183,6 +186,15 @@ class SqliteUserService(UserService):
 
         if row is None:
             raise _project_access_denied(action=action, project_id=project_id)
+
+    async def _ensure_active_user(self, *, user_id: str) -> None:
+        user = await self.get_user(user_id=user_id)
+        if user.status != "active":
+            raise PermissionDeniedError(
+                "user_inactive",
+                "Inactive users cannot access projects",
+                {"user_id": user_id},
+            )
 
 
 def _utc_now() -> str:

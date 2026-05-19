@@ -116,6 +116,7 @@ def _validate_edges(
     graph: dict[str, list[str]] = {node_id: [] for node_id in node_ids}
     allowed_edge_nodes = node_ids | {_START, _END}
     edge_pairs: list[tuple[str, str]] = []
+    outgoing_counts: dict[str, int] = {}
 
     for edge in edges:
         if not isinstance(edge, dict):
@@ -138,6 +139,13 @@ def _validate_edges(
             )
 
         edge_pairs.append((from_node, to_node))
+        outgoing_counts[from_node] = outgoing_counts.get(from_node, 0) + 1
+        if outgoing_counts[from_node] > 1:
+            raise ValidationError(
+                code="unsupported_workflow_fanout",
+                message="Workflow fan-out is not supported by the MVP runtime",
+                details={"from": from_node},
+            )
         if from_node not in {_START, _END} and to_node not in {_START, _END}:
             graph[from_node].append(to_node)
 
@@ -148,18 +156,43 @@ def _validate_edges(
         when = edge.get("when")
         if when is not None:
             if not isinstance(when, Mapping):
-                _raise_contract_error("Workflow edge condition must be an object")
-            if "path" in when:
-                available_node_refs: set[str] = set()
-                if from_node not in {_START, _END}:
-                    available_node_refs = upstream_nodes[from_node] | {from_node}
-                _validate_reference(
-                    when.get("path"),
-                    node_ids=node_ids,
-                    workflow_input_properties=workflow_input_properties,
-                    node_outputs=node_outputs,
-                    available_node_refs=available_node_refs,
+                raise ValidationError(
+                    code="invalid_workflow_condition",
+                    message="Workflow edge condition must be an object",
+                    details={},
                 )
+            condition_keys = set(when)
+            unsupported_keys = sorted(condition_keys.difference({"path", "equals"}))
+            if unsupported_keys:
+                raise ValidationError(
+                    code="unsupported_workflow_condition",
+                    message="Workflow edge condition contains unsupported keys",
+                    details={"keys": sorted(condition_keys)},
+                )
+            missing_keys = sorted({"path", "equals"}.difference(condition_keys))
+            if missing_keys:
+                raise ValidationError(
+                    code="invalid_workflow_condition",
+                    message="Workflow edge condition requires path and equals",
+                    details={"missing_keys": missing_keys},
+                )
+            path = when.get("path")
+            if not isinstance(path, str):
+                raise ValidationError(
+                    code="invalid_workflow_condition",
+                    message="Workflow edge condition path must be a string",
+                    details={"path": path},
+                )
+            available_node_refs: set[str] = set()
+            if from_node not in {_START, _END}:
+                available_node_refs = upstream_nodes[from_node] | {from_node}
+            _validate_reference(
+                path,
+                node_ids=node_ids,
+                workflow_input_properties=workflow_input_properties,
+                node_outputs=node_outputs,
+                available_node_refs=available_node_refs,
+            )
 
     return upstream_nodes
 

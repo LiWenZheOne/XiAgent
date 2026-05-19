@@ -32,6 +32,10 @@ class PermissionDeniedError(XiAgentError):
     pass
 
 
+class AuthenticationError(XiAgentError):
+    pass
+
+
 class ConflictError(XiAgentError):
     pass
 
