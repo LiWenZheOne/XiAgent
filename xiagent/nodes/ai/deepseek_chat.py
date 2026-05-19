@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from openai import AsyncOpenAI
@@ -10,10 +10,18 @@ from xiagent.nodes.base import BaseNode, NodeContext, NodeDescriptor, NodeResult
 
 
 class DeepSeekChatNode(BaseNode):
-    def __init__(self, api_key: str | None, base_url: str, model: str) -> None:
+    def __init__(
+        self,
+        *,
+        api_key: str | None,
+        base_url: str,
+        model: str,
+        client_factory: Callable[..., Any] | None = None,
+    ) -> None:
         self._api_key = api_key
         self._base_url = base_url
         self._model = model
+        self._client_factory = client_factory or AsyncOpenAI
 
     def describe(self) -> NodeDescriptor:
         return NodeDescriptor(
@@ -63,14 +71,17 @@ class DeepSeekChatNode(BaseNode):
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
 
-        client = AsyncOpenAI(api_key=self._api_key, base_url=self._base_url)
         try:
-            response = await client.chat.completions.create(
-                model=self._model,
-                messages=messages,
-                stream=False,
-                thinking={"type": "disabled"},
-            )
+            async with self._client_factory(
+                api_key=self._api_key,
+                base_url=self._base_url,
+            ) as client:
+                response = await client.chat.completions.create(
+                    model=self._model,
+                    messages=messages,
+                    stream=False,
+                    extra_body={"thinking": {"type": "disabled"}},
+                )
         except Exception as exc:
             raise ExternalServiceError(
                 code="deepseek_request_failed",
