@@ -1,0 +1,6 @@
+.worktrees/
+.data/
+.venv/
+__pycache__/
+.pytest_cache/
+storage/assets/
