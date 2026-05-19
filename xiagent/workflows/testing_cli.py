@@ -11,6 +11,7 @@ from xiagent.workflows.loader import load_workflow_file
 from xiagent.workflows.testing.builder import WorkflowTestBuilder
 from xiagent.workflows.testing.console import ConsoleIO, parse_input_data, print_error
 from xiagent.workflows.testing.runner import WorkflowTestRunner
+from xiagent.workflows.validator import validate_workflow_contract
 
 
 class WorkflowTestingArgumentParser(argparse.ArgumentParser):
@@ -76,6 +77,7 @@ async def run_from_args(args: argparse.Namespace) -> int:
         session = await builder.build()
         if args.workflow_path is not None:
             contract = load_workflow_file(args.workflow_path)
+            validate_workflow_contract(contract, session.node_registry)
         else:
             contract = session.workflows.get(args.workflow_id)
 
