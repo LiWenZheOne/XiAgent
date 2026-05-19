@@ -30,7 +30,7 @@ class WorkflowTestRunResult:
 
 
 class WorkflowTestRunner:
-    def __init__(self, *, session: WorkflowTestSession, console: ConsoleIO) -> None:
+    def __init__(self, session: WorkflowTestSession, console: ConsoleIO) -> None:
         self._session = session
         self._console = console
 
@@ -80,7 +80,7 @@ class WorkflowTestRunner:
         open_preview: bool = False,
     ) -> WorkflowTestRunResult:
         workflow = contract["workflow"]
-        self._console.write(f"[加载工作流] {workflow['id']}@{workflow['version']}")
+        self._console.write(f"[01] 加载工作流 {workflow['id']} {workflow['version']}")
         task = await self._session.runtime.create_task_from_contract(
             user_id=self._session.user.user_id,
             project_id=self._session.project.project_id,

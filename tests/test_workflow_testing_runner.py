@@ -140,6 +140,7 @@ def _approval_contract() -> dict:
 
 
 async def test_runner_executes_echo_contract_and_collects_events(tmp_path: Path) -> None:
+    output_lines: list[str] = []
     session = await (
         WorkflowTestBuilder()
         .with_database_path(tmp_path / "workflow-test.sqlite3")
@@ -148,7 +149,10 @@ async def test_runner_executes_echo_contract_and_collects_events(tmp_path: Path)
         .with_run_output_dir(tmp_path / "runs")
         .build()
     )
-    runner = WorkflowTestRunner(session=session, console=ConsoleIO())
+    runner = WorkflowTestRunner(
+        session=session,
+        console=ConsoleIO(output_func=output_lines.append),
+    )
 
     result = await runner.run_contract(_echo_contract(), input_data={"topic": "hello"})
 
@@ -162,6 +166,23 @@ async def test_runner_executes_echo_contract_and_collects_events(tmp_path: Path)
     ]
     assert result.node_executions[0].output_snapshot == {"echo": {"topic": "hello"}}
     assert result.run_dir == tmp_path / "runs" / result.task.task_id
+    assert "[01] 加载工作流 runner-echo 1.0.0" in output_lines
+
+
+async def test_runner_accepts_positional_session_and_console(tmp_path: Path) -> None:
+    session = await (
+        WorkflowTestBuilder()
+        .with_database_path(tmp_path / "workflow-test.sqlite3")
+        .with_asset_storage_dir(tmp_path / "assets")
+        .with_workflow_dir(tmp_path / "workflows")
+        .with_run_output_dir(tmp_path / "runs")
+        .build()
+    )
+    runner = WorkflowTestRunner(session, ConsoleIO())
+
+    result = await runner.run_contract(_echo_contract(), input_data={"topic": "hello"})
+
+    assert result.task.status == "succeeded"
 
 
 async def test_runner_resumes_waiting_task_from_console(tmp_path: Path) -> None:
