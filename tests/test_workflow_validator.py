@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from xiagent.core.errors import ValidationError
+from xiagent.core.errors import ConflictError, NotFoundError, ValidationError
 from xiagent.nodes.registry import NodeRegistry
 from xiagent.nodes.system.human_approval import HumanApprovalNode
 from xiagent.nodes.tools.echo_tool import EchoToolNode
 from xiagent.workflows.loader import load_workflow_file
+from xiagent.workflows.service import WorkflowCatalog
 from xiagent.workflows.validator import validate_workflow_contract
 
 
@@ -131,6 +132,128 @@ def test_condition_path_referencing_unknown_node_is_rejected() -> None:
     assert exc_info.value.code == "invalid_workflow_reference"
 
 
+def test_self_input_reference_is_rejected() -> None:
+    registry = _registry()
+    contract = _valid_contract()
+    contract["nodes"][0]["id"] = "a"
+    contract["nodes"][0]["inputs"] = {"value": {"from": "$nodes.a.output.ok"}}
+    contract["nodes"][0]["outputs"] = _output_schema()
+    contract["edges"] = [{"from": "START", "to": "a"}, {"from": "a", "to": "END"}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        validate_workflow_contract(contract, registry)
+
+    assert exc_info.value.code == "non_upstream_workflow_reference"
+
+
+def test_downstream_input_reference_is_rejected() -> None:
+    registry = _registry()
+    contract = _two_node_contract()
+    contract["nodes"][0]["inputs"] = {"value": {"from": "$nodes.b.output.ok"}}
+
+    with pytest.raises(ValidationError) as exc_info:
+        validate_workflow_contract(contract, registry)
+
+    assert exc_info.value.code == "non_upstream_workflow_reference"
+
+
+@pytest.mark.parametrize(
+    "edge",
+    [
+        {"from": "END", "to": "a"},
+        {"from": "a", "to": "START"},
+    ],
+)
+def test_invalid_start_end_edge_direction_is_rejected(edge: dict[str, str]) -> None:
+    registry = _registry()
+    contract = _valid_contract()
+    contract["nodes"][0]["id"] = "a"
+    contract["edges"] = [edge]
+
+    with pytest.raises(ValidationError) as exc_info:
+        validate_workflow_contract(contract, registry)
+
+    assert exc_info.value.code == "invalid_workflow_edge"
+
+
+def test_node_output_reference_to_unknown_field_is_rejected() -> None:
+    registry = _registry()
+    contract = _two_node_contract()
+    contract["nodes"][1]["inputs"] = {"value": {"from": "$nodes.a.output.missing"}}
+
+    with pytest.raises(ValidationError) as exc_info:
+        validate_workflow_contract(contract, registry)
+
+    assert exc_info.value.code == "unknown_workflow_output_field"
+
+
+def test_edge_condition_path_referencing_downstream_node_is_rejected() -> None:
+    registry = _registry()
+    contract = _two_node_contract()
+    contract["edges"][1]["when"] = {"path": "$nodes.b.output.ok"}
+
+    with pytest.raises(ValidationError) as exc_info:
+        validate_workflow_contract(contract, registry)
+
+    assert exc_info.value.code == "non_upstream_workflow_reference"
+
+
+def test_edge_condition_path_referencing_unknown_output_field_is_rejected() -> None:
+    registry = _registry()
+    contract = _two_node_contract()
+    contract["edges"][1]["when"] = {"path": "$nodes.a.output.missing"}
+
+    with pytest.raises(ValidationError) as exc_info:
+        validate_workflow_contract(contract, registry)
+
+    assert exc_info.value.code == "unknown_workflow_output_field"
+
+
+def test_dotted_node_id_is_rejected() -> None:
+    registry = _registry()
+    contract = _valid_contract()
+    contract["nodes"][0]["id"] = "bad.node"
+
+    with pytest.raises(ValidationError) as exc_info:
+        validate_workflow_contract(contract, registry)
+
+    assert exc_info.value.code == "invalid_workflow_node_id"
+
+
+def test_workflow_catalog_rejects_duplicate_workflow_identity(tmp_path) -> None:
+    registry = _registry()
+    _write_workflow(tmp_path / "one.workflow.yaml", workflow_id="echo")
+    _write_workflow(tmp_path / "two.workflow.yaml", workflow_id="echo")
+    catalog = WorkflowCatalog(registry)
+
+    with pytest.raises(ConflictError) as exc_info:
+        catalog.load_directory(tmp_path)
+
+    assert exc_info.value.code == "workflow_template_exists"
+
+
+def test_workflow_catalog_get_missing_raises_not_found() -> None:
+    catalog = WorkflowCatalog(_registry())
+
+    with pytest.raises(NotFoundError) as exc_info:
+        catalog.get("missing")
+
+    assert exc_info.value.code == "workflow_template_not_found"
+
+
+def test_workflow_catalog_returns_deep_copied_contracts(tmp_path) -> None:
+    _write_workflow(tmp_path / "echo.workflow.yaml", workflow_id="echo")
+    catalog = WorkflowCatalog(_registry())
+    catalog.load_directory(tmp_path)
+
+    contract = catalog.get("echo")
+    contract["workflow"]["name"] = "Mutated"
+    listed_contract = catalog.list()[0]
+    listed_contract["workflow"]["name"] = "Also Mutated"
+
+    assert catalog.get("echo")["workflow"]["name"] == "Echo"
+
+
 def test_load_workflow_file_loads_yaml_object(tmp_path) -> None:
     workflow_path = tmp_path / "echo.workflow.yaml"
     workflow_path.write_text(
@@ -177,3 +300,78 @@ def _valid_contract() -> dict:
         ],
         "edges": [{"from": "START", "to": "echo"}, {"from": "echo", "to": "END"}],
     }
+
+
+def _two_node_contract() -> dict:
+    return {
+        "workflow": {
+            "id": "echo",
+            "version": "1.0.0",
+            "scope": "global",
+            "name": "Echo",
+            "input_schema": {"type": "object", "properties": {"topic": {"type": "string"}}},
+        },
+        "nodes": [
+            {
+                "id": "a",
+                "ref": "tool.echo.v1",
+                "inputs": {"topic": {"from": "$workflow.input.topic"}},
+                "outputs": _output_schema(),
+            },
+            {
+                "id": "b",
+                "ref": "tool.echo.v1",
+                "inputs": {"value": {"from": "$nodes.a.output.ok"}},
+                "outputs": _output_schema(),
+            },
+        ],
+        "edges": [
+            {"from": "START", "to": "a"},
+            {"from": "a", "to": "b"},
+            {"from": "b", "to": "END"},
+        ],
+    }
+
+
+def _output_schema() -> dict:
+    return {"type": "object", "properties": {"ok": {"type": "string"}}}
+
+
+def _registry() -> NodeRegistry:
+    registry = NodeRegistry()
+    registry.register(EchoToolNode())
+    return registry
+
+
+def _write_workflow(path, *, workflow_id: str) -> None:
+    path.write_text(
+        f"""
+workflow:
+  id: {workflow_id}
+  version: "1.0.0"
+  scope: global
+  name: Echo
+  input_schema:
+    type: object
+    properties:
+      topic:
+        type: string
+nodes:
+  - id: echo
+    ref: tool.echo.v1
+    inputs:
+      topic:
+        from: "$workflow.input.topic"
+    outputs:
+      type: object
+      properties:
+        ok:
+          type: string
+edges:
+  - from: START
+    to: echo
+  - from: echo
+    to: END
+""",
+        encoding="utf-8",
+    )

@@ -19,7 +19,7 @@ nodes:
         from: "$workflow.input.prompt"
     outputs:
       type: object
-      required: ["text"]
+      required: ["text", "model", "usage"]
       properties:
         text:
           type: string

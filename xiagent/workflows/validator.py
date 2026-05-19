@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -10,6 +11,7 @@ from xiagent.nodes.registry import NodeRegistry
 _START = "START"
 _END = "END"
 _REQUIRED_WORKFLOW_KEYS = {"id", "version", "scope", "name", "input_schema"}
+_NODE_ID_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def validate_workflow_contract(contract: dict[str, Any], registry: NodeRegistry) -> None:
@@ -38,8 +40,15 @@ def validate_workflow_contract(contract: dict[str, Any], registry: NodeRegistry)
     if not isinstance(nodes, list) or not nodes:
         _raise_contract_error("Workflow nodes must be a non-empty list")
 
-    node_ids = _validate_nodes(nodes, registry)
+    node_outputs = _validate_nodes(nodes, registry)
+    node_ids = set(node_outputs)
     input_properties = _schema_properties(input_schema)
+
+    edges = contract.get("edges")
+    if not isinstance(edges, list):
+        _raise_contract_error("Workflow edges must be a list")
+
+    upstream_nodes = _validate_edges(edges, node_ids, input_properties, node_outputs)
 
     for node in nodes:
         inputs = node.get("inputs", {})
@@ -56,31 +65,28 @@ def validate_workflow_contract(contract: dict[str, Any], registry: NodeRegistry)
                 input_spec.get("from"),
                 node_ids=node_ids,
                 workflow_input_properties=input_properties,
+                node_outputs=node_outputs,
+                available_node_refs=upstream_nodes[node["id"]],
             )
 
-    edges = contract.get("edges")
-    if not isinstance(edges, list):
-        _raise_contract_error("Workflow edges must be a list")
 
-    _validate_edges(edges, node_ids, input_properties)
-
-
-def _validate_nodes(nodes: list[Any], registry: NodeRegistry) -> set[str]:
-    node_ids: set[str] = set()
+def _validate_nodes(nodes: list[Any], registry: NodeRegistry) -> dict[str, dict[str, Any]]:
+    node_outputs: dict[str, dict[str, Any]] = {}
     for node in nodes:
         if not isinstance(node, dict):
             _raise_contract_error("Workflow node must be an object")
 
         node_id = node.get("id")
         if not isinstance(node_id, str) or not node_id:
-            _raise_contract_error("Workflow node id must be a non-empty string")
-        if node_id in node_ids:
+            _raise_invalid_node_id(node_id)
+        if not _NODE_ID_PATTERN.fullmatch(node_id):
+            _raise_invalid_node_id(node_id)
+        if node_id in node_outputs:
             raise ValidationError(
                 code="duplicate_workflow_node_id",
                 message="工作流节点 id 重复",
                 details={"node_id": node_id},
             )
-        node_ids.add(node_id)
 
         ref = node.get("ref")
         if not isinstance(ref, str) or not ref:
@@ -96,17 +102,20 @@ def _validate_nodes(nodes: list[Any], registry: NodeRegistry) -> set[str]:
 
         outputs = node.get("outputs")
         _validate_schema_object(outputs, f"nodes.{node_id}.outputs")
+        node_outputs[node_id] = outputs
 
-    return node_ids
+    return node_outputs
 
 
 def _validate_edges(
     edges: list[Any],
     node_ids: set[str],
     workflow_input_properties: set[str] | None,
-) -> None:
+    node_outputs: dict[str, dict[str, Any]],
+) -> dict[str, set[str]]:
     graph: dict[str, list[str]] = {node_id: [] for node_id in node_ids}
     allowed_edge_nodes = node_ids | {_START, _END}
+    edge_pairs: list[tuple[str, str]] = []
 
     for edge in edges:
         if not isinstance(edge, dict):
@@ -121,21 +130,38 @@ def _validate_edges(
                 details={"from": from_node, "to": to_node},
             )
 
+        if from_node == _END or to_node == _START or (from_node == _START and to_node == _END):
+            raise ValidationError(
+                code="invalid_workflow_edge",
+                message="工作流 START/END 边方向无效",
+                details={"from": from_node, "to": to_node},
+            )
+
+        edge_pairs.append((from_node, to_node))
+        if from_node not in {_START, _END} and to_node not in {_START, _END}:
+            graph[from_node].append(to_node)
+
+    _detect_cycle(graph)
+    upstream_nodes = _build_upstream_nodes(graph)
+
+    for edge, (from_node, _to_node) in zip(edges, edge_pairs, strict=True):
         when = edge.get("when")
         if when is not None:
             if not isinstance(when, Mapping):
                 _raise_contract_error("Workflow edge condition must be an object")
             if "path" in when:
+                available_node_refs: set[str] = set()
+                if from_node not in {_START, _END}:
+                    available_node_refs = upstream_nodes[from_node] | {from_node}
                 _validate_reference(
                     when.get("path"),
                     node_ids=node_ids,
                     workflow_input_properties=workflow_input_properties,
+                    node_outputs=node_outputs,
+                    available_node_refs=available_node_refs,
                 )
 
-        if from_node not in {_START, _END} and to_node not in {_START, _END}:
-            graph[from_node].append(to_node)
-
-    _detect_cycle(graph)
+    return upstream_nodes
 
 
 def _validate_reference(
@@ -143,6 +169,8 @@ def _validate_reference(
     *,
     node_ids: set[str],
     workflow_input_properties: set[str] | None,
+    node_outputs: dict[str, dict[str, Any]],
+    available_node_refs: set[str] | None = None,
 ) -> None:
     if not isinstance(reference, str):
         _raise_invalid_reference("Workflow reference must be a string", reference=reference)
@@ -166,6 +194,13 @@ def _validate_reference(
         node_id = parts[1]
         if node_id not in node_ids:
             _raise_invalid_reference("Node output reference is unknown", reference=reference)
+        if available_node_refs is not None and node_id not in available_node_refs:
+            raise ValidationError(
+                code="non_upstream_workflow_reference",
+                message="工作流引用的节点输出不可用",
+                details={"reference": reference, "node_id": node_id},
+            )
+        _validate_output_field(node_outputs[node_id], parts[3:], reference)
         return
 
     _raise_invalid_reference("Workflow reference has unsupported format", reference=reference)
@@ -193,6 +228,53 @@ def _detect_cycle(graph: dict[str, list[str]]) -> None:
 
     for node_id in graph:
         visit(node_id)
+
+
+def _build_upstream_nodes(graph: dict[str, list[str]]) -> dict[str, set[str]]:
+    reverse_graph: dict[str, list[str]] = {node_id: [] for node_id in graph}
+    for from_node, to_nodes in graph.items():
+        for to_node in to_nodes:
+            reverse_graph[to_node].append(from_node)
+
+    upstream_nodes: dict[str, set[str]] = {}
+    for node_id in graph:
+        upstream_nodes[node_id] = _collect_upstream_nodes(node_id, reverse_graph)
+    return upstream_nodes
+
+
+def _collect_upstream_nodes(node_id: str, reverse_graph: dict[str, list[str]]) -> set[str]:
+    upstream: set[str] = set()
+    stack = list(reverse_graph[node_id])
+    while stack:
+        current = stack.pop()
+        if current in upstream:
+            continue
+        upstream.add(current)
+        stack.extend(reverse_graph[current])
+    return upstream
+
+
+def _validate_output_field(
+    output_schema: dict[str, Any],
+    field_path: list[str],
+    reference: str,
+) -> None:
+    schema: Any = output_schema
+    for field in field_path:
+        if not isinstance(schema, Mapping):
+            return
+        properties = schema.get("properties")
+        if properties is None:
+            return
+        if not isinstance(properties, Mapping):
+            return
+        if field not in properties:
+            raise ValidationError(
+                code="unknown_workflow_output_field",
+                message="工作流引用了未知节点输出字段",
+                details={"reference": reference, "field": field},
+            )
+        schema = properties[field]
 
 
 def _schema_properties(schema: dict[str, Any]) -> set[str] | None:
@@ -223,4 +305,12 @@ def _raise_invalid_reference(message: str, **details: Any) -> None:
         code="invalid_workflow_reference",
         message=message,
         details=details,
+    )
+
+
+def _raise_invalid_node_id(node_id: Any) -> None:
+    raise ValidationError(
+        code="invalid_workflow_node_id",
+        message="工作流节点 id 格式无效",
+        details={"node_id": node_id},
     )
