@@ -55,7 +55,6 @@ def collect_image_artifacts(
 
 
 def generate_html_preview(
-    *,
     task: Any,
     node_executions: Iterable[Any],
     events: Iterable[Any],

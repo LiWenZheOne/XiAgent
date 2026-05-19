@@ -96,20 +96,20 @@ def test_generate_html_preview_contains_node_json_and_image(tmp_path: Path) -> N
     )
     preview_path = tmp_path / "preview.html"
 
+    event = TaskEventRecord(
+        event_id="event_1",
+        task_id="task_1",
+        event_type="task_succeeded",
+        payload={},
+        created_at="2026-05-20T00:00:01+00:00",
+    )
+
     generated = generate_html_preview(
-        task=_task(),
-        node_executions=[execution],
-        events=[
-            TaskEventRecord(
-                event_id="event_1",
-                task_id="task_1",
-                event_type="task_succeeded",
-                payload={},
-                created_at="2026-05-20T00:00:01+00:00",
-            )
-        ],
-        artifacts=[artifact],
-        output_path=preview_path,
+        _task(),
+        [execution],
+        [event],
+        [artifact],
+        preview_path,
     )
 
     html = generated.read_text(encoding="utf-8")
