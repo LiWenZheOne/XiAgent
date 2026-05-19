@@ -18,6 +18,7 @@ XiAgent 文档按项目架构、设计文档、开发文档三个层级维护。
 ## 开发文档
 
 - [开发约束与实现准则](development/2026-05-19-01-development-guidelines.md)
+- [后端 MVP 实现计划](development/2026-05-19-02-backend-mvp-implementation-plan.md)
 
 ## 命名规则
 
@@ -33,4 +34,3 @@ YYYY-MM-DD-NN-topic-document-kind.md
 - `NN` 是两位序号，用于同一天多文档排序。
 - `topic` 使用英文短语，便于跨系统路径兼容。
 - `document-kind` 表示文档类型，例如 `overview`、`design`、`guidelines`、`plan`。
-
