@@ -413,9 +413,18 @@ async def test_repeated_resume_does_not_duplicate_downstream_work(test_settings)
         project_id=project_id,
         task_id=task.task_id,
     )
+    event_types = [event.event_type for event in events]
+    node_succeeded_payloads = [
+        event.payload for event in events if event.event_type == "node_succeeded"
+    ]
     assert exc_info.value.code in {"task_not_waiting", "node_not_waiting"}
     assert [item.node_id for item in executions] == ["review", "echo"]
-    assert [event.event_type for event in events].count("task_succeeded") == 1
+    assert len([item for item in executions if item.node_id == "echo"]) == 1
+    assert event_types.count("task_resumed") == 1
+    assert event_types.count("task_succeeded") == 1
+    assert event_types.count("node_started") == 2
+    assert event_types.count("node_succeeded") == 2
+    assert [payload["node_id"] for payload in node_succeeded_payloads] == ["review", "echo"]
 
 
 async def test_runtime_read_apis_require_project_access(test_settings) -> None:
@@ -447,6 +456,24 @@ async def test_runtime_read_apis_require_project_access(test_settings) -> None:
         )
 
     assert exc_info.value.code == "project_access_denied"
+
+    with pytest.raises(PermissionDeniedError) as executions_exc_info:
+        await runtime.list_node_executions(
+            user_id=other.user_id,
+            project_id=other_project.project_id,
+            task_id=task.task_id,
+        )
+
+    assert executions_exc_info.value.code == "project_access_denied"
+
+    with pytest.raises(PermissionDeniedError) as events_exc_info:
+        await runtime.list_events(
+            user_id=other.user_id,
+            project_id=other_project.project_id,
+            task_id=task.task_id,
+        )
+
+    assert events_exc_info.value.code == "project_access_denied"
 
 
 async def test_repeated_direct_contract_reuses_workflow_template(test_settings) -> None:
