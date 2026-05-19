@@ -223,7 +223,10 @@ def _artifact_from_image_object(
     if value.get("type") != "image" or not isinstance(value.get("path"), str):
         return None
 
-    path = Path(value["path"])
+    path = _local_file_path(value["path"])
+    if path is None:
+        return None
+
     mime_type = str(value.get("mime_type") or _mime_type_for_path(path))
     return ImageArtifact(
         node_id=execution.node_id,
@@ -243,13 +246,11 @@ def _artifact_from_path_string(
     snapshot_kind: str,
     field_path: str,
 ) -> ImageArtifact | None:
-    if _is_non_local_path_reference(value):
+    path = _local_file_path(value)
+    if path is None:
         return None
 
-    path = Path(value)
     if path.suffix.lower() not in _IMAGE_SUFFIXES:
-        return None
-    if not path.is_file():
         return None
 
     return ImageArtifact(
@@ -300,6 +301,16 @@ def _artifact_from_data_url(
 
 def _mime_type_for_path(path: Path) -> str:
     return mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+
+
+def _local_file_path(value: str) -> Path | None:
+    if _is_non_local_path_reference(value):
+        return None
+
+    path = Path(value)
+    if not path.is_file():
+        return None
+    return path
 
 
 def _is_non_local_path_reference(value: str) -> bool:

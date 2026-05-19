@@ -106,6 +106,30 @@ def test_collect_image_artifacts_skips_missing_paths_and_urls(tmp_path: Path) ->
     assert artifacts == []
 
 
+def test_collect_image_artifacts_skips_missing_and_url_image_objects(tmp_path: Path) -> None:
+    artifacts = collect_image_artifacts(
+        [
+            _execution(
+                {
+                    "missing_object": {
+                        "type": "image",
+                        "path": str(tmp_path / "missing.png"),
+                        "mime_type": "image/png",
+                    },
+                    "url_object": {
+                        "type": "image",
+                        "path": "https://example.com/a.png",
+                        "mime_type": "image/png",
+                    },
+                }
+            )
+        ],
+        output_dir=tmp_path / "run",
+    )
+
+    assert artifacts == []
+
+
 def test_generate_html_preview_contains_node_json_and_image(tmp_path: Path) -> None:
     image_path = tmp_path / "sample.png"
     image_path.write_bytes(b"png")
