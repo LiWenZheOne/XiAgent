@@ -115,6 +115,7 @@ class WorkflowTestRunner:
         run_dir = self._session.run_output_dir / task.task_id
         run_dir.mkdir(parents=True, exist_ok=True)
         artifacts = collect_image_artifacts(node_executions, output_dir=run_dir)
+        self._show_run_output(events, node_executions, artifacts)
 
         if open_images:
             open_artifact_paths(artifact.path for artifact in artifacts)
@@ -128,6 +129,8 @@ class WorkflowTestRunner:
             events=events,
             artifacts=artifacts,
         )
+        if preview_path is not None:
+            self._console.write(f"preview: {preview_path}")
 
         return WorkflowTestRunResult(
             task=task,
@@ -190,6 +193,26 @@ class WorkflowTestRunner:
         if open_preview:
             open_html_preview(generated_path)
         return generated_path
+
+    def _show_run_output(
+        self,
+        events: list[TaskEventRecord],
+        node_executions: list[NodeExecutionRecord],
+        artifacts: list[ImageArtifact],
+    ) -> None:
+        for index, event in enumerate(events, start=1):
+            self._console.show_event(index, event)
+
+        for execution in node_executions:
+            self._console.write(f"node={execution.node_id} status={execution.status}")
+            self._console.show_node_execution(execution)
+
+        for artifact in artifacts:
+            self._console.write(
+                f"[图片输出] node={artifact.node_id} field={artifact.field_path}"
+            )
+            self._console.write(f"path: {artifact.path}")
+            self._console.write(f"mime: {artifact.mime_type}")
 
 
 def _latest_waiting_execution(

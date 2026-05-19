@@ -96,6 +96,23 @@ def _echo_contract() -> dict:
     }
 
 
+def _echo_image_contract() -> dict:
+    contract = _echo_contract()
+    contract["workflow"]["input_schema"] = {
+        "type": "object",
+        "required": ["topic", "image"],
+        "properties": {
+            "topic": {"type": "string"},
+            "image": {"type": "string"},
+        },
+    }
+    contract["nodes"][0]["inputs"] = {
+        "topic": {"from": "$workflow.input.topic"},
+        "image": {"from": "$workflow.input.image"},
+    }
+    return contract
+
+
 def _approval_contract() -> dict:
     return {
         "workflow": {
@@ -167,6 +184,37 @@ async def test_runner_executes_echo_contract_and_collects_events(tmp_path: Path)
     assert result.node_executions[0].output_snapshot == {"echo": {"topic": "hello"}}
     assert result.run_dir == tmp_path / "runs" / result.task.task_id
     assert "[01] 加载工作流 runner-echo 1.0.0" in output_lines
+
+
+async def test_runner_prints_events_node_summary_and_image_paths(tmp_path: Path) -> None:
+    image_path = tmp_path / "sample.png"
+    image_path.write_bytes(b"\x89PNG\r\n\x1a\n")
+    output_lines: list[str] = []
+    session = await (
+        WorkflowTestBuilder()
+        .with_database_path(tmp_path / "workflow-test.sqlite3")
+        .with_asset_storage_dir(tmp_path / "assets")
+        .with_workflow_dir(tmp_path / "workflows")
+        .with_run_output_dir(tmp_path / "runs")
+        .build()
+    )
+    runner = WorkflowTestRunner(
+        session=session,
+        console=ConsoleIO(output_func=output_lines.append),
+    )
+
+    result = await runner.run_contract(
+        _echo_image_contract(),
+        input_data={"topic": "hello", "image": str(image_path)},
+    )
+
+    output = "\n".join(output_lines)
+    assert result.task.status == "succeeded"
+    assert "task_created" in output
+    assert "node=echo" in output
+    assert "[图片输出]" in output
+    assert "path:" in output
+    assert str(image_path) in output
 
 
 async def test_runner_accepts_positional_session_and_console(tmp_path: Path) -> None:

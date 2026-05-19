@@ -48,8 +48,10 @@ python -m xiagent.workflows.testing_cli --workflow-id deepseek_echo --input '{"p
 
 默认使用测试数据库 `.data/workflow-test.sqlite3`、测试用户 `workflow-test-admin` 和测试项目 `Workflow Test Project`。遇到人工等待节点时，CLI 会提示输入恢复输出 JSON。
 
-图片输出默认打印本地路径。需要打开图片或生成 HTML 报告时：
+如果工作流输入或输出包含本地图片路径或图片 data URL，CLI 会打印识别到的图片路径。需要打开图片或生成 HTML 报告时：
 
 ```powershell
-python -m xiagent.workflows.testing_cli workflows/demo.workflow.yaml --input-file .data/input.json --open-images --preview html --open-preview
+python -m xiagent.workflows.testing_cli workflows/global/deepseek_echo.workflow.yaml --input-file .data/input.json --open-images --preview html --open-preview
 ```
+
+`--preview html` 会生成报告，并展示识别到的图片。
