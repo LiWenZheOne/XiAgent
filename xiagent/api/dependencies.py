@@ -6,10 +6,8 @@ from fastapi import Request
 
 from xiagent.assets.service import SqliteAssetService
 from xiagent.infrastructure.config import Settings
-from xiagent.nodes.ai.deepseek_chat import DeepSeekChatNode
+from xiagent.nodes import build_node_registry
 from xiagent.nodes.registry import NodeRegistry
-from xiagent.nodes.system.human_approval import HumanApprovalNode
-from xiagent.nodes.tools.echo_tool import EchoToolNode
 from xiagent.runtime.service import SqliteRuntimeService
 from xiagent.users.service import SqliteUserService
 from xiagent.workflows.service import WorkflowCatalog
@@ -31,16 +29,7 @@ def build_services(settings: Settings) -> ApiServices:
         storage_dir=settings.asset_storage_dir,
         user_service=users,
     )
-    node_registry = NodeRegistry()
-    node_registry.register(HumanApprovalNode())
-    node_registry.register(EchoToolNode())
-    node_registry.register(
-        DeepSeekChatNode(
-            api_key=settings.deepseek_api_key,
-            base_url=settings.deepseek_base_url,
-            model=settings.deepseek_model,
-        )
-    )
+    node_registry = build_node_registry(settings)
     runtime = SqliteRuntimeService(
         database_path=settings.database_path,
         user_service=users,

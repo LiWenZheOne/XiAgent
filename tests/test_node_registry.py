@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from xiagent.core.errors import ConflictError
+from xiagent.nodes import build_node_registry
 from xiagent.nodes.registry import NodeRegistry
 from xiagent.nodes.system.human_approval import HumanApprovalNode
 from xiagent.nodes.tools.echo_tool import EchoToolNode
@@ -38,6 +39,18 @@ def test_list_returns_nodes_in_registration_order() -> None:
     registry.register(echo_node)
 
     assert registry.list() == [human_node, echo_node]
+
+
+def test_build_node_registry_registers_builtin_nodes(test_settings) -> None:
+    registry = build_node_registry(test_settings)
+
+    refs = {node.describe().ref for node in registry.list()}
+
+    assert refs == {
+        "system.human_approval.v1",
+        "tool.echo.v1",
+        "ai.deepseek_chat.v1",
+    }
 
 
 async def test_human_approval_returns_waiting_with_requested_inputs() -> None:
