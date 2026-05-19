@@ -34,7 +34,7 @@ class WorkflowTestBuilder:
         self._asset_storage_dir = Path(".data/workflow-test-assets")
         self._workflow_dir = Path("workflows")
         self._admin_username = "workflow-test-admin"
-        self._admin_password = "workflow-test-password"
+        self._admin_password = "secret-123"
         self._project_name = "Workflow Test Project"
         self._project_id: str | None = None
         self._run_output_dir: Path | None = None

@@ -47,6 +47,34 @@ async def test_builder_reuses_existing_default_user_and_project(tmp_path: Path) 
     assert second.project.project_id == first.project.project_id
 
 
+async def test_builder_default_admin_matches_explicit_cli_default_password(
+    tmp_path: Path,
+) -> None:
+    workflow_dir = tmp_path / "workflows"
+    workflow_dir.mkdir()
+    database_path = tmp_path / "workflow-test.sqlite3"
+    asset_storage_dir = tmp_path / "assets"
+
+    first = await (
+        WorkflowTestBuilder()
+        .with_database_path(database_path)
+        .with_asset_storage_dir(asset_storage_dir)
+        .with_workflow_dir(workflow_dir)
+        .build()
+    )
+
+    second = await (
+        WorkflowTestBuilder()
+        .with_database_path(database_path)
+        .with_asset_storage_dir(asset_storage_dir)
+        .with_workflow_dir(workflow_dir)
+        .with_default_admin(username="workflow-test-admin", password="secret-123")
+        .build()
+    )
+
+    assert second.user.user_id == first.user.user_id
+
+
 async def test_builder_uses_existing_project_id(tmp_path: Path) -> None:
     workflow_dir = tmp_path / "workflows"
     workflow_dir.mkdir()

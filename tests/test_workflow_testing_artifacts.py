@@ -130,6 +130,45 @@ def test_collect_image_artifacts_skips_missing_and_url_image_objects(tmp_path: P
     assert artifacts == []
 
 
+def test_collect_image_artifacts_skips_image_objects_with_invalid_suffix_or_mime(
+    tmp_path: Path,
+) -> None:
+    good_image_path = tmp_path / "good.png"
+    bad_suffix_path = tmp_path / "bad.exe"
+    bad_mime_path = tmp_path / "bad-mime.png"
+    good_image_path.write_bytes(b"png")
+    bad_suffix_path.write_bytes(b"exe")
+    bad_mime_path.write_bytes(b"png")
+
+    artifacts = collect_image_artifacts(
+        [
+            _execution(
+                {
+                    "bad_suffix": {
+                        "type": "image",
+                        "path": str(bad_suffix_path),
+                        "mime_type": "image/png",
+                    },
+                    "bad_mime": {
+                        "type": "image",
+                        "path": str(bad_mime_path),
+                        "mime_type": "application/octet-stream",
+                    },
+                    "good": {
+                        "type": "image",
+                        "path": str(good_image_path),
+                    },
+                }
+            )
+        ],
+        output_dir=tmp_path / "run",
+    )
+
+    assert [(item.field_path, item.path, item.mime_type) for item in artifacts] == [
+        ("output.good", good_image_path, "image/png")
+    ]
+
+
 def test_generate_html_preview_contains_node_json_and_image(tmp_path: Path) -> None:
     image_path = tmp_path / "sample.png"
     image_path.write_bytes(b"png")

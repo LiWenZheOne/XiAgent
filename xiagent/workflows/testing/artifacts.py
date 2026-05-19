@@ -14,6 +14,14 @@ from typing import Any, Callable, Iterable
 
 
 _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+_IMAGE_MIME_TYPES_BY_SUFFIX = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+}
+_IMAGE_MIME_TYPES = set(_IMAGE_MIME_TYPES_BY_SUFFIX.values())
 _DATA_URL_PATTERN = re.compile(r"^data:(image/[a-zA-Z0-9.+-]+);base64,(.*)$", re.DOTALL)
 
 
@@ -151,14 +159,14 @@ def _collect_from_value(
     data_url_counter: int,
 ) -> list[ImageArtifact]:
     if isinstance(value, dict):
-        explicit = _artifact_from_image_object(
-            value=value,
-            execution=execution,
-            snapshot_kind=snapshot_kind,
-            field_path=field_path,
-        )
-        if explicit is not None:
-            return [explicit]
+        if _is_image_object(value):
+            explicit = _artifact_from_image_object(
+                value=value,
+                execution=execution,
+                snapshot_kind=snapshot_kind,
+                field_path=field_path,
+            )
+            return [explicit] if explicit is not None else []
 
         artifacts: list[ImageArtifact] = []
         for key, item in value.items():
@@ -213,6 +221,10 @@ def _collect_from_value(
     return []
 
 
+def _is_image_object(value: dict[str, Any]) -> bool:
+    return value.get("type") == "image" and isinstance(value.get("path"), str)
+
+
 def _artifact_from_image_object(
     *,
     value: dict[str, Any],
@@ -227,7 +239,10 @@ def _artifact_from_image_object(
     if path is None:
         return None
 
-    mime_type = str(value.get("mime_type") or _mime_type_for_path(path))
+    mime_type = _valid_image_mime_type(path, value.get("mime_type"))
+    if mime_type is None:
+        return None
+
     return ImageArtifact(
         node_id=execution.node_id,
         node_ref=execution.node_ref,
@@ -301,6 +316,22 @@ def _artifact_from_data_url(
 
 def _mime_type_for_path(path: Path) -> str:
     return mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+
+
+def _valid_image_mime_type(path: Path, explicit_mime_type: Any) -> str | None:
+    expected_mime_type = _IMAGE_MIME_TYPES_BY_SUFFIX.get(path.suffix.lower())
+    if expected_mime_type is None:
+        return None
+
+    if explicit_mime_type is None:
+        return expected_mime_type
+
+    mime_type = str(explicit_mime_type)
+    if mime_type not in _IMAGE_MIME_TYPES:
+        return None
+    if mime_type != expected_mime_type:
+        return None
+    return mime_type
 
 
 def _local_file_path(value: str) -> Path | None:
