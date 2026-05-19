@@ -69,7 +69,7 @@ def parse_input_data(
     if inline_json is not None:
         value = json.loads(inline_json)
     elif input_file is not None:
-        value = json.loads(input_file.read_text(encoding="utf-8"))
+        value = json.loads(input_file.read_text(encoding="utf-8-sig"))
     else:
         value = _prompt_schema(input_schema, console)
 

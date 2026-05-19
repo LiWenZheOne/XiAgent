@@ -36,6 +36,21 @@ def test_parse_input_data_reads_json_file(tmp_path: Path) -> None:
     assert parsed == {"topic": "from-file"}
 
 
+def test_parse_input_data_reads_bom_json_file(tmp_path: Path) -> None:
+    input_file = tmp_path / "input.json"
+    input_file.write_text(json.dumps({"topic": "from-file"}), encoding="utf-8-sig")
+
+    parsed = parse_input_data(
+        inline_json=None,
+        input_file=input_file,
+        interactive=False,
+        input_schema={"type": "object"},
+        console=ConsoleIO(),
+    )
+
+    assert parsed == {"topic": "from-file"}
+
+
 def test_parse_input_data_prompts_required_schema_fields() -> None:
     prompts: list[str] = []
     answers = iter(["hello", "7", "yes", '{"nested": true}'])
