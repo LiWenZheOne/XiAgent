@@ -1,0 +1,35 @@
+workflow:
+  id: deepseek_echo
+  version: "1.0.0"
+  scope: global
+  name: DeepSeek 测试工作流
+  description: 使用 DeepSeek 节点回复输入内容
+  input_schema:
+    type: object
+    required: ["prompt"]
+    properties:
+      prompt:
+        type: string
+
+nodes:
+  - id: chat
+    ref: ai.deepseek_chat.v1
+    inputs:
+      prompt:
+        from: "$workflow.input.prompt"
+    outputs:
+      type: object
+      required: ["text"]
+      properties:
+        text:
+          type: string
+        model:
+          type: string
+        usage:
+          type: object
+
+edges:
+  - from: START
+    to: chat
+  - from: chat
+    to: END
