@@ -39,11 +39,11 @@ class SqliteAssetService(AssetService):
     ) -> AssetRecord:
         await self._validate_write_scope(user_id=user_id, scope=scope, project_id=project_id)
         clean_name = name.strip()
-        clean_text = text.strip()
         if not clean_name:
             raise ValidationError("asset_name_required", "Asset name must not be empty")
-        if not clean_text:
+        if not text.strip():
             raise ValidationError("asset_text_required", "Text asset content must not be empty")
+        size_bytes = len(text.encode("utf-8"))
 
         asset_id = new_id("asset")
         now = _utc_now()
@@ -65,9 +65,9 @@ class SqliteAssetService(AssetService):
                     clean_name,
                     "text/plain",
                     None,
-                    len(clean_text.encode("utf-8")),
+                    size_bytes,
                     None,
-                    clean_text,
+                    text,
                     metadata_json,
                     user_id,
                     now,
@@ -80,7 +80,7 @@ class SqliteAssetService(AssetService):
                 asset_id=asset_id,
                 scope=scope,
                 project_id=project_id,
-                search_text=f"{clean_name}\n{clean_text}\n{metadata_json}",
+                search_text=f"{clean_name}\n{text}\n{metadata_json}",
             )
 
         return AssetRecord(
@@ -91,9 +91,9 @@ class SqliteAssetService(AssetService):
             name=clean_name,
             mime_type="text/plain",
             content_hash=None,
-            size_bytes=len(clean_text.encode("utf-8")),
+            size_bytes=size_bytes,
             storage_uri=None,
-            text_content=clean_text,
+            text_content=text,
             metadata=dict(metadata),
             created_by=user_id,
             created_at=now,
@@ -119,47 +119,54 @@ class SqliteAssetService(AssetService):
         if not content:
             raise ValidationError("asset_content_required", "File content must not be empty")
 
-        content_hash, storage_uri, size_bytes = self._storage.put_bytes(
-            file_name=clean_name,
-            content=content,
-        )
+        (
+            content_hash,
+            storage_uri,
+            size_bytes,
+            storage_created,
+        ) = self._storage.put_bytes_with_status(file_name=clean_name, content=content)
         asset_id = new_id("asset")
         now = _utc_now()
         metadata_json = _metadata_json(metadata)
-        async with connect_db(self._database_path) as db:
-            await db.execute(
-                """
-                insert into assets (
-                  asset_id, scope, project_id, asset_type, name, mime_type, content_hash,
-                  size_bytes, storage_uri, text_content, metadata_json, created_by,
-                  created_at, updated_at, deleted_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    asset_id,
-                    scope,
-                    project_id,
-                    "file",
-                    clean_name,
-                    content_type,
-                    content_hash,
-                    size_bytes,
-                    storage_uri,
-                    None,
-                    metadata_json,
-                    user_id,
-                    now,
-                    now,
-                    None,
-                ),
-            )
-            await _insert_search_entry(
-                db,
-                asset_id=asset_id,
-                scope=scope,
-                project_id=project_id,
-                search_text=f"{clean_name}\n{metadata_json}",
-            )
+        try:
+            async with connect_db(self._database_path) as db:
+                await db.execute(
+                    """
+                    insert into assets (
+                      asset_id, scope, project_id, asset_type, name, mime_type, content_hash,
+                      size_bytes, storage_uri, text_content, metadata_json, created_by,
+                      created_at, updated_at, deleted_at
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        asset_id,
+                        scope,
+                        project_id,
+                        "file",
+                        clean_name,
+                        content_type,
+                        content_hash,
+                        size_bytes,
+                        storage_uri,
+                        None,
+                        metadata_json,
+                        user_id,
+                        now,
+                        now,
+                        None,
+                    ),
+                )
+                await _insert_search_entry(
+                    db,
+                    asset_id=asset_id,
+                    scope=scope,
+                    project_id=project_id,
+                    search_text=f"{clean_name}\n{metadata_json}",
+                )
+        except Exception:
+            if storage_created:
+                self._storage.delete_uri(storage_uri)
+            raise
 
         return AssetRecord(
             asset_id=asset_id,
@@ -198,6 +205,12 @@ class SqliteAssetService(AssetService):
 
         asset = _asset_from_row(row)
         if asset.scope == "project":
+            if project_id is not None and asset.project_id != project_id:
+                raise NotFoundError(
+                    "asset_not_found",
+                    "Asset was not found",
+                    {"asset_id": asset_id},
+                )
             await self._user_service.ensure_project_access(
                 user_id=user_id,
                 project_id=asset.project_id or project_id or "",

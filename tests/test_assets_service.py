@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import sqlite3
+
+import aiosqlite
 import pytest
 
+from xiagent.assets.local_storage import LocalAssetStorage
 from xiagent.assets.service import SqliteAssetService
-from xiagent.core.errors import PermissionDeniedError, ValidationError
+from xiagent.core.errors import NotFoundError, PermissionDeniedError, ValidationError
 from xiagent.infrastructure.migrations import migrate
 from xiagent.users.service import SqliteUserService
 
@@ -171,6 +175,141 @@ async def test_get_asset_content_returns_text_and_file_content(test_settings) ->
     assert text_content.bytes_content is None
     assert file_content.bytes_content == b"file content"
     assert file_content.text_content is None
+
+
+async def test_get_project_asset_rejects_mismatched_project_context(test_settings) -> None:
+    await migrate(test_settings.database_path)
+    users = SqliteUserService(test_settings.database_path)
+    user = await users.create_user(username="alice", password="secret-123")
+    project_a = await users.create_project(owner_user_id=user.user_id, name="project A")
+    project_b = await users.create_project(owner_user_id=user.user_id, name="project B")
+    assets = SqliteAssetService(
+        database_path=test_settings.database_path,
+        storage_dir=test_settings.asset_storage_dir,
+        user_service=users,
+    )
+    asset = await assets.create_text_asset(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project_a.project_id,
+        name="project A notes",
+        text="project A only",
+        metadata={},
+    )
+
+    with pytest.raises(NotFoundError) as asset_exc_info:
+        await assets.get_asset(
+            user_id=user.user_id,
+            asset_id=asset.asset_id,
+            project_id=project_b.project_id,
+        )
+    with pytest.raises(NotFoundError) as content_exc_info:
+        await assets.get_asset_content(
+            user_id=user.user_id,
+            asset_id=asset.asset_id,
+            project_id=project_b.project_id,
+        )
+
+    assert asset_exc_info.value.code == "asset_not_found"
+    assert content_exc_info.value.code == "asset_not_found"
+
+
+async def test_create_text_asset_preserves_original_text_and_size(test_settings) -> None:
+    await migrate(test_settings.database_path)
+    users = SqliteUserService(test_settings.database_path)
+    user = await users.create_user(username="alice", password="secret-123")
+    assets = SqliteAssetService(
+        database_path=test_settings.database_path,
+        storage_dir=test_settings.asset_storage_dir,
+        user_service=users,
+    )
+    original_text = "  line one\nline two  \n"
+
+    asset = await assets.create_text_asset(
+        user_id=user.user_id,
+        scope="global",
+        project_id=None,
+        name="notes",
+        text=original_text,
+        metadata={},
+    )
+    content = await assets.get_asset_content(user_id=user.user_id, asset_id=asset.asset_id)
+
+    assert asset.size_bytes == len(original_text.encode("utf-8"))
+    assert content.text_content == original_text
+
+
+def test_local_asset_storage_rejects_path_traversal(tmp_path) -> None:
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside", encoding="utf-8")
+    storage = LocalAssetStorage(tmp_path / "assets")
+
+    with pytest.raises(ValidationError) as exc_info:
+        storage.read_bytes("../outside.txt")
+
+    assert exc_info.value.code == "invalid_storage_uri"
+
+
+async def test_import_file_asset_cleans_up_storage_when_db_insert_fails(test_settings) -> None:
+    await migrate(test_settings.database_path)
+    users = SqliteUserService(test_settings.database_path)
+    assets = SqliteAssetService(
+        database_path=test_settings.database_path,
+        storage_dir=test_settings.asset_storage_dir,
+        user_service=users,
+    )
+
+    with pytest.raises((aiosqlite.IntegrityError, sqlite3.IntegrityError)):
+        await assets.import_file_asset(
+            user_id="user_missing",
+            scope="global",
+            project_id=None,
+            file_name="orphan.txt",
+            content_type="text/plain",
+            content=b"orphan content",
+            metadata={},
+        )
+
+    stored_files = [
+        item
+        for item in test_settings.asset_storage_dir.rglob("*")
+        if item.is_file()
+    ]
+    assert stored_files == []
+
+
+async def test_import_file_asset_failure_keeps_existing_deduplicated_file(test_settings) -> None:
+    await migrate(test_settings.database_path)
+    users = SqliteUserService(test_settings.database_path)
+    user = await users.create_user(username="alice", password="secret-123")
+    assets = SqliteAssetService(
+        database_path=test_settings.database_path,
+        storage_dir=test_settings.asset_storage_dir,
+        user_service=users,
+    )
+    existing = await assets.import_file_asset(
+        user_id=user.user_id,
+        scope="global",
+        project_id=None,
+        file_name="existing.txt",
+        content_type="text/plain",
+        content=b"shared content",
+        metadata={},
+    )
+
+    with pytest.raises((aiosqlite.IntegrityError, sqlite3.IntegrityError)):
+        await assets.import_file_asset(
+            user_id="user_missing",
+            scope="global",
+            project_id=None,
+            file_name="failed.txt",
+            content_type="text/plain",
+            content=b"shared content",
+            metadata={},
+        )
+    content = await assets.get_asset_content(user_id=user.user_id, asset_id=existing.asset_id)
+
+    assert content.bytes_content == b"shared content"
 
 
 async def test_delete_asset_soft_deletes_and_search_excludes_it(test_settings) -> None:
