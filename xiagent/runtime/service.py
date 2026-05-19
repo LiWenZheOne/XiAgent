@@ -124,7 +124,11 @@ class SqliteRuntimeService:
                 task_id,
                 {"code": exc.code, "message": exc.message, "details": exc.details},
             )
-            raise
+            raise exc.__class__(
+                code=exc.code,
+                message=exc.message,
+                details=exc.details | {"task_id": task_id},
+            ) from exc
         except Exception as exc:
             await self._fail_task(
                 task_id,
@@ -221,7 +225,11 @@ class SqliteRuntimeService:
                 task_id,
                 {"code": exc.code, "message": exc.message, "details": exc.details},
             )
-            raise
+            raise exc.__class__(
+                code=exc.code,
+                message=exc.message,
+                details=exc.details | {"task_id": task_id},
+            ) from exc
         except Exception as exc:
             await self._fail_task(
                 task_id,

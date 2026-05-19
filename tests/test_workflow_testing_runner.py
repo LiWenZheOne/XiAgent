@@ -185,6 +185,50 @@ async def test_runner_accepts_positional_session_and_console(tmp_path: Path) -> 
     assert result.task.status == "succeeded"
 
 
+async def test_runner_returns_failed_task_for_missing_input_reference(tmp_path: Path) -> None:
+    contract = _echo_contract()
+    contract["workflow"]["input_schema"] = {
+        "type": "object",
+        "properties": {"missing": {"type": "string"}},
+    }
+    contract["nodes"][0]["inputs"] = {"topic": {"from": "$workflow.input.missing"}}
+    session = await (
+        WorkflowTestBuilder()
+        .with_database_path(tmp_path / "workflow-test.sqlite3")
+        .with_asset_storage_dir(tmp_path / "assets")
+        .with_workflow_dir(tmp_path / "workflows")
+        .with_run_output_dir(tmp_path / "runs")
+        .build()
+    )
+    runner = WorkflowTestRunner(session=session, console=ConsoleIO())
+
+    result = await runner.run_contract(contract, input_data={})
+
+    assert result.task.status == "failed"
+    assert result.events[-1].event_type == "task_failed"
+
+
+async def test_runner_preview_false_does_not_generate_preview(tmp_path: Path) -> None:
+    session = await (
+        WorkflowTestBuilder()
+        .with_database_path(tmp_path / "workflow-test.sqlite3")
+        .with_asset_storage_dir(tmp_path / "assets")
+        .with_workflow_dir(tmp_path / "workflows")
+        .with_run_output_dir(tmp_path / "runs")
+        .build()
+    )
+    runner = WorkflowTestRunner(session=session, console=ConsoleIO())
+
+    result = await runner.run_contract(
+        _echo_contract(),
+        input_data={"topic": "hello"},
+        preview=False,
+    )
+
+    assert result.preview_path is None
+    assert not (result.run_dir / "preview.html").exists()
+
+
 async def test_runner_resumes_waiting_task_from_console(tmp_path: Path) -> None:
     answers = iter(['{"decision":"approve"}'])
     output_lines: list[str] = []

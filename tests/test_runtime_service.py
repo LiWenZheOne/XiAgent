@@ -340,6 +340,7 @@ async def test_missing_optional_input_reference_fails_persisted_task(test_settin
     tasks = await _list_tasks(test_settings)
     assert len(tasks) == 1
     assert tasks[0]["status"] == "failed"
+    assert exc_info.value.details["task_id"] == tasks[0]["task_id"]
     events = await runtime.list_events(
         user_id=user_id,
         project_id=project_id,

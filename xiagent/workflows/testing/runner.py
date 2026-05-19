@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from xiagent.core.errors import ValidationError
+from xiagent.core.errors import ValidationError, XiAgentError
 from xiagent.core.schemas import validate_json_value
 from xiagent.runtime.models import NodeExecutionRecord, TaskEventRecord, TaskRecord
 from xiagent.workflows.loader import load_workflow_file
@@ -81,12 +81,22 @@ class WorkflowTestRunner:
     ) -> WorkflowTestRunResult:
         workflow = contract["workflow"]
         self._console.write(f"[01] 加载工作流 {workflow['id']} {workflow['version']}")
-        task = await self._session.runtime.create_task_from_contract(
-            user_id=self._session.user.user_id,
-            project_id=self._session.project.project_id,
-            contract=contract,
-            input_data=input_data,
-        )
+        try:
+            task = await self._session.runtime.create_task_from_contract(
+                user_id=self._session.user.user_id,
+                project_id=self._session.project.project_id,
+                contract=contract,
+                input_data=input_data,
+            )
+        except XiAgentError as exc:
+            task_id = exc.details.get("task_id")
+            if not isinstance(task_id, str):
+                raise
+            task = await self._session.runtime.get_task(
+                user_id=self._session.user.user_id,
+                project_id=self._session.project.project_id,
+                task_id=task_id,
+            )
 
         while task.status == "waiting":
             executions = await self._list_node_executions(task.task_id)
@@ -157,7 +167,7 @@ class WorkflowTestRunner:
         events: list[TaskEventRecord],
         artifacts: list[ImageArtifact],
     ) -> Path | None:
-        if preview is None and not open_preview:
+        if (preview is None or preview is False) and not open_preview:
             return None
 
         preview_path = run_dir / "preview.html"
