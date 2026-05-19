@@ -31,3 +31,25 @@ DEEPSEEK_MODEL=deepseek-v4-flash
 ```powershell
 python -m pytest -q
 ```
+
+## 无 UI 工作流测试
+
+可以通过 CLI 直接执行工作流文件：
+
+```powershell
+python -m xiagent.workflows.testing_cli workflows/global/deepseek_echo.workflow.yaml --input '{"prompt":"你好"}'
+```
+
+也可以从工作流目录按模板 ID 执行：
+
+```powershell
+python -m xiagent.workflows.testing_cli --workflow-id deepseek_echo --input '{"prompt":"你好"}'
+```
+
+默认使用测试数据库 `.data/workflow-test.sqlite3`、测试用户 `workflow-test-admin` 和测试项目 `Workflow Test Project`。遇到人工等待节点时，CLI 会提示输入恢复输出 JSON。
+
+图片输出默认打印本地路径。需要打开图片或生成 HTML 报告时：
+
+```powershell
+python -m xiagent.workflows.testing_cli workflows/demo.workflow.yaml --input-file .data/input.json --open-images --preview html --open-preview
+```
