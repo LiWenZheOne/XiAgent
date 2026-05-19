@@ -65,3 +65,173 @@ def test_parse_input_data_prompts_required_schema_fields() -> None:
         "options": {"nested": True},
     }
     assert prompts == ["topic: ", "count: ", "enabled: ", "options (JSON): "]
+
+
+from xiagent.workflows.testing import WorkflowTestBuilder
+from xiagent.workflows.testing.runner import WorkflowTestRunner
+
+
+def _echo_contract() -> dict:
+    return {
+        "workflow": {
+            "id": "runner-echo",
+            "version": "1.0.0",
+            "scope": "global",
+            "name": "Runner Echo",
+            "input_schema": {
+                "type": "object",
+                "required": ["topic"],
+                "properties": {"topic": {"type": "string"}},
+            },
+        },
+        "nodes": [
+            {
+                "id": "echo",
+                "ref": "tool.echo.v1",
+                "inputs": {"topic": {"from": "$workflow.input.topic"}},
+                "outputs": {"type": "object"},
+            }
+        ],
+        "edges": [{"from": "START", "to": "echo"}, {"from": "echo", "to": "END"}],
+    }
+
+
+def _approval_contract() -> dict:
+    return {
+        "workflow": {
+            "id": "runner-approval",
+            "version": "1.0.0",
+            "scope": "global",
+            "name": "Runner Approval",
+            "input_schema": {
+                "type": "object",
+                "required": ["topic"],
+                "properties": {"topic": {"type": "string"}},
+            },
+        },
+        "nodes": [
+            {
+                "id": "review",
+                "ref": "system.human_approval.v1",
+                "inputs": {"topic": {"from": "$workflow.input.topic"}},
+                "outputs": {
+                    "type": "object",
+                    "required": ["decision"],
+                    "properties": {"decision": {"type": "string"}},
+                },
+            },
+            {
+                "id": "echo",
+                "ref": "tool.echo.v1",
+                "inputs": {"decision": {"from": "$nodes.review.output.decision"}},
+                "outputs": {"type": "object"},
+            },
+        ],
+        "edges": [
+            {"from": "START", "to": "review"},
+            {
+                "from": "review",
+                "to": "echo",
+                "when": {"path": "$nodes.review.output.decision", "equals": "approve"},
+            },
+            {"from": "echo", "to": "END"},
+        ],
+    }
+
+
+async def test_runner_executes_echo_contract_and_collects_events(tmp_path: Path) -> None:
+    session = await (
+        WorkflowTestBuilder()
+        .with_database_path(tmp_path / "workflow-test.sqlite3")
+        .with_asset_storage_dir(tmp_path / "assets")
+        .with_workflow_dir(tmp_path / "workflows")
+        .with_run_output_dir(tmp_path / "runs")
+        .build()
+    )
+    runner = WorkflowTestRunner(session=session, console=ConsoleIO())
+
+    result = await runner.run_contract(_echo_contract(), input_data={"topic": "hello"})
+
+    assert result.task.status == "succeeded"
+    assert [event.event_type for event in result.events] == [
+        "task_created",
+        "task_started",
+        "node_started",
+        "node_succeeded",
+        "task_succeeded",
+    ]
+    assert result.node_executions[0].output_snapshot == {"echo": {"topic": "hello"}}
+    assert result.run_dir == tmp_path / "runs" / result.task.task_id
+
+
+async def test_runner_resumes_waiting_task_from_console(tmp_path: Path) -> None:
+    answers = iter(['{"decision":"approve"}'])
+    output_lines: list[str] = []
+    console = ConsoleIO(
+        input_func=lambda prompt: next(answers),
+        output_func=output_lines.append,
+    )
+    session = await (
+        WorkflowTestBuilder()
+        .with_database_path(tmp_path / "workflow-test.sqlite3")
+        .with_asset_storage_dir(tmp_path / "assets")
+        .with_workflow_dir(tmp_path / "workflows")
+        .with_run_output_dir(tmp_path / "runs")
+        .build()
+    )
+    runner = WorkflowTestRunner(session=session, console=console)
+
+    result = await runner.run_contract(_approval_contract(), input_data={"topic": "hello"})
+
+    assert result.task.status == "succeeded"
+    assert [item.node_id for item in result.node_executions] == ["review", "echo"]
+    assert any("[等待输入] 节点 review" in line for line in output_lines)
+
+
+async def test_runner_loads_contract_from_workflow_file(tmp_path: Path) -> None:
+    workflow_file = tmp_path / "echo.workflow.yaml"
+    workflow_file.write_text(
+        """
+workflow:
+  id: file-echo
+  version: 1.0.0
+  scope: global
+  name: File Echo
+  input_schema:
+    type: object
+    required: ["topic"]
+    properties:
+      topic:
+        type: string
+nodes:
+  - id: echo
+    ref: tool.echo.v1
+    inputs:
+      topic:
+        from: "$workflow.input.topic"
+    outputs:
+      type: object
+edges:
+  - from: START
+    to: echo
+  - from: echo
+    to: END
+""".lstrip(),
+        encoding="utf-8",
+    )
+    workflow_dir = tmp_path / "workflows"
+    workflow_dir.mkdir()
+    session = await (
+        WorkflowTestBuilder()
+        .with_database_path(tmp_path / "workflow-test.sqlite3")
+        .with_asset_storage_dir(tmp_path / "assets")
+        .with_workflow_dir(workflow_dir)
+        .with_run_output_dir(tmp_path / "runs")
+        .build()
+    )
+    runner = WorkflowTestRunner(session=session, console=ConsoleIO())
+
+    result = await runner.run_workflow_file(workflow_file, input_data={"topic": "file"})
+
+    assert result.task.workflow_id == "file-echo"
+    assert result.task.status == "succeeded"
