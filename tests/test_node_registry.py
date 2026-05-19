@@ -53,6 +53,23 @@ def test_build_node_registry_registers_builtin_nodes(test_settings) -> None:
     }
 
 
+def test_build_node_registry_uses_settings_deepseek_model(test_settings) -> None:
+    from dataclasses import replace
+
+    registry = build_node_registry(
+        replace(
+            test_settings,
+            deepseek_api_key="settings-test-key",
+            deepseek_base_url="https://settings.deepseek.test",
+            deepseek_model="settings-model",
+        )
+    )
+
+    deepseek_node = registry.get("ai.deepseek_chat.v1")
+
+    assert deepseek_node._model == "settings-model"  # noqa: SLF001
+
+
 async def test_human_approval_returns_waiting_with_requested_inputs() -> None:
     node = HumanApprovalNode()
     inputs = {"question": "Approve?", "context": {"risk": "low"}}

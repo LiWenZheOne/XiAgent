@@ -7,3 +7,4 @@ storage/assets/
 .env
 .env.*
 !.env.example
+xiagent/models/local_config.toml

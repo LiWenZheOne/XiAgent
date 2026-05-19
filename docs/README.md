@@ -14,6 +14,7 @@ XiAgent 文档按项目架构、设计文档、开发文档三个层级维护。
 - [工作流模板与契约设计](design/2026-05-19-04-workflow-contract-design.md)
 - [节点、任务运行与恢复设计](design/2026-05-19-05-node-runtime-task-design.md)
 - [前端对接 API 设计](design/2026-05-19-06-api-integration-design.md)
+- [模型路由模块设计](design/2026-05-19-07-model-router-module-design.md)
 
 ## 开发文档
 

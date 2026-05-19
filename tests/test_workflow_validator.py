@@ -345,6 +345,8 @@ def test_workflow_catalog_returns_deep_copied_contracts(tmp_path) -> None:
 
 
 def test_deepseek_echo_workflow_contract_declares_node_outputs() -> None:
+    from xiagent.models import ChatModelRouter
+
     contract = load_workflow_file(Path("workflows/global/deepseek_echo.workflow.yaml"))
 
     assert contract["workflow"]["id"] == "deepseek_echo"
@@ -354,8 +356,8 @@ def test_deepseek_echo_workflow_contract_declares_node_outputs() -> None:
     registry = NodeRegistry()
     registry.register(
         DeepSeekChatNode(
-            api_key=None,
-            base_url="https://api.deepseek.com",
+            model_router=ChatModelRouter(),
+            provider="deepseek",
             model="deepseek-v4-flash",
         )
     )
