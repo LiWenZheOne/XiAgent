@@ -87,6 +87,54 @@ async def test_asset_collection_requires_existing_parent(test_settings) -> None:
             )
 
 
+async def test_asset_collection_requires_existing_project(test_settings) -> None:
+    await migrate(test_settings.database_path)
+    async with connect_db(test_settings.database_path) as db:
+        await _insert_user(db, user_id="user_collection_project")
+
+        with pytest.raises(aiosqlite.IntegrityError):
+            await db.execute(
+                """
+                insert into asset_collections (
+                  collection_id, scope, project_id, name, created_by, created_at, updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "collection_missing_project",
+                    "project",
+                    "missing_project",
+                    "Collection",
+                    "user_collection_project",
+                    "2026-05-19T00:00:00",
+                    "2026-05-19T00:00:00",
+                ),
+            )
+
+
+async def test_asset_tag_requires_existing_project(test_settings) -> None:
+    await migrate(test_settings.database_path)
+    async with connect_db(test_settings.database_path) as db:
+        await _insert_user(db, user_id="user_tag_project")
+
+        with pytest.raises(aiosqlite.IntegrityError):
+            await db.execute(
+                """
+                insert into asset_tags (
+                  tag_id, scope, project_id, name, created_by, created_at, updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "tag_missing_project",
+                    "project",
+                    "missing_project",
+                    "Tag",
+                    "user_tag_project",
+                    "2026-05-19T00:00:00",
+                    "2026-05-19T00:00:00",
+                ),
+            )
+
+
 async def test_asset_index_entries_require_existing_collection_and_tag(test_settings) -> None:
     await migrate(test_settings.database_path)
     async with connect_db(test_settings.database_path) as db:
@@ -152,15 +200,77 @@ async def test_asset_index_entries_require_existing_collection_and_tag(test_sett
             )
 
 
-async def _insert_user_and_project(db: aiosqlite.Connection) -> None:
+async def test_asset_index_entry_requires_existing_project(test_settings) -> None:
+    await migrate(test_settings.database_path)
+    async with connect_db(test_settings.database_path) as db:
+        await _insert_user_and_project(db)
+        await _insert_asset(db, asset_id="asset_index_project", project_id="project_1")
+
+        with pytest.raises(aiosqlite.IntegrityError):
+            await db.execute(
+                """
+                insert into asset_index_entries (
+                  entry_id, scope, project_id, asset_id, search_text, created_at, updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "entry_missing_project",
+                    "project",
+                    "missing_project",
+                    "asset_index_project",
+                    "search",
+                    "2026-05-19T00:00:00",
+                    "2026-05-19T00:00:00",
+                ),
+            )
+
+
+async def test_workflow_template_requires_existing_project(test_settings) -> None:
+    await migrate(test_settings.database_path)
+    async with connect_db(test_settings.database_path) as db:
+        with pytest.raises(aiosqlite.IntegrityError):
+            await db.execute(
+                """
+                insert into workflow_templates (
+                  template_id, workflow_id, version, scope, project_id, name, contract_json,
+                  status, created_at, updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "template_missing_project",
+                    "workflow_missing_project",
+                    "1.0.0",
+                    "project",
+                    "missing_project",
+                    "Workflow",
+                    "{}",
+                    "active",
+                    "2026-05-19T00:00:00",
+                    "2026-05-19T00:00:00",
+                ),
+            )
+
+
+async def _insert_user(db: aiosqlite.Connection, *, user_id: str = "user_1") -> None:
     await db.execute(
         """
         insert into users (
           user_id, username, password_hash, status, created_at, updated_at
         ) values (?, ?, ?, ?, ?, ?)
         """,
-        ("user_1", "alice", "hash", "active", "2026-05-19T00:00:00", "2026-05-19T00:00:00"),
+        (
+            user_id,
+            user_id,
+            "hash",
+            "active",
+            "2026-05-19T00:00:00",
+            "2026-05-19T00:00:00",
+        ),
     )
+
+
+async def _insert_user_and_project(db: aiosqlite.Connection) -> None:
+    await _insert_user(db)
     await db.execute(
         """
         insert into projects (
@@ -172,6 +282,33 @@ async def _insert_user_and_project(db: aiosqlite.Connection) -> None:
             "user_1",
             "Project",
             "active",
+            "2026-05-19T00:00:00",
+            "2026-05-19T00:00:00",
+        ),
+    )
+
+
+async def _insert_asset(
+    db: aiosqlite.Connection,
+    *,
+    asset_id: str,
+    project_id: str,
+) -> None:
+    await db.execute(
+        """
+        insert into assets (
+          asset_id, scope, project_id, asset_type, name, metadata_json, created_by,
+          created_at, updated_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            asset_id,
+            "project",
+            project_id,
+            "text",
+            "Asset",
+            "{}",
+            "user_1",
             "2026-05-19T00:00:00",
             "2026-05-19T00:00:00",
         ),
