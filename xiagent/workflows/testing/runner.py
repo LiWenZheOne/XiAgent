@@ -89,14 +89,7 @@ class WorkflowTestRunner:
                 input_data=input_data,
             )
         except XiAgentError as exc:
-            task_id = exc.details.get("task_id")
-            if not isinstance(task_id, str):
-                raise
-            task = await self._session.runtime.get_task(
-                user_id=self._session.user.user_id,
-                project_id=self._session.project.project_id,
-                task_id=task_id,
-            )
+            task = await self._task_from_persisted_failure(exc)
 
         while task.status == "waiting":
             executions = await self._list_node_executions(task.task_id)
@@ -106,13 +99,16 @@ class WorkflowTestRunner:
             self._console.write(f"[等待输入] 节点 {waiting_execution.node_id}")
             output = self._console.prompt_resume_output(waiting_execution, output_schema)
             validate_json_value(output_schema, output)
-            task = await self._session.runtime.resume_task(
-                user_id=self._session.user.user_id,
-                project_id=self._session.project.project_id,
-                task_id=task.task_id,
-                node_id=waiting_execution.node_id,
-                output=output,
-            )
+            try:
+                task = await self._session.runtime.resume_task(
+                    user_id=self._session.user.user_id,
+                    project_id=self._session.project.project_id,
+                    task_id=task.task_id,
+                    node_id=waiting_execution.node_id,
+                    output=output,
+                )
+            except XiAgentError as exc:
+                task = await self._task_from_persisted_failure(exc)
 
         node_executions = await self._list_node_executions(task.task_id)
         events = await self._list_events(task.task_id)
@@ -151,6 +147,16 @@ class WorkflowTestRunner:
 
     async def _list_events(self, task_id: str) -> list[TaskEventRecord]:
         return await self._session.runtime.list_events(
+            user_id=self._session.user.user_id,
+            project_id=self._session.project.project_id,
+            task_id=task_id,
+        )
+
+    async def _task_from_persisted_failure(self, exc: XiAgentError) -> TaskRecord:
+        task_id = exc.details.get("task_id")
+        if not isinstance(task_id, str):
+            raise exc
+        return await self._session.runtime.get_task(
             user_id=self._session.user.user_id,
             project_id=self._session.project.project_id,
             task_id=task_id,

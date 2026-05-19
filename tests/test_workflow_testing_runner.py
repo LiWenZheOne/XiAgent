@@ -208,6 +208,37 @@ async def test_runner_returns_failed_task_for_missing_input_reference(tmp_path: 
     assert result.events[-1].event_type == "task_failed"
 
 
+async def test_runner_returns_failed_task_when_resume_continuation_fails(
+    tmp_path: Path,
+) -> None:
+    contract = _approval_contract()
+    contract["workflow"]["input_schema"] = {
+        "type": "object",
+        "properties": {"optional_field": {"type": "string"}},
+    }
+    contract["nodes"][0]["inputs"] = {}
+    contract["nodes"][1]["inputs"] = {
+        "value": {"from": "$workflow.input.optional_field"},
+    }
+    answers = iter(['{"decision":"approve"}'])
+    console = ConsoleIO(input_func=lambda prompt: next(answers))
+    session = await (
+        WorkflowTestBuilder()
+        .with_database_path(tmp_path / "workflow-test.sqlite3")
+        .with_asset_storage_dir(tmp_path / "assets")
+        .with_workflow_dir(tmp_path / "workflows")
+        .with_run_output_dir(tmp_path / "runs")
+        .build()
+    )
+    runner = WorkflowTestRunner(session=session, console=console)
+
+    result = await runner.run_contract(contract, input_data={})
+
+    assert result.task.status == "failed"
+    assert result.events[-1].event_type == "task_failed"
+    assert "task_resumed" in [event.event_type for event in result.events]
+
+
 async def test_runner_preview_false_does_not_generate_preview(tmp_path: Path) -> None:
     session = await (
         WorkflowTestBuilder()
