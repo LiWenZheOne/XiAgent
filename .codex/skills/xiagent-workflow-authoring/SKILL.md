@@ -29,6 +29,19 @@ description: Use when creating or modifying XiAgent workflow YAML/JSON contracts
 - 不直接访问 SQLite、资产文件路径或其他模块内部实现；测试也要通过正式服务、运行时和构建器。
 - 任务、项目、资产、工作流必须挂到明确的 `user_id` 和 `project_id` 关系下；默认测试用户和项目由构建器创建。
 
+## Structured Output Boundary
+
+- LLM 结构化输出的目标结构写在工作流节点的 `outputs` JSON Schema 中；`prompt` 只描述任务语义，不能作为唯一数据契约。
+- 下游节点引用结构化结果前，先确认对应字段已经在上游节点 `outputs` 中声明，例如 `$nodes.character_analysis.output.characters` 必须能被 schema 校验器识别。
+- UI `layout` 只描述展示形态，例如 table、tabs、grid、confirm；不要把展示列、页签或文案当作数据结构来源。
+- 通用结构化抽取、结构化生成、JSON 解析、schema 校验和失败重试属于节点能力；工作流只选择节点、提供输入、声明输出契约和连接 DAG。
+- 需要角色表、分镜表、镜头表等不同结构时，优先复用同一个通用结构化节点并在各自工作流 `outputs` 中声明不同 schema；只有领域逻辑稳定且值得复用时才新增专用节点。
+
+## Framework Change Gate
+
+- 编写或修改工作流时，如果发现必须调整 `BaseNode`、`NodeContext`、运行时服务、工作流校验器、输入解析器、节点注册表等基础框架，先停止落工作流文件，向用户列出修改方案、影响范围、兼容性和测试计划，等待确认后再继续。
+- 工作流 skill 只应直接修改工作流契约、工作流测试或与契约验证直接相关的文档；基础框架改造应切换到节点或运行时实现任务，并遵守用户确认门。
+
 ## Node Matching Checklist
 
 | Question | Action |

@@ -19,12 +19,70 @@ def resolve_node_inputs(
                 message="Node input spec must be an object",
                 details={"input_name": input_name},
             )
-        resolved[input_name] = resolve_path(
-            input_spec.get("from"),
+        resolved[input_name] = resolve_input_spec(
+            input_spec,
             workflow_input=workflow_input,
             node_outputs=node_outputs,
         )
     return resolved
+
+
+def resolve_input_spec(
+    input_spec: Mapping[str, Any],
+    *,
+    workflow_input: Mapping[str, Any],
+    node_outputs: Mapping[str, Mapping[str, Any]],
+) -> Any:
+    if not isinstance(input_spec, Mapping):
+        raise ValidationError(
+            code="invalid_workflow_reference",
+            message="Node input spec must be an object",
+            details={"input_spec": input_spec},
+        )
+
+    if "from" in input_spec:
+        return resolve_path(
+            input_spec.get("from"),
+            workflow_input=workflow_input,
+            node_outputs=node_outputs,
+        )
+
+    if "value" in input_spec:
+        return input_spec["value"]
+
+    if "template" in input_spec:
+        template = input_spec.get("template")
+        if not isinstance(template, str):
+            raise ValidationError(
+                code="invalid_workflow_reference",
+                message="Workflow input template must be a string",
+                details={"template": template},
+            )
+        variables = input_spec.get("vars", {})
+        if not isinstance(variables, Mapping):
+            raise ValidationError(
+                code="invalid_workflow_reference",
+                message="Workflow input template vars must be an object",
+                details={"vars": variables},
+            )
+        resolved_vars = {
+            name: resolve_input_spec(
+                variable_spec,
+                workflow_input=workflow_input,
+                node_outputs=node_outputs,
+            )
+            for name, variable_spec in variables.items()
+        }
+        try:
+            return template.format(**resolved_vars)
+        except KeyError as exc:
+            raise ValidationError(
+                code="invalid_workflow_reference",
+                message="Workflow input template references an unknown variable",
+                details={"variable": str(exc)},
+            ) from exc
+
+    _raise_invalid_reference(str(input_spec))
 
 
 def resolve_path(

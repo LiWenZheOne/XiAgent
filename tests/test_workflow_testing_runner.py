@@ -6,6 +6,33 @@ from pathlib import Path
 from xiagent.workflows.testing.console import ConsoleIO, parse_input_data
 
 
+def test_console_prompts_resume_single_string_output_with_question() -> None:
+    prompts: list[str] = []
+    output_lines: list[str] = []
+    console = ConsoleIO(
+        input_func=lambda prompt: prompts.append(prompt) or "蓝色",
+        output_func=output_lines.append,
+    )
+
+    output = console.prompt_resume_output(
+        {
+            "node_id": "ask_color",
+            "status": "waiting",
+            "metadata": {"requested_inputs": {"question": "请告诉我你喜欢的颜色。"}},
+        },
+        {
+            "type": "object",
+            "required": ["answer"],
+            "properties": {"answer": {"type": "string", "minLength": 1}},
+            "additionalProperties": False,
+        },
+    )
+
+    assert output == {"answer": "蓝色"}
+    assert prompts == ["请告诉我你喜欢的颜色。\nanswer: "]
+    assert "resume output JSON: " not in prompts
+
+
 def test_parse_input_data_prefers_inline_json(tmp_path: Path) -> None:
     input_file = tmp_path / "input.json"
     input_file.write_text('{"topic":"from-file"}', encoding="utf-8")
@@ -49,6 +76,25 @@ def test_parse_input_data_reads_bom_json_file(tmp_path: Path) -> None:
     )
 
     assert parsed == {"topic": "from-file"}
+
+
+def test_parse_input_data_uses_empty_object_for_schema_without_required_fields() -> None:
+    def fail_on_prompt(prompt: str) -> str:
+        raise AssertionError(f"unexpected prompt: {prompt}")
+
+    parsed = parse_input_data(
+        inline_json=None,
+        input_file=None,
+        interactive=True,
+        input_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {},
+        },
+        console=ConsoleIO(input_func=fail_on_prompt),
+    )
+
+    assert parsed == {}
 
 
 def test_parse_input_data_prompts_required_schema_fields() -> None:

@@ -61,8 +61,10 @@ def validate_workflow_contract(contract: dict[str, Any], registry: NodeRegistry)
                     node_id=node.get("id"),
                     input_name=input_name,
                 )
-            _validate_reference(
-                input_spec.get("from"),
+            _validate_input_spec(
+                input_spec,
+                node_id=node["id"],
+                input_name=input_name,
                 node_ids=node_ids,
                 workflow_input_properties=input_properties,
                 node_outputs=node_outputs,
@@ -237,6 +239,92 @@ def _validate_reference(
         return
 
     _raise_invalid_reference("Workflow reference has unsupported format", reference=reference)
+
+
+def _validate_input_spec(
+    input_spec: Mapping[str, Any],
+    *,
+    node_id: str,
+    input_name: str,
+    node_ids: set[str],
+    workflow_input_properties: set[str] | None,
+    node_outputs: dict[str, dict[str, Any]],
+    available_node_refs: set[str] | None = None,
+) -> None:
+    modes = [mode for mode in ("from", "value", "template") if mode in input_spec]
+    if len(modes) != 1:
+        _raise_invalid_reference(
+            "Node input spec must define exactly one of from, value or template",
+            node_id=node_id,
+            input_name=input_name,
+            keys=sorted(input_spec),
+        )
+
+    unsupported_keys = set(input_spec).difference({"from", "value", "template", "vars"})
+    if unsupported_keys:
+        _raise_invalid_reference(
+            "Node input spec contains unsupported keys",
+            node_id=node_id,
+            input_name=input_name,
+            keys=sorted(unsupported_keys),
+        )
+    if "vars" in input_spec and "template" not in input_spec:
+        _raise_invalid_reference(
+            "Node input vars are only supported with template",
+            node_id=node_id,
+            input_name=input_name,
+        )
+
+    if "from" in input_spec:
+        _validate_reference(
+            input_spec.get("from"),
+            node_ids=node_ids,
+            workflow_input_properties=workflow_input_properties,
+            node_outputs=node_outputs,
+            available_node_refs=available_node_refs,
+        )
+        return
+
+    if "value" in input_spec:
+        return
+
+    template = input_spec.get("template")
+    if not isinstance(template, str):
+        _raise_invalid_reference(
+            "Node input template must be a string",
+            node_id=node_id,
+            input_name=input_name,
+        )
+    variables = input_spec.get("vars", {})
+    if not isinstance(variables, Mapping):
+        _raise_invalid_reference(
+            "Node input template vars must be an object",
+            node_id=node_id,
+            input_name=input_name,
+        )
+    for variable_name, variable_spec in variables.items():
+        if not isinstance(variable_name, str) or not variable_name:
+            _raise_invalid_reference(
+                "Node input template var name must be a non-empty string",
+                node_id=node_id,
+                input_name=input_name,
+            )
+        if not isinstance(variable_spec, Mapping):
+            _raise_invalid_reference(
+                "Node input template var spec must be an object",
+                node_id=node_id,
+                input_name=input_name,
+                variable=variable_name,
+            )
+        _validate_input_spec(
+            variable_spec,
+            node_id=node_id,
+            input_name=f"{input_name}.{variable_name}",
+            node_ids=node_ids,
+            workflow_input_properties=workflow_input_properties,
+            node_outputs=node_outputs,
+            available_node_refs=available_node_refs,
+        )
 
 
 def _detect_cycle(graph: dict[str, list[str]]) -> None:

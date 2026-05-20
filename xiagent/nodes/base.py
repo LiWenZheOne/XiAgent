@@ -41,6 +41,7 @@ class NodeContext:
     node_id: str
     node_execution_id: str
     config: dict[str, Any]
+    output_schema: dict[str, Any]
     asset_service: Any
     event_sink: Any
     logger: Any

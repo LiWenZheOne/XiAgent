@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import Any
+
 import pytest
 
 from xiagent.core.errors import PermissionDeniedError, ValidationError
 from xiagent.infrastructure.database import connect_db
 from xiagent.infrastructure.migrations import migrate
+from xiagent.nodes.base import BaseNode, NodeContext, NodeDescriptor, NodeResult
 from xiagent.nodes.registry import NodeRegistry
 from xiagent.nodes.system.human_approval import HumanApprovalNode
 from xiagent.nodes.tools.echo_tool import EchoToolNode
@@ -81,6 +85,28 @@ def _approval_contract() -> dict:
     }
 
 
+class OutputSchemaProbeNode(BaseNode):
+    def describe(self) -> NodeDescriptor:
+        return NodeDescriptor(
+            ref="test.output_schema_probe.v1",
+            name="Output Schema Probe",
+            version="1.0.0",
+            kind="test",
+            input_schema={"type": "object", "additionalProperties": False},
+            output_schema={
+                "type": "object",
+                "required": ["schema"],
+                "properties": {"schema": {"type": "object"}},
+                "additionalProperties": False,
+            },
+        )
+
+    async def run(self, ctx: NodeContext | None, inputs: Mapping[str, Any]) -> NodeResult:
+        if ctx is None:
+            raise AssertionError("runtime must pass node context")
+        return NodeResult(status="succeeded", output={"schema": ctx.output_schema})
+
+
 async def _runtime(test_settings, registry: NodeRegistry) -> tuple[SqliteRuntimeService, str, str]:
     await migrate(test_settings.database_path)
     users = SqliteUserService(test_settings.database_path)
@@ -144,6 +170,51 @@ async def test_simple_workflow_task_succeeds(test_settings) -> None:
     )
     assert executions[0].input_snapshot == {"topic": "测试"}
     assert executions[0].output_snapshot == {"echo": {"topic": "测试"}}
+
+
+async def test_runtime_passes_declared_output_schema_to_node_context(test_settings) -> None:
+    registry = NodeRegistry()
+    registry.register(OutputSchemaProbeNode())
+    runtime, user_id, project_id = await _runtime(test_settings, registry)
+    output_schema = {
+        "type": "object",
+        "required": ["schema"],
+        "properties": {"schema": {"type": "object"}},
+        "additionalProperties": False,
+    }
+    contract = {
+        "workflow": {
+            "id": "output-schema-probe",
+            "version": "1.0.0",
+            "scope": "global",
+            "name": "Output Schema Probe",
+            "input_schema": {"type": "object", "additionalProperties": False},
+        },
+        "nodes": [
+            {
+                "id": "probe",
+                "ref": "test.output_schema_probe.v1",
+                "inputs": {},
+                "outputs": output_schema,
+            }
+        ],
+        "edges": [{"from": "START", "to": "probe"}, {"from": "probe", "to": "END"}],
+    }
+
+    task = await runtime.create_task_from_contract(
+        user_id=user_id,
+        project_id=project_id,
+        contract=contract,
+        input_data={},
+    )
+
+    assert task.status == "succeeded"
+    executions = await runtime.list_node_executions(
+        user_id=user_id,
+        project_id=project_id,
+        task_id=task.task_id,
+    )
+    assert executions[0].output_snapshot == {"schema": output_schema}
 
 
 async def test_human_node_waits_and_resume_succeeds(test_settings) -> None:
@@ -552,6 +623,25 @@ def test_input_resolver_resolves_nested_node_outputs() -> None:
     )
 
     assert resolved == {"title": "第一章"}
+
+
+def test_input_resolver_resolves_literal_values_and_templates() -> None:
+    resolved = resolve_node_inputs(
+        {
+            "question": {"value": "你喜欢什么颜色？"},
+            "prompt": {
+                "template": "颜色：{color}\n食物：{food}",
+                "vars": {
+                    "color": {"from": "$nodes.color.output.answer"},
+                    "food": {"from": "$nodes.food.output.answer"},
+                },
+            },
+        },
+        workflow_input={},
+        node_outputs={"color": {"answer": "蓝色"}, "food": {"answer": "米饭"}},
+    )
+
+    assert resolved == {"question": "你喜欢什么颜色？", "prompt": "颜色：蓝色\n食物：米饭"}
 
 
 def test_input_resolver_missing_path_raises_validation_error() -> None:

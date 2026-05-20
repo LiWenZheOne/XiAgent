@@ -31,6 +31,18 @@ description: Use when creating or modifying XiAgent BaseNode implementations, no
 - 节点输入输出 schema 要能被工作流契约和下游节点稳定引用；不要把临时内部字段暴露为公共契约。
 - 外部 API 节点必须明确凭据来源、超时、失败状态和测试替身；不要在测试里真实调用外部服务。
 
+## Structured Output Boundary
+
+- LLM 结构化输出节点的业务数据契约必须由工作流节点的 `outputs` JSON Schema 声明；节点代码只实现通用结构化生成、JSON 解析、schema 校验、失败重试和错误语义。
+- 通用结构化节点应读取 `NodeContext.output_schema` 作为目标 schema，不要把角色表、分镜表、镜头表等业务字段硬编码进节点实现。只有明确创建专用领域节点时，才允许在节点描述中固定领域输出结构。
+- 不要为了让节点拿到结构而在 `inputs` 或 `config` 里重复一份输出 schema；除非是兼容旧工作流的过渡方案，否则以工作流 `outputs` 为唯一数据契约来源。
+- UI `layout`、表格列名、审批展示文案只负责展示，不得替代 `outputs` 数据契约；下游节点必须依赖 `$nodes.<id>.output...` 中由 schema 声明的字段。
+
+## Framework Change Gate
+
+- 如果节点开发需要修改 `BaseNode`、`NodeContext`、`NodeRegistry`、运行时服务、工作流校验器、输入解析器或其它基础框架代码，先暂停实现，向用户说明修改原因、影响范围、兼容性和测试计划，等待用户确认后再改。
+- 只在新增或修改节点自己所属文件、节点测试、注册表接入时可以直接按本 skill 的 TDD 流程推进；不要把基础框架改造伪装成节点内部改动。
+
 ## TDD Checklist
 
 | Phase | Required Evidence |

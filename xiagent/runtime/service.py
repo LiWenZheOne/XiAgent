@@ -378,6 +378,7 @@ class SqliteRuntimeService:
             node_id=node_id,
             node_execution_id=node_execution_id,
             config=dict(node_def.get("config", {})),
+            output_schema=dict(node_def["outputs"]),
             asset_service=None,
             event_sink=None,
             logger=None,

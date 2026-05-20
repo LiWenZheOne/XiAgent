@@ -42,6 +42,21 @@ def test_valid_workflow_contract_is_accepted() -> None:
     validate_workflow_contract(contract, registry)
 
 
+def test_literal_and_template_node_inputs_are_accepted() -> None:
+    registry = NodeRegistry()
+    registry.register(EchoToolNode())
+    contract = _two_node_contract()
+    contract["nodes"][0]["inputs"] = {"question": {"value": "你喜欢什么颜色？"}}
+    contract["nodes"][1]["inputs"] = {
+        "prompt": {
+            "template": "回答：{answer}",
+            "vars": {"answer": {"from": "$nodes.a.output.ok"}},
+        }
+    }
+
+    validate_workflow_contract(contract, registry)
+
+
 def test_unknown_node_ref_is_rejected() -> None:
     registry = NodeRegistry()
     registry.register(HumanApprovalNode())
@@ -350,10 +365,11 @@ def test_deepseek_echo_workflow_contract_declares_node_outputs() -> None:
     contract = load_workflow_file(Path("workflows/global/deepseek_echo.workflow.yaml"))
 
     assert contract["workflow"]["id"] == "deepseek_echo"
-    chat_node = next(node for node in contract["nodes"] if node["id"] == "chat")
-    assert set(chat_node["outputs"]["required"]) == {"text", "model", "usage"}
+    profile_node = next(node for node in contract["nodes"] if node["id"] == "profile")
+    assert set(profile_node["outputs"]["required"]) == {"text", "model", "usage"}
 
     registry = NodeRegistry()
+    registry.register(HumanApprovalNode())
     registry.register(
         DeepSeekChatNode(
             model_router=ChatModelRouter(),

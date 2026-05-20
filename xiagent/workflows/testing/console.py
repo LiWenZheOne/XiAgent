@@ -46,10 +46,16 @@ class ConsoleIO:
         self.write(_to_pretty_json(_to_jsonable(execution)))
 
     def prompt_resume_output(self, execution: Any, output_schema: dict[str, Any]) -> dict[str, Any]:
-        self.write("[等待节点]")
-        self.show_node_execution(execution)
         metadata = _read_attr(execution, "metadata") or {}
         requested_inputs = metadata.get("requested_inputs") if isinstance(metadata, dict) else None
+        question = _question_from_requested_inputs(requested_inputs)
+        if question is not None:
+            guided_output = _prompt_resume_schema(output_schema, console=self, question=question)
+            if guided_output is not None:
+                return guided_output
+
+        self.write("[等待节点]")
+        self.show_node_execution(execution)
         if requested_inputs is not None:
             self.write("[请求输入]")
             self.write(_to_pretty_json(requested_inputs))
@@ -95,6 +101,8 @@ def print_error(exc: Exception, debug: bool, console: ConsoleIO) -> None:
 def _prompt_schema(input_schema: dict[str, Any], console: ConsoleIO) -> dict[str, Any]:
     required = input_schema.get("required")
     properties = input_schema.get("properties")
+    if isinstance(properties, dict) and required in (None, []):
+        return {}
     if not isinstance(required, list) or not isinstance(properties, dict):
         return console.ask_json("workflow input JSON: ")
 
@@ -127,6 +135,63 @@ def _prompt_field(field_name: str, field_schema: dict[str, Any], console: Consol
             raise ValueError(f"{field_name} must be a JSON array")
         return value
     return json.loads(console.ask(f"{field_name} (JSON): "))
+
+
+def _prompt_resume_schema(
+    output_schema: dict[str, Any],
+    *,
+    console: ConsoleIO,
+    question: str | None,
+) -> dict[str, Any] | None:
+    if output_schema.get("type") != "object":
+        return None
+
+    required = output_schema.get("required")
+    properties = output_schema.get("properties")
+    if not isinstance(required, list) or not isinstance(properties, dict):
+        return None
+
+    value: dict[str, Any] = {}
+    for index, field_name in enumerate(required):
+        if not isinstance(field_name, str):
+            return None
+        field_schema = properties.get(field_name)
+        if not isinstance(field_schema, dict):
+            return None
+        value[field_name] = _prompt_resume_field(
+            field_name,
+            field_schema,
+            console=console,
+            question=question if index == 0 else None,
+        )
+    return value
+
+
+def _prompt_resume_field(
+    field_name: str,
+    field_schema: dict[str, Any],
+    *,
+    console: ConsoleIO,
+    question: str | None,
+) -> Any:
+    prompt = f"{field_name}: "
+    if question:
+        prompt = f"{question}\n{prompt}"
+
+    if field_schema.get("type") == "string":
+        return console.ask(prompt)
+    if question:
+        console.write(question)
+    return _prompt_field(field_name, field_schema, console)
+
+
+def _question_from_requested_inputs(requested_inputs: Any) -> str | None:
+    if not isinstance(requested_inputs, dict):
+        return None
+    question = requested_inputs.get("question")
+    if isinstance(question, str) and question.strip():
+        return question
+    return None
 
 
 def _parse_boolean(raw_value: str) -> bool:
