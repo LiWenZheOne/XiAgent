@@ -1,0 +1,4 @@
+interface:
+  display_name: "XiAgent 节点编写"
+  short_description: "按 TDD 新增或修改 XiAgent 可注册节点"
+  default_prompt: "Use $xiagent-node-authoring to create or update a XiAgent node with tests."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "XiAgent 工作流编写"
+  short_description: "按项目约束新增或修改 XiAgent YAML 工作流契约"
+  default_prompt: "Use $xiagent-workflow-authoring to create or update a XiAgent workflow from a user requirement."
