@@ -48,6 +48,36 @@ def test_parse_input_data_prefers_inline_json(tmp_path: Path) -> None:
     assert parsed == {"topic": "from-inline"}
 
 
+def test_parse_input_data_interactive_inline_json_prompts_missing_required_fields() -> None:
+    prompts: list[str] = []
+    answers = iter(["9:16", "1k"])
+    console = ConsoleIO(input_func=lambda prompt: prompts.append(prompt) or next(answers))
+
+    parsed = parse_input_data(
+        inline_json='{"prompt":"from-inline"}',
+        input_file=None,
+        interactive=True,
+        input_schema={
+            "type": "object",
+            "required": ["prompt", "aspect_ratio", "resolution"],
+            "properties": {
+                "prompt": {"type": "string", "minLength": 1},
+                "aspect_ratio": {"type": "string", "minLength": 1},
+                "resolution": {"type": "string", "minLength": 1},
+            },
+            "additionalProperties": False,
+        },
+        console=console,
+    )
+
+    assert parsed == {
+        "prompt": "from-inline",
+        "aspect_ratio": "9:16",
+        "resolution": "1k",
+    }
+    assert prompts == ["aspect_ratio: ", "resolution: "]
+
+
 def test_parse_input_data_reads_json_file(tmp_path: Path) -> None:
     input_file = tmp_path / "input.json"
     input_file.write_text(json.dumps({"topic": "from-file"}), encoding="utf-8")

@@ -50,6 +50,8 @@ def test_build_node_registry_registers_builtin_nodes(test_settings) -> None:
         "system.human_approval.v1",
         "tool.echo.v1",
         "ai.deepseek_chat.v1",
+        "ai.runninghub_image_to_image.v1",
+        "ai.runninghub_text_to_image.v1",
     }
 
 
@@ -68,6 +70,36 @@ def test_build_node_registry_uses_settings_deepseek_model(test_settings) -> None
     deepseek_node = registry.get("ai.deepseek_chat.v1")
 
     assert deepseek_node._model == "settings-model"  # noqa: SLF001
+
+
+def test_build_node_registry_uses_settings_runninghub_models(test_settings) -> None:
+    from dataclasses import replace
+
+    registry = build_node_registry(
+        replace(
+            test_settings,
+            runninghub_image_api_key="settings-runninghub-key",
+            runninghub_image_base_url="https://settings.runninghub.test",
+            runninghub_image_model="settings-image-model",
+            runninghub_image_endpoint="/settings/image-to-image",
+            runninghub_image_poll_interval_seconds=0.1,
+            runninghub_image_poll_timeout_seconds=1.0,
+            runninghub_text_to_image_api_key="settings-runninghub-key",
+            runninghub_text_to_image_base_url="https://settings.runninghub.test",
+            runninghub_text_to_image_model="settings-text-model",
+            runninghub_text_to_image_endpoint="/settings/text-to-image",
+            runninghub_text_to_image_poll_interval_seconds=0.1,
+            runninghub_text_to_image_poll_timeout_seconds=1.0,
+        )
+    )
+
+    image_node = registry.get("ai.runninghub_image_to_image.v1")
+    text_node = registry.get("ai.runninghub_text_to_image.v1")
+
+    assert image_node._provider == "runninghub_image"  # noqa: SLF001
+    assert image_node._model == "settings-image-model"  # noqa: SLF001
+    assert text_node._provider == "runninghub_text_to_image"  # noqa: SLF001
+    assert text_node._model == "settings-text-model"  # noqa: SLF001
 
 
 async def test_human_approval_returns_waiting_with_requested_inputs() -> None:

@@ -381,6 +381,51 @@ def test_deepseek_echo_workflow_contract_declares_node_outputs() -> None:
     validate_workflow_contract(contract, registry)
 
 
+@pytest.mark.parametrize(
+    ("workflow_path", "workflow_id", "node_id", "node_ref", "required_inputs"),
+    [
+        (
+            Path("workflows/global/runninghub_text_to_image_test.workflow.yaml"),
+            "runninghub_text_to_image_test",
+            "generate_image",
+            "ai.runninghub_text_to_image.v1",
+            {"prompt"},
+        ),
+        (
+            Path("workflows/global/runninghub_image_to_image_test.workflow.yaml"),
+            "runninghub_image_to_image_test",
+            "transform_image",
+            "ai.runninghub_image_to_image.v1",
+            {"prompt", "image_urls"},
+        ),
+    ],
+)
+def test_runninghub_workflow_contracts_call_registered_nodes(
+    test_settings,
+    workflow_path: Path,
+    workflow_id: str,
+    node_id: str,
+    node_ref: str,
+    required_inputs: set[str],
+) -> None:
+    from xiagent.nodes import build_node_registry
+
+    contract = load_workflow_file(workflow_path)
+
+    assert contract["workflow"]["id"] == workflow_id
+    node = next(item for item in contract["nodes"] if item["id"] == node_id)
+    assert node["ref"] == node_ref
+    assert required_inputs.issubset(node["inputs"])
+    assert set(node["outputs"]["required"]) == {
+        "image_url",
+        "model",
+        "usage",
+        "results",
+    }
+
+    validate_workflow_contract(contract, build_node_registry(test_settings))
+
+
 def test_load_workflow_file_loads_yaml_object(tmp_path) -> None:
     workflow_path = tmp_path / "echo.workflow.yaml"
     workflow_path.write_text(

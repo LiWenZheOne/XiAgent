@@ -1,0 +1,62 @@
+workflow:
+  id: runninghub_image_to_image_test
+  version: "1.0.0"
+  scope: global
+  name: RunningHub 图生图调用测试
+  description: 使用 RunningHub 图生图模型转换输入图片，并把结果 URL 暴露给测试运行器。
+  input_schema:
+    type: object
+    required: ["prompt", "image_urls", "aspect_ratio", "resolution"]
+    properties:
+      prompt:
+        type: string
+        minLength: 1
+      image_urls:
+        type: array
+        minItems: 1
+        items:
+          type: string
+          minLength: 1
+      aspect_ratio:
+        type: string
+        minLength: 1
+      resolution:
+        type: string
+        minLength: 1
+    additionalProperties: false
+
+nodes:
+  - id: transform_image
+    ref: ai.runninghub_image_to_image.v1
+    inputs:
+      prompt:
+        from: "$workflow.input.prompt"
+      image_urls:
+        from: "$workflow.input.image_urls"
+      aspect_ratio:
+        from: "$workflow.input.aspect_ratio"
+      resolution:
+        from: "$workflow.input.resolution"
+    outputs:
+      type: object
+      required: ["image_url", "model", "usage", "results"]
+      properties:
+        image_url:
+          type: string
+        model:
+          type: string
+        usage:
+          type: object
+        results:
+          type: array
+        task_id:
+          type: string
+        status:
+          type: string
+      additionalProperties: false
+
+edges:
+  - from: START
+    to: transform_image
+  - from: transform_image
+    to: END

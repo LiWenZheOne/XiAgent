@@ -71,7 +71,6 @@ def parse_input_data(
     input_schema: dict[str, Any],
     console: ConsoleIO,
 ) -> dict[str, Any]:
-    _ = interactive
     if inline_json is not None:
         value = json.loads(inline_json)
     elif input_file is not None:
@@ -81,8 +80,30 @@ def parse_input_data(
 
     if not isinstance(value, dict):
         raise ValueError("Workflow input must be a JSON object")
+    if interactive:
+        value = _prompt_missing_required_fields(value, input_schema, console)
     validate_json_value(input_schema, value)
     return value
+
+
+def _prompt_missing_required_fields(
+    value: dict[str, Any],
+    input_schema: dict[str, Any],
+    console: ConsoleIO,
+) -> dict[str, Any]:
+    required = input_schema.get("required")
+    properties = input_schema.get("properties")
+    if not isinstance(required, list) or not isinstance(properties, dict):
+        return value
+
+    filled = dict(value)
+    for field_name in required:
+        if not isinstance(field_name, str) or field_name in filled:
+            continue
+        field_schema = properties.get(field_name)
+        if isinstance(field_schema, dict):
+            filled[field_name] = _prompt_field(field_name, field_schema, console)
+    return filled
 
 
 def print_error(exc: Exception, debug: bool, console: ConsoleIO) -> None:
