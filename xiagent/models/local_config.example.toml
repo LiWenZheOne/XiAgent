@@ -2,3 +2,19 @@
 api_key = ""
 base_url = "https://api.deepseek.com"
 model = "deepseek-v4-flash"
+
+[runninghub_image]
+api_key = ""
+base_url = "https://www.runninghub.ai"
+model = "nano-banana2-gemini31flash/image-to-image-channel-low-price"
+endpoint = "/rhart-image-n-g31-flash/image-to-image"
+poll_interval_seconds = 2.0
+poll_timeout_seconds = 180.0
+
+[runninghub_text_to_image]
+api_key = ""
+base_url = "https://www.runninghub.ai"
+model = "nano-banana-pro/text-to-image-channel-low-price"
+endpoint = "/rhart-image-n-pro/text-to-image"
+poll_interval_seconds = 2.0
+poll_timeout_seconds = 180.0

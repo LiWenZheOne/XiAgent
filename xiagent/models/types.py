@@ -34,5 +34,31 @@ class DeepSeekModelConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class RunningHubImageModelConfig:
+    api_key: str | None = None
+    base_url: str = "https://www.runninghub.ai"
+    model: str = "nano-banana2-gemini31flash/image-to-image-channel-low-price"
+    endpoint: str = "/rhart-image-n-g31-flash/image-to-image"
+    poll_interval_seconds: float = 2.0
+    poll_timeout_seconds: float = 180.0
+
+
+@dataclass(frozen=True, slots=True)
+class RunningHubTextToImageModelConfig:
+    api_key: str | None = None
+    base_url: str = "https://www.runninghub.ai"
+    model: str = "nano-banana-pro/text-to-image-channel-low-price"
+    endpoint: str = "/rhart-image-n-pro/text-to-image"
+    poll_interval_seconds: float = 2.0
+    poll_timeout_seconds: float = 180.0
+
+
+@dataclass(frozen=True, slots=True)
 class ModelConfig:
     deepseek: DeepSeekModelConfig = field(default_factory=DeepSeekModelConfig)
+    runninghub_image: RunningHubImageModelConfig = field(
+        default_factory=RunningHubImageModelConfig
+    )
+    runninghub_text_to_image: RunningHubTextToImageModelConfig = field(
+        default_factory=RunningHubTextToImageModelConfig
+    )

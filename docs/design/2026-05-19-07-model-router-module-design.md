@@ -14,6 +14,8 @@
 - `ChatRequest`：模型调用请求，包含 provider、model、messages 和 metadata。
 - `ChatResponse`：模型响应，包含 text、model、usage 和 metadata。
 - `DeepSeekModelConfig`：DeepSeek provider 的配置。
+- `RunningHubImageModelConfig`：RunningHub 图生图 provider 的配置。
+- `RunningHubTextToImageModelConfig`：RunningHub 文生图 provider 的配置。
 - `ModelConfig`：模型模块整体配置。
 - `ChatModelProvider`：provider 抽象基类。
 - `ChatModelRouter`：按 provider 路由模型请求。
@@ -36,23 +38,36 @@ workflow ref: ai.deepseek_chat.v1
 
 DeepSeek SDK 依赖只能出现在 `xiagent.models.providers.deepseek` 内。`xiagent.nodes.ai.deepseek_chat` 不得导入 `openai.AsyncOpenAI`，也不得接收 api_key、base_url 或 client_factory。
 
+RunningHub 图生图能力当前先作为模型层 provider 提供，不直接注册为内置工作流节点。调用方仍使用 `ChatRequest`：`messages` 提供提示词，`metadata.image_urls` 提供参考图 URL 列表，`metadata.aspect_ratio` 与 `metadata.resolution` 覆盖图像比例和清晰度。`RunningHubImageProvider` 内部负责调用 RunningHub V2 标准接口、轮询 `/openapi/v2/query`，并把首个结果 URL 放入 `ChatResponse.text`，完整结果列表放入 `ChatResponse.metadata.results`。
+
+RunningHub 文生图能力同样先作为模型层 provider 提供，不直接注册为内置工作流节点。调用方使用 `provider=runninghub_text_to_image`，`messages` 或 `metadata.prompt` 提供提示词，`metadata.aspect_ratio` 与 `metadata.resolution` 覆盖输出比例和清晰度。`RunningHubTextToImageProvider` 调用 RunningHub V2 标准接口 `/openapi/v2/rhart-image-n-pro/text-to-image`，请求体只包含 `prompt`、`aspectRatio` 与 `resolution`，不要求参考图 URL。
+
 ## 配置规则
 
 模型配置统一由 `load_settings()` 解析后进入 `Settings`，节点注册只使用传入的 `Settings`，不再自行读取配置文件。
 
 配置来源优先级：
 
-1. 环境变量：`DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL`、`DEEPSEEK_MODEL`。
+1. 环境变量：`DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL`、`DEEPSEEK_MODEL`、`RUNNINGHUB_API_KEY`、`RUNNINGHUB_BASE_URL`、`RUNNINGHUB_IMAGE_MODEL`、`RUNNINGHUB_IMAGE_ENDPOINT`、`RUNNINGHUB_TEXT_TO_IMAGE_MODEL`、`RUNNINGHUB_TEXT_TO_IMAGE_ENDPOINT`、`RUNNINGHUB_POLL_INTERVAL_SECONDS`、`RUNNINGHUB_POLL_TIMEOUT_SECONDS`。
 2. 本地配置文件：`xiagent/models/local_config.toml`。
-3. 默认值：`base_url=https://api.deepseek.com`，`model=deepseek-v4-flash`，`api_key=None`。
+3. 默认值：DeepSeek 使用 `base_url=https://api.deepseek.com`、`model=deepseek-v4-flash`、`api_key=None`；RunningHub 图生图使用 `base_url=https://www.runninghub.ai`、`model=nano-banana2-gemini31flash/image-to-image-channel-low-price`、`endpoint=/rhart-image-n-g31-flash/image-to-image`、`poll_interval_seconds=2.0`、`poll_timeout_seconds=180.0`、`api_key=None`；RunningHub 文生图使用 `base_url=https://www.runninghub.ai`、`model=nano-banana-pro/text-to-image-channel-low-price`、`endpoint=/rhart-image-n-pro/text-to-image`、`poll_interval_seconds=2.0`、`poll_timeout_seconds=180.0`、`api_key=None`。
+
+RunningHub 文生图会优先读取 `[runninghub_text_to_image].api_key`。如果该字段为空，会复用同一个 `RUNNINGHUB_API_KEY` 或 `[runninghub_image].api_key`，避免同一个 RunningHub 账号密钥在本地配置中重复维护。
 
 真实本地配置文件 `xiagent/models/local_config.toml` 被 `.gitignore` 忽略，不进入版本库。仓库只提交 `xiagent/models/local_config.example.toml` 作为模板。
 
 ## 错误语义
 
 - 未配置 DeepSeek key：`ValidationError(code="deepseek_api_key_missing")`。
+- 未配置 RunningHub key：`ValidationError(code="runninghub_api_key_missing")`。
+- RunningHub 图生图缺少参考图 URL：`ValidationError(code="runninghub_image_urls_missing")`。
+- RunningHub 文生图缺少提示词：`ValidationError(code="runninghub_prompt_missing")`。
 - 未知模型 provider：`NotFoundError(code="model_provider_not_found")`。
 - DeepSeek 上游调用失败：`ExternalServiceError(code="deepseek_request_failed")`。
+- RunningHub 图生图上游调用失败：`ExternalServiceError(code="runninghub_image_request_failed")`。
+- RunningHub 图生图轮询超时：`ExternalServiceError(code="runninghub_image_timeout")`。
+- RunningHub 文生图上游调用失败：`ExternalServiceError(code="runninghub_text_to_image_request_failed")`。
+- RunningHub 文生图轮询超时：`ExternalServiceError(code="runninghub_text_to_image_timeout")`。
 
 错误详情不得包含 API key、完整请求头或其他敏感信息。
 

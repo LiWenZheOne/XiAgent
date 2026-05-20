@@ -72,6 +72,25 @@ class FakeClient:
         self.closed = True
 
 
+class FakeRunningHubHttpClient:
+    def __init__(self, responses: list[dict[str, Any] | Exception]) -> None:
+        self.responses = responses
+        self.calls: list[dict[str, Any]] = []
+
+    async def post_json(
+        self,
+        url: str,
+        *,
+        headers: dict[str, str],
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        self.calls.append({"url": url, "headers": headers, "payload": payload})
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+
 async def test_chat_model_router_registers_provider_and_routes_chat() -> None:
     from xiagent.models import ChatMessage, ChatModelRouter, ChatRequest
 
@@ -193,3 +212,268 @@ async def test_deepseek_provider_wraps_request_failures() -> None:
 
     assert exc.value.code == "deepseek_request_failed"
     assert exc.value.details["provider"] == "deepseek"
+
+
+async def test_runninghub_image_provider_submits_and_polls_generation() -> None:
+    from xiagent.models import ChatMessage, ChatRequest, RunningHubImageModelConfig
+    from xiagent.models.providers.runninghub import RunningHubImageProvider
+
+    http_client = FakeRunningHubHttpClient(
+        [
+            {
+                "taskId": "task-1",
+                "status": "RUNNING",
+                "errorCode": "",
+                "errorMessage": "",
+                "results": None,
+                "clientId": "client-1",
+                "promptTips": "",
+            },
+            {
+                "taskId": "task-1",
+                "status": "SUCCESS",
+                "errorCode": "",
+                "errorMessage": "",
+                "results": [{"url": "https://example.test/output.png", "outputType": "png"}],
+                "usage": {"consumeCoins": "1"},
+                "clientId": "client-1",
+                "promptTips": "",
+            },
+        ]
+    )
+    provider = RunningHubImageProvider(
+        config=RunningHubImageModelConfig(
+            api_key="test-runninghub-key",
+            base_url="https://runninghub.test",
+            model="runninghub-image-test-model",
+            endpoint="/test/image-to-image",
+            poll_interval_seconds=0,
+            poll_timeout_seconds=1,
+        ),
+        http_client=http_client,
+    )
+    request = ChatRequest(
+        provider="runninghub_image",
+        model="runninghub-image-test-model",
+        messages=[ChatMessage(role="user", content="turn the sketch into ink wash art")],
+        metadata={
+            "image_urls": ["https://example.test/input.png"],
+            "aspect_ratio": "1:1",
+            "resolution": "2k",
+        },
+    )
+
+    response = await provider.chat(request)
+
+    assert http_client.calls == [
+        {
+            "url": "https://runninghub.test/openapi/v2/test/image-to-image",
+            "headers": {
+                "Authorization": "Bearer test-runninghub-key",
+                "Content-Type": "application/json",
+            },
+            "payload": {
+                "imageUrls": ["https://example.test/input.png"],
+                "prompt": "turn the sketch into ink wash art",
+                "aspectRatio": "1:1",
+                "resolution": "2k",
+            },
+        },
+        {
+            "url": "https://runninghub.test/openapi/v2/query",
+            "headers": {
+                "Authorization": "Bearer test-runninghub-key",
+                "Content-Type": "application/json",
+            },
+            "payload": {"taskId": "task-1"},
+        },
+    ]
+    assert response.text == "https://example.test/output.png"
+    assert response.model == "runninghub-image-test-model"
+    assert response.usage == {"consumeCoins": "1"}
+    assert response.metadata == {
+        "provider": "runninghub_image",
+        "task_id": "task-1",
+        "status": "SUCCESS",
+        "results": [{"url": "https://example.test/output.png", "outputType": "png"}],
+    }
+    assert "test-runninghub-key" not in str(response.metadata)
+
+
+async def test_runninghub_text_to_image_provider_submits_and_polls_generation() -> None:
+    from xiagent.models import ChatMessage, ChatRequest, RunningHubTextToImageModelConfig
+    from xiagent.models.providers.runninghub import RunningHubTextToImageProvider
+
+    http_client = FakeRunningHubHttpClient(
+        [
+            {
+                "taskId": "text-task-1",
+                "status": "RUNNING",
+                "errorCode": "",
+                "errorMessage": "",
+                "results": None,
+                "clientId": "client-1",
+                "promptTips": "",
+            },
+            {
+                "taskId": "text-task-1",
+                "status": "SUCCESS",
+                "errorCode": "",
+                "errorMessage": "",
+                "results": [{"url": "https://example.test/text-output.png"}],
+                "usage": {"consumeCoins": "2"},
+                "clientId": "client-1",
+                "promptTips": "",
+            },
+        ]
+    )
+    provider = RunningHubTextToImageProvider(
+        config=RunningHubTextToImageModelConfig(
+            api_key="test-runninghub-key",
+            base_url="https://runninghub.test",
+            model="runninghub-text-image-test-model",
+            endpoint="/test/text-to-image",
+            poll_interval_seconds=0,
+            poll_timeout_seconds=1,
+        ),
+        http_client=http_client,
+    )
+    request = ChatRequest(
+        provider="runninghub_text_to_image",
+        model="runninghub-text-image-test-model",
+        messages=[ChatMessage(role="user", content="paint a lantern street at night")],
+        metadata={
+            "aspect_ratio": "16:9",
+            "resolution": "4k",
+        },
+    )
+
+    response = await provider.chat(request)
+
+    assert http_client.calls == [
+        {
+            "url": "https://runninghub.test/openapi/v2/test/text-to-image",
+            "headers": {
+                "Authorization": "Bearer test-runninghub-key",
+                "Content-Type": "application/json",
+            },
+            "payload": {
+                "prompt": "paint a lantern street at night",
+                "aspectRatio": "16:9",
+                "resolution": "4k",
+            },
+        },
+        {
+            "url": "https://runninghub.test/openapi/v2/query",
+            "headers": {
+                "Authorization": "Bearer test-runninghub-key",
+                "Content-Type": "application/json",
+            },
+            "payload": {"taskId": "text-task-1"},
+        },
+    ]
+    assert response.text == "https://example.test/text-output.png"
+    assert response.model == "runninghub-text-image-test-model"
+    assert response.usage == {"consumeCoins": "2"}
+    assert response.metadata == {
+        "provider": "runninghub_text_to_image",
+        "task_id": "text-task-1",
+        "status": "SUCCESS",
+        "results": [{"url": "https://example.test/text-output.png"}],
+    }
+    assert "test-runninghub-key" not in str(response.metadata)
+
+
+async def test_runninghub_text_to_image_provider_requires_key_and_prompt() -> None:
+    from xiagent.core.errors import ValidationError
+    from xiagent.models import ChatMessage, ChatRequest, RunningHubTextToImageModelConfig
+    from xiagent.models.providers.runninghub import RunningHubTextToImageProvider
+
+    provider = RunningHubTextToImageProvider(
+        config=RunningHubTextToImageModelConfig(api_key=None)
+    )
+    request = ChatRequest(
+        provider="runninghub_text_to_image",
+        model="runninghub-text-image-test-model",
+        messages=[ChatMessage(role="user", content="paint it")],
+    )
+
+    with pytest.raises(ValidationError) as exc:
+        await provider.chat(request)
+
+    assert exc.value.code == "runninghub_api_key_missing"
+    assert exc.value.details == {"provider": "runninghub_text_to_image"}
+
+    provider = RunningHubTextToImageProvider(
+        config=RunningHubTextToImageModelConfig(api_key="test-key")
+    )
+    request = ChatRequest(
+        provider="runninghub_text_to_image",
+        model="runninghub-text-image-test-model",
+        messages=[ChatMessage(role="user", content="")],
+    )
+
+    with pytest.raises(ValidationError) as exc:
+        await provider.chat(request)
+
+    assert exc.value.code == "runninghub_prompt_missing"
+    assert exc.value.details == {"provider": "runninghub_text_to_image"}
+
+
+async def test_runninghub_image_provider_requires_key_and_image_urls() -> None:
+    from xiagent.core.errors import ValidationError
+    from xiagent.models import ChatMessage, ChatRequest, RunningHubImageModelConfig
+    from xiagent.models.providers.runninghub import RunningHubImageProvider
+
+    provider = RunningHubImageProvider(config=RunningHubImageModelConfig(api_key=None))
+    request = ChatRequest(
+        provider="runninghub_image",
+        model="runninghub-image-test-model",
+        messages=[ChatMessage(role="user", content="paint it")],
+        metadata={"image_urls": ["https://example.test/input.png"]},
+    )
+
+    with pytest.raises(ValidationError) as exc:
+        await provider.chat(request)
+
+    assert exc.value.code == "runninghub_api_key_missing"
+    assert exc.value.details == {"provider": "runninghub_image"}
+
+    provider = RunningHubImageProvider(config=RunningHubImageModelConfig(api_key="test-key"))
+    request = ChatRequest(
+        provider="runninghub_image",
+        model="runninghub-image-test-model",
+        messages=[ChatMessage(role="user", content="paint it")],
+    )
+
+    with pytest.raises(ValidationError) as exc:
+        await provider.chat(request)
+
+    assert exc.value.code == "runninghub_image_urls_missing"
+    assert exc.value.details == {"provider": "runninghub_image"}
+
+
+async def test_runninghub_image_provider_wraps_failures_without_secret_details() -> None:
+    from xiagent.models import ChatMessage, ChatRequest, RunningHubImageModelConfig
+    from xiagent.models.providers.runninghub import RunningHubImageProvider
+
+    provider = RunningHubImageProvider(
+        config=RunningHubImageModelConfig(api_key="secret-runninghub-key"),
+        http_client=FakeRunningHubHttpClient([RuntimeError("upstream unavailable")]),
+    )
+    request = ChatRequest(
+        provider="runninghub_image",
+        model="runninghub-image-test-model",
+        messages=[ChatMessage(role="user", content="paint it")],
+        metadata={"image_urls": ["https://example.test/input.png"]},
+    )
+
+    with pytest.raises(ExternalServiceError) as exc:
+        await provider.chat(request)
+
+    assert exc.value.code == "runninghub_image_request_failed"
+    assert exc.value.details == {
+        "provider": "runninghub_image",
+        "endpoint": "/rhart-image-n-g31-flash/image-to-image",
+    }
+    assert "secret-runninghub-key" not in str(exc.value.details)

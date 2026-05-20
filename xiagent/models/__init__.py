@@ -7,6 +7,8 @@ from xiagent.models.types import (
     ChatResponse,
     DeepSeekModelConfig,
     ModelConfig,
+    RunningHubImageModelConfig,
+    RunningHubTextToImageModelConfig,
 )
 
 __all__ = [
@@ -15,6 +17,8 @@ __all__ = [
     "ChatResponse",
     "DeepSeekModelConfig",
     "ModelConfig",
+    "RunningHubImageModelConfig",
+    "RunningHubTextToImageModelConfig",
     "ChatModelProvider",
     "ChatModelRouter",
 ]
