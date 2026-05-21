@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +9,7 @@ import aiosqlite
 
 from xiagent.core.ids import new_id
 from xiagent.infrastructure.database import connect_db
+from xiagent.nodes.base import AssetRef
 from xiagent.runtime.models import NodeExecutionRecord, TaskEventRecord, TaskRecord
 
 
@@ -72,6 +74,10 @@ def dump_json(value: Any) -> str:
     return _dump_json(value)
 
 
+def dump_asset_refs(asset_refs: list[AssetRef]) -> str:
+    return _dump_json([asdict(asset_ref) for asset_ref in asset_refs])
+
+
 def task_from_row(row: aiosqlite.Row) -> TaskRecord:
     return _task_from_row(row)
 
@@ -100,6 +106,18 @@ def _load_json(value: str | None) -> Any:
     if value is None:
         return None
     return json.loads(value)
+
+
+def _load_asset_refs(value: str | None) -> list[AssetRef]:
+    raw_refs = _load_json(value) or []
+    return [
+        AssetRef(
+            asset_id=str(raw_ref["asset_id"]),
+            usage_type=str(raw_ref["usage_type"]),
+            source=str(raw_ref["source"]),
+        )
+        for raw_ref in raw_refs
+    ]
 
 
 def _task_from_row(row: aiosqlite.Row) -> TaskRecord:
@@ -132,6 +150,7 @@ def _node_execution_from_row(row: aiosqlite.Row) -> NodeExecutionRecord:
         status=row["status"],
         error=_load_json(row["error_json"]),
         metadata=_load_json(row["metadata_json"]),
+        asset_refs=_load_asset_refs(row["asset_refs_json"]),
         started_at=row["started_at"],
         finished_at=row["finished_at"],
         created_at=row["created_at"],

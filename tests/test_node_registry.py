@@ -49,7 +49,10 @@ def test_build_node_registry_registers_builtin_nodes(test_settings) -> None:
     assert refs == {
         "system.human_approval.v1",
         "tool.echo.v1",
+        "tool.script_split.v1",
+        "tool.storyboard_prompt_assembler.v1",
         "ai.deepseek_chat.v1",
+        "ai.deepseek_structured_json.v1",
         "ai.runninghub_image_to_image.v1",
         "ai.runninghub_text_to_image.v1",
     }
@@ -100,6 +103,17 @@ def test_build_node_registry_uses_settings_runninghub_models(test_settings) -> N
     assert image_node._model == "settings-image-model"  # noqa: SLF001
     assert text_node._provider == "runninghub_text_to_image"  # noqa: SLF001
     assert text_node._model == "settings-text-model"  # noqa: SLF001
+
+
+def test_node_context_asset_service_is_core_service_interface() -> None:
+    from typing import get_type_hints
+
+    from xiagent.core.services import AssetService
+    from xiagent.nodes.base import NodeContext
+
+    hints = get_type_hints(NodeContext)
+
+    assert hints["asset_service"] == AssetService | None
 
 
 async def test_human_approval_returns_waiting_with_requested_inputs() -> None:

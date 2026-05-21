@@ -44,6 +44,7 @@ def build_services(settings: Settings) -> ApiServices:
         database_path=settings.database_path,
         user_service=users,
         node_registry=node_registry,
+        asset_service=assets,
     )
     workflows = WorkflowCatalog(node_registry)
     if settings.workflow_dir.exists():

@@ -48,7 +48,7 @@ def validate_workflow_contract(contract: dict[str, Any], registry: NodeRegistry)
     if not isinstance(edges, list):
         _raise_contract_error("Workflow edges must be a list")
 
-    upstream_nodes = _validate_edges(edges, node_ids, input_properties, node_outputs)
+    upstream_nodes = _validate_edges(edges, node_ids, input_properties, input_schema, node_outputs)
 
     for node in nodes:
         inputs = node.get("inputs", {})
@@ -67,6 +67,7 @@ def validate_workflow_contract(contract: dict[str, Any], registry: NodeRegistry)
                 input_name=input_name,
                 node_ids=node_ids,
                 workflow_input_properties=input_properties,
+                workflow_input_schema=input_schema,
                 node_outputs=node_outputs,
                 available_node_refs=upstream_nodes[node["id"]],
             )
@@ -113,12 +114,14 @@ def _validate_edges(
     edges: list[Any],
     node_ids: set[str],
     workflow_input_properties: set[str] | None,
+    workflow_input_schema: dict[str, Any],
     node_outputs: dict[str, dict[str, Any]],
 ) -> dict[str, set[str]]:
     graph: dict[str, list[str]] = {node_id: [] for node_id in node_ids}
+    full_graph: dict[str, list[str]] = {node_id: [] for node_id in node_ids}
+    full_graph[_START] = []
     allowed_edge_nodes = node_ids | {_START, _END}
     edge_pairs: list[tuple[str, str]] = []
-    outgoing_counts: dict[str, int] = {}
 
     for edge in edges:
         if not isinstance(edge, dict):
@@ -141,17 +144,12 @@ def _validate_edges(
             )
 
         edge_pairs.append((from_node, to_node))
-        outgoing_counts[from_node] = outgoing_counts.get(from_node, 0) + 1
-        if outgoing_counts[from_node] > 1:
-            raise ValidationError(
-                code="unsupported_workflow_fanout",
-                message="Workflow fan-out is not supported by the MVP runtime",
-                details={"from": from_node},
-            )
+        full_graph.setdefault(str(from_node), []).append(str(to_node))
         if from_node not in {_START, _END} and to_node not in {_START, _END}:
             graph[from_node].append(to_node)
 
     _detect_cycle(graph)
+    _validate_reachable_and_converged(full_graph, node_ids)
     upstream_nodes = _build_upstream_nodes(graph)
 
     for edge, (from_node, _to_node) in zip(edges, edge_pairs, strict=True):
@@ -192,6 +190,7 @@ def _validate_edges(
                 path,
                 node_ids=node_ids,
                 workflow_input_properties=workflow_input_properties,
+                workflow_input_schema=workflow_input_schema,
                 node_outputs=node_outputs,
                 available_node_refs=available_node_refs,
             )
@@ -199,11 +198,58 @@ def _validate_edges(
     return upstream_nodes
 
 
+def _validate_reachable_and_converged(
+    graph: dict[str, list[str]],
+    node_ids: set[str],
+) -> None:
+    reachable_from_start = _collect_reachable(graph, _START)
+    for node_id in node_ids:
+        if node_id not in reachable_from_start:
+            raise ValidationError(
+                code="workflow_node_not_reachable",
+                message="工作流节点无法从 START 到达",
+                details={"node_id": node_id},
+            )
+        if not _can_reach_end(graph, node_id):
+            raise ValidationError(
+                code="workflow_node_not_connected_to_end",
+                message="工作流节点没有收敛到 END",
+                details={"node_id": node_id},
+            )
+
+
+def _collect_reachable(graph: dict[str, list[str]], start: str) -> set[str]:
+    reachable: set[str] = set()
+    stack = list(graph.get(start, []))
+    while stack:
+        current = stack.pop()
+        if current in reachable:
+            continue
+        reachable.add(current)
+        stack.extend(graph.get(current, []))
+    return reachable
+
+
+def _can_reach_end(graph: dict[str, list[str]], start: str) -> bool:
+    visited: set[str] = set()
+    stack = list(graph.get(start, []))
+    while stack:
+        current = stack.pop()
+        if current == _END:
+            return True
+        if current in visited:
+            continue
+        visited.add(current)
+        stack.extend(graph.get(current, []))
+    return False
+
+
 def _validate_reference(
     reference: Any,
     *,
     node_ids: set[str],
     workflow_input_properties: set[str] | None,
+    workflow_input_schema: dict[str, Any],
     node_outputs: dict[str, dict[str, Any]],
     available_node_refs: set[str] | None = None,
 ) -> None:
@@ -220,6 +266,7 @@ def _validate_reference(
         root_field = field.split(".", 1)[0]
         if workflow_input_properties is not None and root_field not in workflow_input_properties:
             _raise_invalid_reference("Workflow input reference is unknown", reference=reference)
+        _validate_output_field(workflow_input_schema, field.split("."), reference)
         return
 
     if reference.startswith("$nodes."):
@@ -248,6 +295,7 @@ def _validate_input_spec(
     input_name: str,
     node_ids: set[str],
     workflow_input_properties: set[str] | None,
+    workflow_input_schema: dict[str, Any],
     node_outputs: dict[str, dict[str, Any]],
     available_node_refs: set[str] | None = None,
 ) -> None:
@@ -280,6 +328,7 @@ def _validate_input_spec(
             input_spec.get("from"),
             node_ids=node_ids,
             workflow_input_properties=workflow_input_properties,
+            workflow_input_schema=workflow_input_schema,
             node_outputs=node_outputs,
             available_node_refs=available_node_refs,
         )
@@ -322,6 +371,7 @@ def _validate_input_spec(
             input_name=f"{input_name}.{variable_name}",
             node_ids=node_ids,
             workflow_input_properties=workflow_input_properties,
+            workflow_input_schema=workflow_input_schema,
             node_outputs=node_outputs,
             available_node_refs=available_node_refs,
         )
@@ -384,6 +434,18 @@ def _validate_output_field(
     for field in field_path:
         if not isinstance(schema, Mapping):
             return
+        if schema.get("type") == "array":
+            if not field.isdecimal():
+                raise ValidationError(
+                    code="unknown_workflow_output_field",
+                    message="工作流引用了未知节点输出字段",
+                    details={"reference": reference, "field": field},
+                )
+            items = schema.get("items")
+            if not isinstance(items, Mapping):
+                return
+            schema = items
+            continue
         properties = schema.get("properties")
         if properties is None:
             return

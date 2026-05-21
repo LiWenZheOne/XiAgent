@@ -55,6 +55,39 @@ class FailingRouter(ChatModelRouter):
         )
 
 
+class ProviderShapeRouter(ChatModelRouter):
+    def __init__(self) -> None:
+        super().__init__()
+        self.requests: list[Any] = []
+
+    async def chat(self, request: Any) -> Any:
+        from xiagent.models import ChatResponse
+
+        self.requests.append(request)
+        return ChatResponse(
+            text="https://cdn.runninghub.test/output.png",
+            model=request.model,
+            usage={"credits": 1},
+            metadata={
+                "provider": request.provider,
+                "task_id": "task_456",
+                "status": "SUCCESS",
+                "results": [
+                    {
+                        "url": "https://cdn.runninghub.test/output.png",
+                        "outputType": "png",
+                        "providerOnly": "not-public-contract",
+                    },
+                    {
+                        "text": "fallback text",
+                        "outputType": "text",
+                        "providerOnly": "not-public-contract",
+                    },
+                ],
+            },
+        )
+
+
 def test_runninghub_node_constructors_require_router_keyword_arguments() -> None:
     RunningHubImageToImageNode, RunningHubTextToImageNode = _node_classes()
 
@@ -100,6 +133,8 @@ async def test_image_to_image_node_converts_inputs_to_chat_request_and_calls_rou
             "image_urls": ["https://runninghub.test/input.png"],
             "aspect_ratio": "9:16",
             "resolution": "1k",
+            "poll_interval_seconds": 0,
+            "poll_timeout_seconds": 600,
         },
     )
 
@@ -115,6 +150,8 @@ async def test_image_to_image_node_converts_inputs_to_chat_request_and_calls_rou
         "image_urls": ["https://runninghub.test/input.png"],
         "aspect_ratio": "9:16",
         "resolution": "1k",
+        "poll_interval_seconds": 0,
+        "poll_timeout_seconds": 600,
     }
     assert result.status == "succeeded"
     assert result.output == {
@@ -182,6 +219,34 @@ async def test_text_to_image_node_converts_inputs_to_chat_request_and_calls_rout
     }
     assert result.output["image_url"] == "https://cdn.runninghub.test/output.png"
     assert result.output["results"] == [{"url": "https://cdn.runninghub.test/output.png"}]
+
+
+async def test_runninghub_node_standardizes_provider_results_in_public_output() -> None:
+    RunningHubImageToImageNode, _ = _node_classes()
+    node = RunningHubImageToImageNode(
+        model_router=ProviderShapeRouter(),
+        provider="runninghub_image",
+        model="runninghub-image-model",
+    )
+
+    result = await node.run(
+        ctx=None,
+        inputs={
+            "prompt": "colorize",
+            "image_url": "https://runninghub.test/input.png",
+        },
+    )
+
+    assert result.output["results"] == [
+        {
+            "url": "https://cdn.runninghub.test/output.png",
+            "output_type": "png",
+        },
+        {
+            "text": "fallback text",
+            "output_type": "text",
+        },
+    ]
 
 
 @pytest.mark.parametrize("node_name", ["image_to_image", "text_to_image"])
@@ -264,6 +329,14 @@ def test_runninghub_descriptors_expose_stable_workflow_contracts() -> None:
     assert text_descriptor.ref == "ai.runninghub_text_to_image.v1"
     assert image_descriptor.input_schema["required"] == ["prompt", "image_urls"]
     assert text_descriptor.input_schema["required"] == ["prompt"]
+    assert image_descriptor.input_schema["properties"]["poll_timeout_seconds"] == {
+        "type": "number",
+        "minimum": 0,
+    }
+    assert text_descriptor.input_schema["properties"]["poll_timeout_seconds"] == {
+        "type": "number",
+        "minimum": 0,
+    }
     assert image_descriptor.output_schema["required"] == [
         "image_url",
         "model",
@@ -276,6 +349,29 @@ def test_runninghub_descriptors_expose_stable_workflow_contracts() -> None:
         "usage",
         "results",
     ]
+    assert image_descriptor.output_schema["properties"]["image_url"] == {
+        "type": "string",
+        "minLength": 1,
+    }
+    assert text_descriptor.output_schema["properties"]["image_url"] == {
+        "type": "string",
+        "minLength": 1,
+    }
+    assert image_descriptor.output_schema["properties"]["results"] == {
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "minLength": 1},
+                "text": {"type": "string", "minLength": 1},
+                "output_type": {"type": "string", "minLength": 1},
+            },
+            "additionalProperties": False,
+        },
+    }
+    assert text_descriptor.output_schema["properties"]["results"] == (
+        image_descriptor.output_schema["properties"]["results"]
+    )
 
 
 def test_runninghub_node_source_does_not_import_provider_or_http_client() -> None:

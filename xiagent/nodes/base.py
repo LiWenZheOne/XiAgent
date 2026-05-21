@@ -5,6 +5,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from xiagent.core.services import AssetService
+
 
 @dataclass(frozen=True, slots=True)
 class NodeDescriptor:
@@ -42,7 +44,7 @@ class NodeContext:
     node_execution_id: str
     config: dict[str, Any]
     output_schema: dict[str, Any]
-    asset_service: Any
+    asset_service: AssetService | None
     event_sink: Any
     logger: Any
 

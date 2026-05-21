@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
+from xiagent.workflows.testing import WorkflowTestBuilder
 from xiagent.workflows.testing.console import ConsoleIO, parse_input_data
+from xiagent.workflows.testing.runner import WorkflowTestRunner
 
 
 def test_console_prompts_resume_single_string_output_with_question() -> None:
@@ -31,6 +36,52 @@ def test_console_prompts_resume_single_string_output_with_question() -> None:
     assert output == {"answer": "蓝色"}
     assert prompts == ["请告诉我你喜欢的颜色。\nanswer: "]
     assert "resume output JSON: " not in prompts
+
+
+def test_console_replaces_unencodable_output_for_gbk_console() -> None:
+    output_lines: list[str] = []
+
+    def gbk_output(message: str) -> None:
+        output_lines.append(message.encode("gbk").decode("gbk"))
+
+    console = ConsoleIO(output_func=gbk_output)
+
+    console.show_node_execution(
+        {
+            "node_id": "profile",
+            "status": "succeeded",
+            "output": {"text": "warning: ⚠"},
+        }
+    )
+
+    assert any("warning: ?" in line for line in output_lines)
+
+
+def test_default_console_output_survives_gbk_pythonioencoding() -> None:
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "gbk"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "from xiagent.workflows.testing.console import ConsoleIO; "
+                "ConsoleIO().show_node_execution("
+                "{'node_id':'profile','status':'succeeded',"
+                "'output':{'text':'warning: \\u26a0'}})"
+            ),
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="gbk",
+        timeout=10,
+    )
+
+    assert result.returncode == 0
+    assert "warning: ?" in result.stdout
+    assert "UnicodeEncodeError" not in result.stderr
 
 
 def test_parse_input_data_prefers_inline_json(tmp_path: Path) -> None:
@@ -156,10 +207,6 @@ def test_parse_input_data_prompts_required_schema_fields() -> None:
         "options": {"nested": True},
     }
     assert prompts == ["topic: ", "count: ", "enabled: ", "options (JSON): "]
-
-
-from xiagent.workflows.testing import WorkflowTestBuilder
-from xiagent.workflows.testing.runner import WorkflowTestRunner
 
 
 def _echo_contract() -> dict:

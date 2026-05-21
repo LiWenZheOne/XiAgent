@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
+
+from xiagent.nodes.base import AssetRef
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +39,7 @@ class NodeExecutionRecord:
     finished_at: str | None
     created_at: str
     updated_at: str
+    asset_refs: list[AssetRef] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)

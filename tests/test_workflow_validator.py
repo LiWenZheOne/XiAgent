@@ -134,9 +134,17 @@ def test_cycle_in_edges_is_rejected() -> None:
     assert exc_info.value.code == "workflow_cycle_detected"
 
 
-def test_start_fanout_is_rejected_for_mvp_runtime() -> None:
+def test_start_fanout_parallel_dag_is_accepted_when_branches_converge() -> None:
+    registry = _registry()
+    contract = _parallel_join_contract()
+
+    validate_workflow_contract(contract, registry)
+
+
+def test_parallel_branches_can_converge_directly_at_end() -> None:
     registry = _registry()
     contract = _two_node_contract()
+    contract["nodes"][1]["inputs"] = {"topic": {"from": "$workflow.input.topic"}}
     contract["edges"] = [
         {"from": "START", "to": "a"},
         {"from": "START", "to": "b"},
@@ -144,32 +152,100 @@ def test_start_fanout_is_rejected_for_mvp_runtime() -> None:
         {"from": "b", "to": "END"},
     ]
 
-    with pytest.raises(ValidationError) as exc_info:
-        validate_workflow_contract(contract, registry)
-
-    assert exc_info.value.code == "unsupported_workflow_fanout"
-    assert exc_info.value.details == {"from": "START"}
+    validate_workflow_contract(contract, registry)
 
 
-def test_node_fanout_is_rejected_for_mvp_runtime() -> None:
+def test_node_fanout_parallel_dag_is_accepted_when_branches_converge() -> None:
     registry = _registry()
     contract = _two_node_contract()
     contract["nodes"].append(
         {"id": "c", "ref": "tool.echo.v1", "inputs": {}, "outputs": _output_schema()}
     )
+    contract["nodes"].append(
+        {
+            "id": "join",
+            "ref": "tool.echo.v1",
+            "inputs": {
+                "left": {"from": "$nodes.b.output.ok"},
+                "right": {"from": "$nodes.c.output.ok"},
+            },
+            "outputs": _output_schema(),
+        }
+    )
     contract["edges"] = [
         {"from": "START", "to": "a"},
         {"from": "a", "to": "b"},
         {"from": "a", "to": "c"},
-        {"from": "b", "to": "END"},
-        {"from": "c", "to": "END"},
+        {"from": "b", "to": "join"},
+        {"from": "c", "to": "join"},
+        {"from": "join", "to": "END"},
+    ]
+
+    validate_workflow_contract(contract, registry)
+
+
+def test_start_fanout_branch_without_path_to_end_is_rejected() -> None:
+    registry = _registry()
+    contract = _two_node_contract()
+    contract["nodes"][1]["inputs"] = {"topic": {"from": "$workflow.input.topic"}}
+    contract["edges"] = [
+        {"from": "START", "to": "a"},
+        {"from": "START", "to": "b"},
+        {"from": "a", "to": "END"},
     ]
 
     with pytest.raises(ValidationError) as exc_info:
         validate_workflow_contract(contract, registry)
 
-    assert exc_info.value.code == "unsupported_workflow_fanout"
-    assert exc_info.value.details == {"from": "a"}
+    assert exc_info.value.code == "workflow_node_not_connected_to_end"
+    assert exc_info.value.details == {"node_id": "b"}
+
+
+def test_join_node_can_reference_all_direct_upstream_outputs() -> None:
+    registry = _registry()
+    contract = _parallel_join_contract()
+
+    validate_workflow_contract(contract, registry)
+
+
+def test_parallel_branch_cannot_reference_sibling_output_before_join() -> None:
+    registry = _registry()
+    contract = _parallel_join_contract()
+    branch_a = next(node for node in contract["nodes"] if node["id"] == "a")
+    branch_a["inputs"] = {"value": {"from": "$nodes.b.output.ok"}}
+
+    with pytest.raises(ValidationError) as exc_info:
+        validate_workflow_contract(contract, registry)
+
+    assert exc_info.value.code == "non_upstream_workflow_reference"
+
+
+def test_join_node_rejects_output_reference_from_non_upstream_branch() -> None:
+    registry = _registry()
+    contract = _parallel_join_contract()
+    contract["nodes"].append(
+        {"id": "c", "ref": "tool.echo.v1", "inputs": {}, "outputs": _output_schema()}
+    )
+    contract["nodes"].append(
+        {"id": "final", "ref": "tool.echo.v1", "inputs": {}, "outputs": _output_schema()}
+    )
+    join = next(node for node in contract["nodes"] if node["id"] == "join")
+    join["inputs"]["outside"] = {"from": "$nodes.c.output.ok"}
+    contract["edges"] = [
+        {"from": "START", "to": "a"},
+        {"from": "START", "to": "b"},
+        {"from": "START", "to": "c"},
+        {"from": "a", "to": "join"},
+        {"from": "b", "to": "join"},
+        {"from": "c", "to": "final"},
+        {"from": "join", "to": "final"},
+        {"from": "final", "to": "END"},
+    ]
+
+    with pytest.raises(ValidationError) as exc_info:
+        validate_workflow_contract(contract, registry)
+
+    assert exc_info.value.code == "non_upstream_workflow_reference"
 
 
 def test_condition_path_referencing_unknown_node_is_rejected() -> None:
@@ -285,6 +361,68 @@ def test_node_output_reference_to_unknown_field_is_rejected() -> None:
     registry = _registry()
     contract = _two_node_contract()
     contract["nodes"][1]["inputs"] = {"value": {"from": "$nodes.a.output.missing"}}
+
+    with pytest.raises(ValidationError) as exc_info:
+        validate_workflow_contract(contract, registry)
+
+    assert exc_info.value.code == "unknown_workflow_output_field"
+
+
+def test_node_output_reference_can_read_field_inside_array_items() -> None:
+    registry = _registry()
+    contract = _two_node_contract()
+    contract["nodes"][0]["outputs"] = _array_output_schema()
+    contract["nodes"][1]["inputs"] = {
+        "value": {"from": "$nodes.a.output.segments.0.description"}
+    }
+
+    validate_workflow_contract(contract, registry)
+
+
+def test_node_output_reference_to_unknown_array_item_field_is_rejected() -> None:
+    registry = _registry()
+    contract = _two_node_contract()
+    contract["nodes"][0]["outputs"] = _array_output_schema()
+    contract["nodes"][1]["inputs"] = {"value": {"from": "$nodes.a.output.segments.0.missing"}}
+
+    with pytest.raises(ValidationError) as exc_info:
+        validate_workflow_contract(contract, registry)
+
+    assert exc_info.value.code == "unknown_workflow_output_field"
+
+
+def test_node_output_reference_to_non_numeric_array_item_is_rejected() -> None:
+    registry = _registry()
+    contract = _two_node_contract()
+    contract["nodes"][0]["outputs"] = _array_output_schema()
+    contract["nodes"][1]["inputs"] = {
+        "value": {"from": "$nodes.a.output.segments.one.description"}
+    }
+
+    with pytest.raises(ValidationError) as exc_info:
+        validate_workflow_contract(contract, registry)
+
+    assert exc_info.value.code == "unknown_workflow_output_field"
+
+
+def test_workflow_input_reference_can_read_field_inside_array_items() -> None:
+    registry = _registry()
+    contract = _two_node_contract()
+    contract["workflow"]["input_schema"] = _array_workflow_input_schema()
+    contract["nodes"][0]["inputs"] = {
+        "value": {"from": "$workflow.input.segments.0.description"}
+    }
+
+    validate_workflow_contract(contract, registry)
+
+
+def test_workflow_input_reference_to_unknown_array_item_field_is_rejected() -> None:
+    registry = _registry()
+    contract = _two_node_contract()
+    contract["workflow"]["input_schema"] = _array_workflow_input_schema()
+    contract["nodes"][0]["inputs"] = {
+        "value": {"from": "$workflow.input.segments.0.missing"}
+    }
 
     with pytest.raises(ValidationError) as exc_info:
         validate_workflow_contract(contract, registry)
@@ -505,8 +643,69 @@ def _two_node_contract() -> dict:
     }
 
 
+def _parallel_join_contract() -> dict:
+    return {
+        "workflow": {
+            "id": "parallel_join",
+            "version": "1.0.0",
+            "scope": "global",
+            "name": "Parallel Join",
+            "input_schema": {"type": "object", "properties": {"topic": {"type": "string"}}},
+        },
+        "nodes": [
+            {
+                "id": "a",
+                "ref": "tool.echo.v1",
+                "inputs": {"topic": {"from": "$workflow.input.topic"}},
+                "outputs": _output_schema(),
+            },
+            {
+                "id": "b",
+                "ref": "tool.echo.v1",
+                "inputs": {"topic": {"from": "$workflow.input.topic"}},
+                "outputs": _output_schema(),
+            },
+            {
+                "id": "join",
+                "ref": "tool.echo.v1",
+                "inputs": {
+                    "left": {"from": "$nodes.a.output.ok"},
+                    "right": {"from": "$nodes.b.output.ok"},
+                },
+                "outputs": _output_schema(),
+            },
+        ],
+        "edges": [
+            {"from": "START", "to": "a"},
+            {"from": "START", "to": "b"},
+            {"from": "a", "to": "join"},
+            {"from": "b", "to": "join"},
+            {"from": "join", "to": "END"},
+        ],
+    }
+
+
 def _output_schema() -> dict:
     return {"type": "object", "properties": {"ok": {"type": "string"}}}
+
+
+def _array_output_schema() -> dict:
+    return {
+        "type": "object",
+        "properties": {
+            "segments": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {"description": {"type": "string"}},
+                },
+            }
+        },
+    }
+
+
+def _array_workflow_input_schema() -> dict:
+    return _array_output_schema()
 
 
 def _registry() -> NodeRegistry:

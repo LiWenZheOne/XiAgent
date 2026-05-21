@@ -139,6 +139,7 @@ create table if not exists node_executions (
   status text not null,
   error_json text,
   metadata_json text not null,
+  asset_refs_json text not null default '[]',
   started_at text,
   finished_at text,
   created_at text not null,
@@ -158,3 +159,25 @@ create table if not exists task_events (
 async def migrate(path: Path) -> None:
     async with connect_db(path) as db:
         await db.executescript(SCHEMA_SQL)
+        await _ensure_column(
+            db,
+            table_name="node_executions",
+            column_name="asset_refs_json",
+            definition="asset_refs_json text not null default '[]'",
+        )
+
+
+async def _ensure_column(
+    db,
+    *,
+    table_name: str,
+    column_name: str,
+    definition: str,
+) -> None:
+    cursor = await db.execute(f"pragma table_info({table_name})")
+    try:
+        columns = {str(row["name"]) for row in await cursor.fetchall()}
+    finally:
+        await cursor.close()
+    if column_name not in columns:
+        await db.execute(f"alter table {table_name} add column {definition}")

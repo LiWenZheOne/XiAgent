@@ -13,6 +13,7 @@ from xiagent.models.types import (
     RunningHubTextToImageModelConfig,
 )
 from xiagent.nodes.ai.deepseek_chat import DeepSeekChatNode
+from xiagent.nodes.ai.deepseek_structured_json import DeepSeekStructuredJsonNode
 from xiagent.nodes.ai.runninghub_image import (
     RunningHubImageToImageNode,
     RunningHubTextToImageNode,
@@ -21,6 +22,8 @@ from xiagent.nodes.base import AssetRef, BaseNode, NodeContext, NodeDescriptor, 
 from xiagent.nodes.registry import NodeRegistry
 from xiagent.nodes.system.human_approval import HumanApprovalNode
 from xiagent.nodes.tools.echo_tool import EchoToolNode
+from xiagent.nodes.tools.script_split import ScriptSplitNode
+from xiagent.nodes.tools.storyboard_prompt import StoryboardPromptAssemblerNode
 
 
 def build_node_registry(settings: Settings) -> NodeRegistry:
@@ -62,8 +65,17 @@ def build_node_registry(settings: Settings) -> NodeRegistry:
     registry = NodeRegistry()
     registry.register(HumanApprovalNode())
     registry.register(EchoToolNode())
+    registry.register(ScriptSplitNode())
+    registry.register(StoryboardPromptAssemblerNode())
     registry.register(
         DeepSeekChatNode(
+            model_router=router,
+            provider="deepseek",
+            model=deepseek_config.model,
+        )
+    )
+    registry.register(
+        DeepSeekStructuredJsonNode(
             model_router=router,
             provider="deepseek",
             model=deepseek_config.model,

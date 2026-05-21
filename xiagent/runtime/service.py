@@ -10,12 +10,13 @@ import aiosqlite
 from xiagent.core.errors import NotFoundError, PermissionDeniedError, ValidationError, XiAgentError
 from xiagent.core.ids import new_id
 from xiagent.core.schemas import validate_json_value
-from xiagent.core.services import UserService
+from xiagent.core.services import AssetService, UserService
 from xiagent.infrastructure.database import connect_db
-from xiagent.nodes.base import NodeContext
+from xiagent.nodes.base import AssetRef, NodeContext
 from xiagent.nodes.registry import NodeRegistry
 from xiagent.runtime.execution_store import (
     SqliteExecutionStore,
+    dump_asset_refs,
     dump_json,
     insert_event,
     node_execution_from_row,
@@ -37,10 +38,12 @@ class SqliteRuntimeService:
         database_path: Path,
         user_service: UserService,
         node_registry: NodeRegistry,
+        asset_service: AssetService | None = None,
     ) -> None:
         self._database_path = database_path
         self._user_service = user_service
         self._node_registry = node_registry
+        self._asset_service = asset_service
         self._store = SqliteExecutionStore(database_path)
 
     async def create_task_from_contract(
@@ -292,32 +295,37 @@ class SqliteRuntimeService:
         workflow_input: dict[str, Any],
         start_node_id: str,
     ) -> TaskRecord:
-        current_node_id = start_node_id
+        _ = start_node_id
         while True:
+            executions = await self._store.list_node_executions(task_id)
+            if any(execution.status == "failed" for execution in executions):
+                return await self._get_task_by_id(task_id)
             node_outputs = await self._load_node_outputs(task_id)
-            next_node_id = _select_next_node(
+            ready_node_ids = _ready_node_ids(
                 contract,
-                current_node_id,
                 workflow_input,
                 node_outputs,
+                executions,
             )
-            if next_node_id is None or next_node_id == _END:
+            if not ready_node_ids:
+                if any(execution.status == "waiting" for execution in executions):
+                    return await self._get_task_by_id(task_id)
                 return await self._finish_task(task_id, "succeeded")
 
-            execution = await self._start_node_execution(
-                task_id=task_id,
-                user_id=user_id,
-                project_id=project_id,
-                contract=contract,
-                node_id=next_node_id,
-                workflow_input=workflow_input,
-                node_outputs=node_outputs,
-            )
-            if execution.status == "waiting":
-                return await self._get_task_by_id(task_id)
-            if execution.status == "failed":
-                return await self._get_task_by_id(task_id)
-            current_node_id = next_node_id
+            for next_node_id in ready_node_ids:
+                execution = await self._start_node_execution(
+                    task_id=task_id,
+                    user_id=user_id,
+                    project_id=project_id,
+                    contract=contract,
+                    node_id=next_node_id,
+                    workflow_input=workflow_input,
+                    node_outputs=node_outputs,
+                )
+                if execution.status == "waiting":
+                    return await self._get_task_by_id(task_id)
+                if execution.status == "failed":
+                    return await self._get_task_by_id(task_id)
 
     async def _start_node_execution(
         self,
@@ -342,9 +350,9 @@ class SqliteRuntimeService:
                 """
                 insert into node_executions (
                   node_execution_id, task_id, node_id, node_ref, attempt, input_snapshot_json,
-                  output_snapshot_json, status, error_json, metadata_json, started_at,
-                  finished_at, created_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  output_snapshot_json, status, error_json, metadata_json, asset_refs_json,
+                  started_at, finished_at, created_at, updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     node_execution_id,
@@ -357,6 +365,7 @@ class SqliteRuntimeService:
                     "running",
                     None,
                     dump_json({}),
+                    dump_asset_refs([]),
                     now,
                     None,
                     now,
@@ -379,7 +388,7 @@ class SqliteRuntimeService:
             node_execution_id=node_execution_id,
             config=dict(node_def.get("config", {})),
             output_schema=dict(node_def["outputs"]),
-            asset_service=None,
+            asset_service=self._asset_service,
             event_sink=None,
             logger=None,
         )
@@ -405,6 +414,7 @@ class SqliteRuntimeService:
                 node_id=node_id,
                 output=result.output,
                 metadata=result.metadata,
+                asset_refs=result.asset_refs,
             )
         except XiAgentError as exc:
             return await self._mark_node_failed(
@@ -473,17 +483,26 @@ class SqliteRuntimeService:
         node_id: str,
         output: dict[str, Any],
         metadata: dict[str, Any],
+        asset_refs: list[AssetRef],
     ) -> NodeExecutionRecord:
         now = _utc_now()
         async with connect_db(self._database_path) as db:
             await db.execute(
                 """
                 update node_executions
-                set output_snapshot_json = ?, status = ?, metadata_json = ?, finished_at = ?,
-                    updated_at = ?
+                set output_snapshot_json = ?, status = ?, metadata_json = ?, asset_refs_json = ?,
+                    finished_at = ?, updated_at = ?
                 where node_execution_id = ?
                 """,
-                (dump_json(output), "succeeded", dump_json(metadata), now, now, node_execution_id),
+                (
+                    dump_json(output),
+                    "succeeded",
+                    dump_json(metadata),
+                    dump_asset_refs(asset_refs),
+                    now,
+                    now,
+                    node_execution_id,
+                ),
             )
             await insert_event(
                 db,
@@ -660,18 +679,108 @@ class SqliteRuntimeService:
         return task_from_row(row), _loads_contract(row["contract_json"])
 
 
-def _select_next_node(
+def _ready_node_ids(
     contract: dict[str, Any],
-    from_node_id: str,
     workflow_input: dict[str, Any],
     node_outputs: dict[str, dict[str, Any]],
-) -> str | None:
-    for edge in contract["edges"]:
-        if edge["from"] != from_node_id:
+    executions: list[NodeExecutionRecord],
+) -> list[str]:
+    active_nodes, active_edges, potential_nodes = _activation_state(
+        contract,
+        workflow_input,
+        node_outputs,
+    )
+    started_node_ids = {execution.node_id for execution in executions}
+    ready: list[str] = []
+    for node in contract["nodes"]:
+        node_id = node["id"]
+        if node_id in started_node_ids or node_id not in active_nodes:
             continue
-        if _edge_matches(edge, workflow_input, node_outputs):
-            return edge["to"]
-    return None
+        if _node_is_ready(
+            contract,
+            node_id,
+            workflow_input,
+            node_outputs,
+            active_nodes,
+            active_edges,
+            potential_nodes,
+        ):
+            ready.append(node_id)
+    return ready
+
+
+def _activation_state(
+    contract: dict[str, Any],
+    workflow_input: dict[str, Any],
+    node_outputs: dict[str, dict[str, Any]],
+) -> tuple[set[str], set[tuple[str, str]], set[str]]:
+    completed_node_ids = set(node_outputs)
+    active_nodes: set[str] = set()
+    active_edges: set[tuple[str, str]] = set()
+
+    for edge in contract["edges"]:
+        from_node = edge["from"]
+        if from_node != _START and from_node not in completed_node_ids:
+            continue
+        if not _edge_matches(edge, workflow_input, node_outputs):
+            continue
+        to_node = edge["to"]
+        active_edges.add((from_node, to_node))
+        if to_node != _END:
+            active_nodes.add(to_node)
+
+    potential_nodes = _potential_downstream_nodes(
+        contract,
+        active_nodes.difference(completed_node_ids),
+    )
+    return active_nodes, active_edges, potential_nodes
+
+
+def _potential_downstream_nodes(
+    contract: dict[str, Any],
+    unresolved_active_nodes: set[str],
+) -> set[str]:
+    potential_nodes: set[str] = set()
+    stack = list(unresolved_active_nodes)
+    while stack:
+        from_node = stack.pop()
+        for edge in contract["edges"]:
+            if edge["from"] != from_node or edge["to"] == _END:
+                continue
+            to_node = edge["to"]
+            if to_node in potential_nodes:
+                continue
+            potential_nodes.add(to_node)
+            stack.append(to_node)
+    return potential_nodes
+
+
+def _node_is_ready(
+    contract: dict[str, Any],
+    node_id: str,
+    workflow_input: dict[str, Any],
+    node_outputs: dict[str, dict[str, Any]],
+    active_nodes: set[str],
+    active_edges: set[tuple[str, str]],
+    potential_nodes: set[str],
+) -> bool:
+    has_active_incoming = False
+    for edge in contract["edges"]:
+        if edge["to"] != node_id:
+            continue
+        from_node = edge["from"]
+        if (from_node, node_id) in active_edges:
+            has_active_incoming = True
+            continue
+        if from_node == _START:
+            continue
+        if from_node in node_outputs:
+            if _edge_matches(edge, workflow_input, node_outputs):
+                has_active_incoming = True
+            continue
+        if from_node in active_nodes or from_node in potential_nodes:
+            return False
+    return has_active_incoming
 
 
 def _edge_matches(

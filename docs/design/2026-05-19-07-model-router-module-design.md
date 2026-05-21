@@ -38,9 +38,9 @@ workflow ref: ai.deepseek_chat.v1
 
 DeepSeek SDK 依赖只能出现在 `xiagent.models.providers.deepseek` 内。`xiagent.nodes.ai.deepseek_chat` 不得导入 `openai.AsyncOpenAI`，也不得接收 api_key、base_url 或 client_factory。
 
-RunningHub 图生图能力当前先作为模型层 provider 提供，不直接注册为内置工作流节点。调用方仍使用 `ChatRequest`：`messages` 提供提示词，`metadata.image_urls` 提供参考图 URL 列表，`metadata.aspect_ratio` 与 `metadata.resolution` 覆盖图像比例和清晰度。`RunningHubImageProvider` 内部负责调用 RunningHub V2 标准接口、轮询 `/openapi/v2/query`，并把首个结果 URL 放入 `ChatResponse.text`，完整结果列表放入 `ChatResponse.metadata.results`。
+RunningHub 图生图能力可以注册为内置工作流 AI 节点。节点只负责把工作流输入转换为 `ChatRequest`：`messages` 提供提示词，`metadata.image_urls` 提供参考图 URL 列表，`metadata.aspect_ratio` 与 `metadata.resolution` 覆盖图像比例和清晰度。节点必须通过 `ChatModelRouter` 调用 `models.providers.runninghub.RunningHubImageProvider`，不得直接依赖 RunningHub HTTP/API 实现、请求地址、轮询细节或密钥配置。`RunningHubImageProvider` 内部负责调用 RunningHub V2 标准接口、轮询 `/openapi/v2/query`，并把首个可用结果 URL 或文本放入 `ChatResponse.text`，完整结果列表放入 `ChatResponse.metadata.results`。
 
-RunningHub 文生图能力同样先作为模型层 provider 提供，不直接注册为内置工作流节点。调用方使用 `provider=runninghub_text_to_image`，`messages` 或 `metadata.prompt` 提供提示词，`metadata.aspect_ratio` 与 `metadata.resolution` 覆盖输出比例和清晰度。`RunningHubTextToImageProvider` 调用 RunningHub V2 标准接口 `/openapi/v2/rhart-image-n-pro/text-to-image`，请求体只包含 `prompt`、`aspectRatio` 与 `resolution`，不要求参考图 URL。
+RunningHub 文生图能力同样可以注册为内置工作流 AI 节点。节点使用 `provider=runninghub_text_to_image` 构造 `ChatRequest`，通过 `messages` 或 `metadata.prompt` 提供提示词，`metadata.aspect_ratio` 与 `metadata.resolution` 覆盖输出比例和清晰度。节点必须通过 `ChatModelRouter` 调用 `models.providers.runninghub.RunningHubTextToImageProvider`，不得直接依赖 RunningHub HTTP/API 实现。`RunningHubTextToImageProvider` 调用 RunningHub V2 标准接口 `/openapi/v2/rhart-image-n-pro/text-to-image`，请求体只包含 `prompt`、`aspectRatio` 与 `resolution`，不要求参考图 URL。
 
 ## 配置规则
 

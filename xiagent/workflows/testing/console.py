@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 import traceback
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from xiagent.core.errors import XiAgentError
 from xiagent.core.schemas import validate_json_value
@@ -21,7 +22,10 @@ class ConsoleIO:
         self._output_func = output_func or print
 
     def write(self, message: str = "") -> None:
-        self._output_func(message)
+        try:
+            self._output_func(message)
+        except UnicodeEncodeError as exc:
+            self._output_func(_replace_unencodable(message, exc.encoding))
 
     def ask(self, prompt: str) -> str:
         return self._input_func(prompt)
@@ -226,6 +230,14 @@ def _parse_boolean(raw_value: str) -> bool:
 
 def _to_pretty_json(value: Any) -> str:
     return json.dumps(value, **_JSON_DUMP_OPTIONS)
+
+
+def _replace_unencodable(message: str, encoding: str | None) -> str:
+    safe_encoding = encoding or "ascii"
+    return message.encode(safe_encoding, errors="replace").decode(
+        safe_encoding,
+        errors="replace",
+    )
 
 
 def _to_jsonable(value: Any) -> Any:

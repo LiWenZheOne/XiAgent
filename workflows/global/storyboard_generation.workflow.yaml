@@ -1,0 +1,301 @@
+workflow:
+  id: storyboard_generation
+  version: "1.0.1"
+  scope: global
+  name: Storyboard Generation
+  description: Generate one storyboard image prompt from the first script segment.
+  input_schema:
+    type: object
+    required: ["script"]
+    properties:
+      script:
+        type: string
+        minLength: 1
+    additionalProperties: false
+
+nodes:
+  - id: split_script
+    ref: tool.script_split.v1
+    inputs:
+      script:
+        from: "$workflow.input.script"
+    outputs:
+      type: object
+      required: ["count", "segments"]
+      properties:
+        count:
+          type: integer
+          minimum: 0
+        segments:
+          type: array
+          items:
+            type: object
+            required: ["index", "text", "panel_hint", "panel_count_min", "panel_count_max"]
+            properties:
+              index:
+                type: integer
+                minimum: 0
+              text:
+                type: string
+                minLength: 1
+              panel_hint:
+                type: string
+                minLength: 1
+              panel_count_min:
+                type: integer
+                minimum: 1
+              panel_count_max:
+                type: integer
+                minimum: 1
+            additionalProperties: false
+      additionalProperties: false
+
+  - id: analyze_characters
+    ref: ai.deepseek_structured_json.v1
+    inputs:
+      system:
+        value: Return valid JSON only.
+      prompt:
+        template: |
+          Analyze the characters in this storyboard script segment and return a JSON object.
+          The response root must be an object with exactly one root key:
+          - characters: array of character objects
+          Do not return a root array.
+          Do not include keys other than characters at the root.
+          Return each character with name, description, and role when role is identifiable.
+
+          Segment:
+          {segment_text}
+        vars:
+          segment_text:
+            from: "$nodes.split_script.output.segments.0.text"
+    outputs:
+      type: object
+      required: ["characters"]
+      properties:
+        characters:
+          type: array
+          items:
+            type: object
+            required: ["name", "description"]
+            properties:
+              name:
+                type: string
+                minLength: 1
+              description:
+                type: string
+                minLength: 1
+              role:
+                type: string
+                minLength: 1
+            additionalProperties: false
+      additionalProperties: false
+
+  - id: describe_panels
+    ref: ai.deepseek_structured_json.v1
+    inputs:
+      system:
+        value: Return valid JSON only.
+      prompt:
+        template: |
+          Describe storyboard panels for the first segment and return JSON.
+          Return a JSON object with only these root keys:
+          - segment_title: short optional title for the segment
+          - panels: array of storyboard panel objects
+          Each panel object must include description, style, and constraints.
+          Each panel object may only use these keys:
+          - description
+          - style
+          - constraints
+          - character_focus
+          - environment_details
+          - shot_type
+          - camera_angle
+          - composition
+          - lighting
+          - mood
+          - action
+          - key_props
+          - continuity_notes
+          Do not include keys other than segment_title and panels at the root.
+          Do not include any other panel object keys.
+
+          Segment:
+          {segment_text}
+
+          Characters:
+          {characters}
+        vars:
+          segment_text:
+            from: "$nodes.split_script.output.segments.0.text"
+          characters:
+            from: "$nodes.analyze_characters.output.characters"
+      max_attempts:
+        value: 2
+    outputs:
+      type: object
+      required: ["panels"]
+      properties:
+        segment_title:
+          type: string
+          minLength: 1
+        panels:
+          type: array
+          items:
+            type: object
+            required: ["description", "style", "constraints"]
+            properties:
+              description:
+                type: string
+                minLength: 1
+              style:
+                type: string
+                minLength: 1
+              constraints:
+                type: string
+                minLength: 1
+              character_focus:
+                type: string
+                minLength: 1
+              environment_details:
+                type: string
+                minLength: 1
+              shot_type:
+                type: string
+                minLength: 1
+              camera_angle:
+                type: string
+                minLength: 1
+              composition:
+                type: string
+                minLength: 1
+              lighting:
+                type: string
+                minLength: 1
+              mood:
+                type: string
+                minLength: 1
+              action:
+                type: string
+                minLength: 1
+              key_props:
+                type: string
+                minLength: 1
+              continuity_notes:
+                type: string
+                minLength: 1
+            additionalProperties: false
+      additionalProperties: false
+
+  - id: collect_assets
+    ref: system.human_approval.v1
+    inputs:
+      question:
+        value: Provide reference image URLs for this storyboard panel.
+      panel_description:
+        from: "$nodes.describe_panels.output.panels.0.description"
+    outputs:
+      type: object
+      required: ["image_urls"]
+      properties:
+        image_urls:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            minLength: 1
+      additionalProperties: false
+
+  - id: assemble_prompt
+    ref: tool.storyboard_prompt_assembler.v1
+    inputs:
+      description:
+        from: "$nodes.describe_panels.output.panels.0.description"
+      style:
+        from: "$nodes.describe_panels.output.panels.0.style"
+      constraints:
+        from: "$nodes.describe_panels.output.panels.0.constraints"
+      image_urls:
+        from: "$nodes.collect_assets.output.image_urls"
+    outputs:
+      type: object
+      required: ["prompt", "image_urls", "aspect_ratio", "resolution"]
+      properties:
+        prompt:
+          type: string
+          minLength: 1
+        image_urls:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            minLength: 1
+        aspect_ratio:
+          type: string
+          minLength: 1
+        resolution:
+          type: string
+          minLength: 1
+      additionalProperties: false
+
+  - id: generate_image
+    ref: ai.runninghub_image_to_image.v1
+    inputs:
+      prompt:
+        from: "$nodes.assemble_prompt.output.prompt"
+      image_urls:
+        from: "$nodes.assemble_prompt.output.image_urls"
+      aspect_ratio:
+        from: "$nodes.assemble_prompt.output.aspect_ratio"
+      resolution:
+        from: "$nodes.assemble_prompt.output.resolution"
+      poll_interval_seconds:
+        value: 2
+      poll_timeout_seconds:
+        value: 720
+    outputs:
+      type: object
+      required: ["image_url", "model", "usage", "results"]
+      properties:
+        image_url:
+          type: string
+        model:
+          type: string
+        usage:
+          type: object
+        results:
+          type: array
+          items:
+            type: object
+            properties:
+              url:
+                type: string
+                minLength: 1
+              text:
+                type: string
+                minLength: 1
+              output_type:
+                type: string
+                minLength: 1
+            additionalProperties: false
+        task_id:
+          type: string
+        status:
+          type: string
+      additionalProperties: false
+
+edges:
+  - from: START
+    to: split_script
+  - from: split_script
+    to: analyze_characters
+  - from: analyze_characters
+    to: describe_panels
+  - from: describe_panels
+    to: collect_assets
+  - from: collect_assets
+    to: assemble_prompt
+  - from: assemble_prompt
+    to: generate_image
+  - from: generate_image
+    to: END

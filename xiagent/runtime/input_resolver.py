@@ -123,13 +123,27 @@ def resolve_path(
 def _resolve_segments(value: Any, segments: list[str], reference: str) -> Any:
     current = value
     for segment in segments:
-        if not isinstance(current, Mapping) or segment not in current:
-            raise ValidationError(
-                code="workflow_reference_missing_key",
-                message="Workflow reference path is missing a key",
-                details={"reference": reference, "key": segment},
-            )
-        current = current[segment]
+        if isinstance(current, Mapping):
+            if segment not in current:
+                raise ValidationError(
+                    code="workflow_reference_missing_key",
+                    message="Workflow reference path is missing a key",
+                    details={"reference": reference, "key": segment},
+                )
+            current = current[segment]
+            continue
+
+        if isinstance(current, list) and segment.isdecimal():
+            index = int(segment)
+            if index < len(current):
+                current = current[index]
+                continue
+
+        raise ValidationError(
+            code="workflow_reference_missing_key",
+            message="Workflow reference path is missing a key",
+            details={"reference": reference, "key": segment},
+        )
     return current
 
 

@@ -41,6 +41,19 @@ nodes:
           type: object
         results:
           type: array
+          items:
+            type: object
+            properties:
+              url:
+                type: string
+                minLength: 1
+              text:
+                type: string
+                minLength: 1
+              output_type:
+                type: string
+                minLength: 1
+            additionalProperties: false
         task_id:
           type: string
         status:

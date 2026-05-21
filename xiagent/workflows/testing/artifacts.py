@@ -7,11 +7,11 @@ import mimetypes
 import os
 import re
 import webbrowser
+from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, is_dataclass
 from html import escape
 from pathlib import Path
-from typing import Any, Callable, Iterable
-
+from typing import Any
 
 _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 _IMAGE_MIME_TYPES_BY_SUFFIX = {

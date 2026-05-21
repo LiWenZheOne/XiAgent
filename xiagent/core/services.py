@@ -25,6 +25,21 @@ class AssetService(ABC):
     ) -> Any:
         raise NotImplementedError
 
+    @abstractmethod
+    async def search_assets(
+        self,
+        *,
+        user_id: str,
+        scope: str,
+        project_id: str | None,
+        keyword: str | None = None,
+        asset_type: str | None = None,
+        mime_type: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> Any:
+        raise NotImplementedError
+
 
 class WorkflowService(ABC):
     @abstractmethod

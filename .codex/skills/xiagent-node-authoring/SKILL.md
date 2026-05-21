@@ -28,6 +28,7 @@ description: Use when creating or modifying XiAgent BaseNode implementations, no
 - 可注册节点必须继承平台 `BaseNode`，不要绕过 `NodeRegistry` 的类型检查。
 - 节点不得直接读取 SQLite、拼接资产文件路径或依赖资产模块内部实现；访问资产必须通过 `AssetService` 或 `NodeContext` 暴露的正式能力。
 - 核心领域接口不得依赖 LangGraph、PydanticAI、FastAPI、SQLite 等具体实现；第三方库只能出现在适配器、基础设施或具体节点实现中。
+- 模型类第三方能力可以注册为工作流节点，但节点不得直接依赖模型 SDK、HTTP/API 实现、请求地址、轮询细节或密钥配置；RunningHub、DeepSeek 等能力必须通过 `ChatModelRouter` 调用 `xiagent.models.providers.*`，节点只负责把工作流输入输出适配为模型请求和节点结果。
 - 节点输入输出 schema 要能被工作流契约和下游节点稳定引用；不要把临时内部字段暴露为公共契约。
 - 外部 API 节点必须明确凭据来源、超时、失败状态和测试替身；不要在测试里真实调用外部服务。
 
@@ -87,5 +88,6 @@ python -m xiagent.workflows.testing_cli workflows/global/<workflow-id>.workflow.
 - 没查现有节点就新建：先列出现有候选节点，等待用户确认复用或继续开发。
 - 注册了节点但没测试注册表：工作流可能仍找不到 `ref`。
 - 节点直接访问数据库或资产路径：改为通过正式服务接口。
+- RunningHub 或 DeepSeek 节点直接导入 SDK、拼接 HTTP 请求或读取模型密钥：改为通过 `ChatModelRouter` 和 `xiagent.models.providers.*`，节点只保留输入输出适配逻辑。
 - 输出 schema 和实际输出不一致：工作流验证可能通过，但运行时下游会断。
 - 为了满足一个工作流写死字段：把稳定能力抽象到节点输入输出契约里。

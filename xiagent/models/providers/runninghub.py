@@ -77,7 +77,7 @@ class RunningHubImageProvider(ChatModelProvider):
 
         try:
             submission = await self._post_json(self._task_url(), payload)
-            result = await self._poll_until_complete(submission)
+            result = await self._poll_until_complete(submission, request.metadata)
         except XiAgentError:
             raise
         except Exception as exc:
@@ -158,9 +158,23 @@ class RunningHubImageProvider(ChatModelProvider):
             payload=payload,
         )
 
-    async def _poll_until_complete(self, response: dict[str, Any]) -> dict[str, Any]:
+    async def _poll_until_complete(
+        self,
+        response: dict[str, Any],
+        metadata: dict[str, Any],
+    ) -> dict[str, Any]:
         task_id = self._task_id(response)
-        deadline = time.monotonic() + max(0.0, self._config.poll_timeout_seconds)
+        poll_timeout_seconds = self._metadata_float(
+            metadata,
+            "poll_timeout_seconds",
+            self._config.poll_timeout_seconds,
+        )
+        poll_interval_seconds = self._metadata_float(
+            metadata,
+            "poll_interval_seconds",
+            self._config.poll_interval_seconds,
+        )
+        deadline = time.monotonic() + max(0.0, poll_timeout_seconds)
         current = response
         while True:
             status = self._status(current)
@@ -180,10 +194,33 @@ class RunningHubImageProvider(ChatModelProvider):
                 raise ExternalServiceError(
                     code=self._timeout_code,
                     message="RunningHub image request timed out",
-                    details={"provider": self._provider_name, "task_id": task_id},
+                    details={
+                        "provider": self._provider_name,
+                        "task_id": task_id,
+                        "poll_timeout_seconds": poll_timeout_seconds,
+                        "last_status": status,
+                    },
                 )
-            await asyncio.sleep(max(0.0, self._config.poll_interval_seconds))
+            await asyncio.sleep(max(0.0, poll_interval_seconds))
             current = await self._post_json(self._query_url(), {"taskId": task_id})
+
+    def _metadata_float(
+        self,
+        metadata: dict[str, Any],
+        key: str,
+        default: float,
+    ) -> float:
+        value = metadata.get(key)
+        if isinstance(value, bool) or value is None:
+            return default
+        if isinstance(value, int | float):
+            return float(value)
+        if isinstance(value, str) and value:
+            try:
+                return float(value)
+            except ValueError:
+                return default
+        return default
 
     def _raise_failed(self, response: dict[str, Any]) -> None:
         details: dict[str, Any] = {
@@ -208,7 +245,7 @@ class RunningHubImageProvider(ChatModelProvider):
                 details={"provider": self._provider_name, "task_id": self._task_id(result)},
             )
         first_result = results[0] if isinstance(results[0], dict) else {}
-        text = first_result.get("url") or first_result.get("text") or ""
+        text = self._result_text(result, first_result)
         usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
         return ChatResponse(
             text=text,
@@ -220,6 +257,21 @@ class RunningHubImageProvider(ChatModelProvider):
                 "status": self._status(result),
                 "results": results,
             },
+        )
+
+    def _result_text(
+        self,
+        response: dict[str, Any],
+        first_result: dict[str, Any],
+    ) -> str:
+        for key in ("url", "text"):
+            value = first_result.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+        raise ExternalServiceError(
+            code=self._result_missing_code,
+            message="RunningHub image response result did not include a usable url or text",
+            details={"provider": self._provider_name, "task_id": self._task_id(response)},
         )
 
     def _task_id(self, response: dict[str, Any]) -> str | None:

@@ -10,10 +10,21 @@ from xiagent.nodes.base import BaseNode, NodeContext, NodeDescriptor, NodeResult
 _OUTPUT_SCHEMA = {
     "type": "object",
     "properties": {
-        "image_url": {"type": "string"},
+        "image_url": {"type": "string", "minLength": 1},
         "model": {"type": "string"},
         "usage": {"type": "object"},
-        "results": {"type": "array"},
+        "results": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "minLength": 1},
+                    "text": {"type": "string", "minLength": 1},
+                    "output_type": {"type": "string", "minLength": 1},
+                },
+                "additionalProperties": False,
+            },
+        },
         "task_id": {"type": "string"},
         "status": {"type": "string"},
     },
@@ -79,6 +90,12 @@ class _RunningHubImageNodeBase(BaseNode):
         resolution = _optional_text(inputs, "resolution")
         if resolution is not None:
             metadata["resolution"] = resolution
+        poll_interval_seconds = _optional_number(inputs, "poll_interval_seconds")
+        if poll_interval_seconds is not None:
+            metadata["poll_interval_seconds"] = poll_interval_seconds
+        poll_timeout_seconds = _optional_number(inputs, "poll_timeout_seconds")
+        if poll_timeout_seconds is not None:
+            metadata["poll_timeout_seconds"] = poll_timeout_seconds
         return metadata
 
 
@@ -99,6 +116,8 @@ class RunningHubImageToImageNode(_RunningHubImageNodeBase):
             "aspect_ratio": {"type": "string", "minLength": 1},
             "aspectRatio": {"type": "string", "minLength": 1},
             "resolution": {"type": "string", "minLength": 1},
+            "poll_interval_seconds": {"type": "number", "minimum": 0},
+            "poll_timeout_seconds": {"type": "number", "minimum": 0},
         },
         "required": ["prompt", "image_urls"],
         "additionalProperties": False,
@@ -121,6 +140,8 @@ class RunningHubTextToImageNode(_RunningHubImageNodeBase):
             "aspect_ratio": {"type": "string", "minLength": 1},
             "aspectRatio": {"type": "string", "minLength": 1},
             "resolution": {"type": "string", "minLength": 1},
+            "poll_interval_seconds": {"type": "number", "minimum": 0},
+            "poll_timeout_seconds": {"type": "number", "minimum": 0},
         },
         "required": ["prompt"],
         "additionalProperties": False,
@@ -140,6 +161,13 @@ def _required_text(inputs: Mapping[str, Any], key: str, code: str) -> str:
 def _optional_text(inputs: Mapping[str, Any], key: str) -> str | None:
     value = inputs.get(key)
     return value if isinstance(value, str) and value.strip() else None
+
+
+def _optional_number(inputs: Mapping[str, Any], key: str) -> int | float | None:
+    value = inputs.get(key)
+    if isinstance(value, bool):
+        return None
+    return value if isinstance(value, int | float) else None
 
 
 def _image_urls(inputs: Mapping[str, Any]) -> list[str]:
@@ -166,7 +194,7 @@ def _response_output(response: ChatResponse) -> dict[str, Any]:
         "image_url": response.text,
         "model": response.model,
         "usage": response.usage,
-        "results": results if isinstance(results, list) else [],
+        "results": _public_results(results),
     }
     task_id = metadata.get("task_id")
     if isinstance(task_id, str):
@@ -175,3 +203,30 @@ def _response_output(response: ChatResponse) -> dict[str, Any]:
     if isinstance(status, str):
         output["status"] = status
     return output
+
+
+def _public_results(results: Any) -> list[dict[str, str]]:
+    if not isinstance(results, list):
+        return []
+    public_results: list[dict[str, str]] = []
+    for result in results:
+        if not isinstance(result, Mapping):
+            continue
+        public_result: dict[str, str] = {}
+        url = _mapping_text(result, "url")
+        if url is not None:
+            public_result["url"] = url
+        text = _mapping_text(result, "text")
+        if text is not None:
+            public_result["text"] = text
+        output_type = _mapping_text(result, "output_type") or _mapping_text(result, "outputType")
+        if output_type is not None:
+            public_result["output_type"] = output_type
+        if public_result:
+            public_results.append(public_result)
+    return public_results
+
+
+def _mapping_text(value: Mapping[str, Any], key: str) -> str | None:
+    item = value.get(key)
+    return item.strip() if isinstance(item, str) and item.strip() else None

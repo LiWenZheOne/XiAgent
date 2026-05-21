@@ -19,7 +19,9 @@ def test_build_parser_accepts_workflow_path_and_input() -> None:
 
 
 def test_build_parser_accepts_workflow_id() -> None:
-    args = build_parser().parse_args(["--workflow-id", "deepseek_echo", "--input", '{"prompt":"hello"}'])
+    args = build_parser().parse_args(
+        ["--workflow-id", "deepseek_echo", "--input", '{"prompt":"hello"}']
+    )
 
     assert args.workflow_path is None
     assert args.workflow_id == "deepseek_echo"
