@@ -1,0 +1,683 @@
+workflow:
+  id: asset_catalog
+  version: "1.0.0"
+  scope: global
+  name: Asset Catalog
+  description: 从剧本中提取角色资产，P1全名精确匹配+LLM语义匹配，P2变体匹配+配件检查，审核后生成图像或手动上传。
+  input_schema:
+    type: object
+    required: ["script", "generate_assets", "background"]
+    properties:
+      script:
+        type: string
+        minLength: 1
+      generate_assets:
+        type: string
+        enum: ["手动上传", "自动生成"]
+      background:
+        type: string
+        minLength: 1
+      template_image_url:
+        type: string
+        minLength: 1
+    additionalProperties: false
+
+nodes:
+  # ===== P1: 角色资产匹配 =====
+
+  - id: extract_characters
+    ref: ai.deepseek_structured_json.v1
+    inputs:
+      system:
+        template: |
+          仅返回合法 JSON。你是专业的剧本分析师。请从剧本中提取所有角色信息。
+          世界背景：{background}。请根据世界背景推断每个被提及角色的全名。
+          同时判断当前剧本对应原作的哪一回、剧情发展到什么阶段。
+          叙述 vs 对话：剧本包含叙述段（无前缀，描述已发生的事实）和对话段（-开头，角色说的话）。
+          只有叙述段才构成事实依据。对话中的计划、命令、提及、回忆均不构成角色出场的证据。
+          角色收录条件：叙述段中有动作或状态描写，或作为对话段发言者且叙述段中在场。
+          排除条件：仅在对话中被提及、谈论、派遣、回忆的角色不收录。
+          对每个角色提取：
+          - full_name：根据世界背景推断的全名（如"武松"而非"武二郎"），保存时固定使用全名作为资产名
+          - aliases：别名列表
+          - summary：角色梗概（≤100字）
+          - character_status：当前剧情阶段该角色的状态（一段自然语言的近况描述，含身份、处境、外貌等）
+          - accessories：当前可能有的配件列表（如["蒙面"]，无配件时为空数组）
+        vars:
+          background:
+            from: "$workflow.input.background"
+      prompt:
+        template: |
+          请从以下剧本中提取所有角色信息。
+
+          剧本内容：
+          {script}
+
+          返回一个仅包含一个根键的 JSON 对象：
+          - characters：角色数组
+          - character_names：所有角色的全名数组（仅字符串）
+
+          每个角色对象必须包含：
+          - full_name：全名
+          - aliases：别名数组（无别名时为空数组）
+          - summary：≤100字角色梗概
+          - character_status：当前剧情阶段的角色状态描述
+          - accessories：配件数组（无配件时为空数组）
+
+          根层级除 characters 和 character_names 外不得包含其他键。
+        vars:
+          script:
+            from: "$workflow.input.script"
+          background:
+            from: "$workflow.input.background"
+      max_attempts:
+        value: 2
+    outputs:
+      type: object
+      required: ["characters", "character_names"]
+      properties:
+        characters:
+          type: array
+          items:
+            type: object
+            required: ["full_name", "aliases", "summary", "character_status", "accessories"]
+            properties:
+              full_name:
+                type: string
+                minLength: 1
+              aliases:
+                type: array
+                items:
+                  type: string
+              summary:
+                type: string
+                minLength: 1
+              character_status:
+                type: string
+                minLength: 1
+              accessories:
+                type: array
+                items:
+                  type: string
+            additionalProperties: false
+        character_names:
+          type: array
+          items:
+            type: string
+            minLength: 1
+      additionalProperties: false
+
+  - id: lookup_existing_assets
+    ref: tool.asset_lookup.v1
+    inputs:
+      scope:
+        value: "combined"
+      asset_type:
+        value: "text"
+      limit:
+        value: 200
+    outputs:
+      type: object
+      required: ["total", "assets"]
+      properties:
+        total:
+          type: integer
+          minimum: 0
+        assets:
+          type: array
+          items:
+            type: object
+            required: ["asset_id", "name"]
+            properties:
+              asset_id:
+                type: string
+                minLength: 1
+              name:
+                type: string
+                minLength: 1
+              asset_type:
+                type: string
+              mime_type:
+                type: string
+              storage_uri:
+                type: string
+              metadata:
+                type: object
+              text_content:
+                type: string
+            additionalProperties: true
+      additionalProperties: false
+
+  - id: match_by_name
+    ref: tool.asset_lookup.v1
+    inputs:
+      scope:
+        value: "combined"
+      names:
+        from: "$nodes.extract_characters.output.character_names"
+      asset_type:
+        value: "text"
+      limit:
+        value: 200
+    outputs:
+      type: object
+      required: ["total", "assets"]
+      properties:
+        total:
+          type: integer
+          minimum: 0
+        assets:
+          type: array
+          items:
+            type: object
+            required: ["asset_id", "name"]
+            properties:
+              asset_id:
+                type: string
+                minLength: 1
+              name:
+                type: string
+                minLength: 1
+              asset_type:
+                type: string
+              mime_type:
+                type: string
+              storage_uri:
+                type: string
+              metadata:
+                type: object
+              text_content:
+                type: string
+            additionalProperties: true
+      additionalProperties: false
+
+  - id: semantic_match_characters
+    ref: ai.deepseek_structured_json.v1
+    inputs:
+      system:
+        value: |
+          仅返回合法 JSON。你是资产库管理员。请判断以下角色是否与资产库中已有角色是同一人。
+          精确匹配已由程序完成，以下是未匹配到的角色。请通过别名、绰号、角色梗概进行语义匹配。
+          必须给出明确判断，不存在"无法确定"。
+      prompt:
+        template: |
+          请判断以下未匹配角色是否与资产库中已有角色是同一人。
+
+          未匹配角色列表：
+          {unmatched_characters}
+
+          资产库中所有已有角色：
+          {existing_assets}
+
+          返回一个仅包含一个根键的 JSON 对象：
+          - match_results：数组，每个未匹配角色一条记录
+
+          每条记录必须包含：
+          - full_name：角色全名（与输入一致）
+          - matched：true 或 false
+          - matched_asset_name：匹配到的资产名（matched=true时必填）
+          - matched_asset_id：匹配到的资产ID（matched=true时必填）
+          - reason：≤50字判断理由
+
+          根层级除 match_results 外不得包含其他键。
+        vars:
+          unmatched_characters:
+            from: "$nodes.extract_characters.output.characters"
+          existing_assets:
+            from: "$nodes.lookup_existing_assets.output.assets"
+      max_attempts:
+        value: 2
+    outputs:
+      type: object
+      required: ["match_results"]
+      properties:
+        match_results:
+          type: array
+          items:
+            type: object
+            required: ["full_name", "matched", "reason"]
+            properties:
+              full_name:
+                type: string
+                minLength: 1
+              matched:
+                type: boolean
+              matched_asset_name:
+                type: string
+              matched_asset_id:
+                type: string
+              reason:
+                type: string
+                minLength: 1
+            additionalProperties: false
+      additionalProperties: false
+
+  # ===== 角色数据 enrich =====
+
+  - id: enrich_characters
+    ref: ai.deepseek_structured_json.v1
+    inputs:
+      system:
+        value: |
+          仅返回合法 JSON。将 P1 匹配结果合并到每个角色对象中，使每个角色自包含匹配状态和已有变体。
+      prompt:
+        template: |
+          请将匹配结果合并到每个角色对象中。
+
+          所有角色：
+          {characters}
+
+          精确匹配结果：
+          {matched_by_name}
+
+          语义匹配结果：
+          {semantic_matches}
+
+          所有已有资产（含变体信息）：
+          {existing_assets}
+
+          返回一个仅包含一个根键的 JSON 对象：
+          - characters：enrich 后的角色数组
+
+          每个角色对象必须包含原有字段，并新增：
+          - matched：是否匹配到已有资产（true/false）
+          - matched_asset_id：匹配到的资产ID（未匹配时为null）
+          - matched_asset_name：匹配到的资产名（未匹配时为空字符串）
+          - existing_variants：该资产下已有变体列表（含name、status、storage_uri，未匹配时为空数组）
+
+          根层级除 characters 外不得包含其他键。
+        vars:
+          characters:
+            from: "$nodes.extract_characters.output.characters"
+          matched_by_name:
+            from: "$nodes.match_by_name.output.assets"
+          semantic_matches:
+            from: "$nodes.semantic_match_characters.output.match_results"
+          existing_assets:
+            from: "$nodes.lookup_existing_assets.output.assets"
+      max_attempts:
+        value: 2
+    outputs:
+      type: object
+      required: ["characters"]
+      properties:
+        characters:
+          type: array
+          items:
+            type: object
+            required: ["full_name", "matched"]
+            properties:
+              full_name:
+                type: string
+                minLength: 1
+              matched:
+                type: boolean
+              matched_asset_id:
+                type: ["string", "null"]
+              matched_asset_name:
+                type: string
+              existing_variants:
+                type: array
+            additionalProperties: true
+      additionalProperties: false
+
+  # ===== P2: 变体匹配 =====
+
+  - id: match_variants
+    ref: ai.parallel_deepseek_structured_json.v1
+    inputs:
+      system:
+        value: |
+          仅返回合法 JSON。你是资产库管理员。请根据角色当前状态匹配已有变体。
+          变体匹配规则：按身份状态进行语义匹配，同一身份对应同一套服装。
+          角色默认变体是角色创建时的第一个变体。
+      prompt_template:
+        value: |
+          请为以下角色匹配变体。
+
+          角色信息：{item}
+
+          返回一个 JSON 对象：
+          - full_name：角色全名
+          - accessories：角色当前配件列表
+          - matched_variant：匹配到的变体名（无匹配时为空字符串）
+          - matched_variant_id：匹配到的变体资产ID（无匹配时为null）
+          - is_new_variant：是否需要新建变体
+          - new_variant_name：新变体名称（is_new_variant=true时必填）
+          - default_variant_status：角色默认变体的状态描述
+          - default_variant_storage_uri：角色默认变体的参考图URL（无参考图时为空字符串）
+          - reason：≤50字判断理由
+      items:
+        from: "$nodes.enrich_characters.output.characters"
+      max_attempts:
+        value: 2
+    outputs:
+      type: object
+      required: ["results"]
+      properties:
+        results:
+          type: array
+          items:
+            type: object
+            required: ["full_name", "accessories", "matched_variant", "is_new_variant", "default_variant_status", "reason"]
+            properties:
+              full_name:
+                type: string
+                minLength: 1
+              accessories:
+                type: array
+                items:
+                  type: string
+              matched_variant:
+                type: string
+              matched_variant_id:
+                type: ["string", "null"]
+              is_new_variant:
+                type: boolean
+              new_variant_name:
+                type: string
+              default_variant_status:
+                type: string
+                minLength: 1
+              default_variant_storage_uri:
+                type: string
+              reason:
+                type: string
+                minLength: 1
+            additionalProperties: false
+      additionalProperties: false
+
+  - id: check_accessories
+    ref: ai.parallel_deepseek_structured_json.v1
+    inputs:
+      system:
+        value: |
+          仅返回合法 JSON。你是资产库管理员。请检查角色当前配件是否已在变体下存在。
+          配件是独立变体维度：基础服装是一个变体，基础服装+配件是另一个变体。
+          一个变体只对应一个图像。
+      prompt_template:
+        value: |
+          请检查以下角色的配件状态。
+
+          角色信息：{item}
+
+          返回一个 JSON 对象：
+          - full_name：角色全名
+          - has_new_accessories：是否有新配件需要创建变体
+          - new_accessories：新配件名称数组
+          - existing_accessories：已有配件名称数组
+          - reason：≤50字判断理由
+      items:
+        from: "$nodes.match_variants.output.results"
+      max_attempts:
+        value: 2
+    outputs:
+      type: object
+      required: ["results"]
+      properties:
+        results:
+          type: array
+          items:
+            type: object
+            required: ["full_name", "has_new_accessories", "new_accessories", "existing_accessories", "reason"]
+            properties:
+              full_name:
+                type: string
+                minLength: 1
+              has_new_accessories:
+                type: boolean
+              new_accessories:
+                type: array
+                items:
+                  type: string
+              existing_accessories:
+                type: array
+                items:
+                  type: string
+              reason:
+                type: string
+                minLength: 1
+            additionalProperties: false
+      additionalProperties: false
+
+  # ===== 审核 =====
+
+  - id: review_assets
+    ref: system.human_approval.v1
+    inputs:
+      question:
+        template: |
+          请审核以下资产提取和匹配结果。
+
+          提取的角色：
+          {characters}
+
+          精确匹配结果：
+          {match_by_name}
+
+          语义匹配结果：
+          {semantic_match}
+
+          变体匹配结果：
+          {variant_result}
+
+          配件检查结果：
+          {accessory_result}
+
+          请确认资产匹配是否正确，或提供修改意见。
+        vars:
+          characters:
+            from: "$nodes.extract_characters.output.characters"
+          match_by_name:
+            from: "$nodes.match_by_name.output.assets"
+          semantic_match:
+            from: "$nodes.semantic_match_characters.output.match_results"
+          variant_result:
+            from: "$nodes.match_variants.output.results"
+          accessory_result:
+            from: "$nodes.check_accessories.output.results"
+    outputs:
+      type: object
+      required: ["decision"]
+      properties:
+        decision:
+          type: string
+          minLength: 1
+        approved_assets:
+          type: object
+        image_urls:
+          type: array
+          items:
+            type: string
+            minLength: 1
+      additionalProperties: true
+
+  # ===== 提示词生成与图像生成 =====
+
+  - id: generate_prompt
+    ref: ai.deepseek_structured_json.v1
+    inputs:
+      system:
+        value: |
+          仅返回合法 JSON。你是一位图像提示词专家。请根据角色当前状态和默认变体状态生成修改提示词。
+          对比两者差异，思考哪些特征需要改变、哪些需要保留，不预设哪些特征是固定的。
+          提示词格式：请将图中角色的xx改成xx，保持风格和其它特征不变。
+          必须先输出 think（思考过程），再输出 prompt（最终提示词）。
+      prompt:
+        template: |
+          请为以下所有角色生成图生图修改提示词。
+
+          剧本内容：
+          {script}
+
+          角色列表：
+          {characters}
+
+          变体匹配结果（含默认变体状态）：
+          {variant_results}
+
+          返回一个仅包含一个根键的 JSON 对象：
+          - prompt_results：数组，每个角色一条记录
+
+          每条记录必须包含：
+          - full_name：角色全名
+          - think：思考过程，逐项对比差异，列出要添加/去除/修改的部分
+          - prompt：最终提示词，格式为"请将图中角色的xx改成xx，保持风格和其它特征不变"
+          - reference_image_url：参考图URL（场景A从已有变体取storage_uri，场景B使用模板图URL）
+
+          根层级除 prompt_results 外不得包含其他键。
+        vars:
+          script:
+            from: "$workflow.input.script"
+          characters:
+            from: "$nodes.extract_characters.output.characters"
+          variant_results:
+            from: "$nodes.match_variants.output.results"
+      max_attempts:
+        value: 2
+    outputs:
+      type: object
+      required: ["prompt_results"]
+      properties:
+        prompt_results:
+          type: array
+          items:
+            type: object
+            required: ["full_name", "think", "prompt", "reference_image_url"]
+            properties:
+              full_name:
+                type: string
+                minLength: 1
+              think:
+                type: string
+                minLength: 1
+              prompt:
+                type: string
+                minLength: 1
+              reference_image_url:
+                type: string
+                minLength: 1
+            additionalProperties: false
+      additionalProperties: false
+
+  - id: generate_image
+    ref: ai.runninghub_image_to_image.v1
+    inputs:
+      prompt:
+        from: "$nodes.generate_prompt.output.prompt_results.0.prompt"
+      image_urls:
+        from: "$nodes.generate_prompt.output.prompt_results.0.reference_image_url"
+      aspect_ratio:
+        value: "1:1"
+      resolution:
+        value: "2048x2048"
+    outputs:
+      type: object
+      required: ["image_url", "model", "usage", "results"]
+      properties:
+        image_url:
+          type: string
+        model:
+          type: string
+        usage:
+          type: object
+        results:
+          type: array
+          items:
+            type: object
+            properties:
+              url:
+                type: string
+                minLength: 1
+              text:
+                type: string
+                minLength: 1
+              output_type:
+                type: string
+                minLength: 1
+            additionalProperties: false
+        task_id:
+          type: string
+        status:
+          type: string
+      additionalProperties: false
+
+  - id: upload_images
+    ref: system.human_approval.v1
+    inputs:
+      question:
+        template: |
+          请为以下角色变体上传/关联图像。
+
+          角色信息：
+          {characters}
+
+          变体匹配结果：
+          {variant_result}
+
+          配件检查结果：
+          {accessory_result}
+
+          图像上传规格：
+          - 格式：PNG 或 JPG
+          - 建议分辨率：2K（2048×2048 或更高）
+          - 宽高比：建议 1:1（正方形）
+          - 文件大小：单个文件不超过 10MB
+
+          变体图像命名规范：{{角色名}}_{{变体名}}.png
+
+          注意事项：
+          - 同一角色的不同变体图像中，面部特征和体型应保持一致
+          - 使用胶囊形/达摩式体型风格（无腿部设计）
+          - 建议使用纯色或简洁背景
+          - 上传后将自动调用 LLM 识别图像并生成外貌描述
+        vars:
+          characters:
+            from: "$nodes.extract_characters.output.characters"
+          variant_result:
+            from: "$nodes.match_variants.output.results"
+          accessory_result:
+            from: "$nodes.check_accessories.output.results"
+    outputs:
+      type: object
+      required: ["decision"]
+      properties:
+        decision:
+          type: string
+          minLength: 1
+        image_urls:
+          type: array
+          items:
+            type: string
+            minLength: 1
+      additionalProperties: true
+
+edges:
+  - from: START
+    to: extract_characters
+  - from: extract_characters
+    to: lookup_existing_assets
+  - from: lookup_existing_assets
+    to: match_by_name
+  - from: match_by_name
+    to: semantic_match_characters
+  - from: semantic_match_characters
+    to: enrich_characters
+  - from: enrich_characters
+    to: match_variants
+  - from: match_variants
+    to: check_accessories
+  - from: check_accessories
+    to: review_assets
+  - from: review_assets
+    to: generate_prompt
+    when: {path: "$workflow.input.generate_assets", equals: "自动生成"}
+  - from: review_assets
+    to: upload_images
+    when: {path: "$workflow.input.generate_assets", equals: "手动上传"}
+  - from: generate_prompt
+    to: generate_image
+  - from: generate_image
+    to: END
+  - from: upload_images
+    to: END

@@ -10,6 +10,7 @@ from xiagent.nodes.ai.deepseek_structured_json import DeepSeekStructuredJsonNode
 from xiagent.nodes.ai.runninghub_image import RunningHubImageToImageNode
 from xiagent.nodes.registry import NodeRegistry
 from xiagent.nodes.system.human_approval import HumanApprovalNode
+from xiagent.nodes.tools.assemble_segment_context import AssembleSegmentContextNode
 from xiagent.nodes.tools.script_split import ScriptSplitNode
 from xiagent.nodes.tools.storyboard_prompt import StoryboardPromptAssemblerNode
 from xiagent.workflows.loader import load_workflow_file
@@ -33,7 +34,9 @@ def test_storyboard_workflow_contract_is_serial_and_uses_expected_nodes(test_set
     assert list(nodes_by_id) == [
         "split_script",
         "analyze_characters",
+        "assemble_context",
         "describe_panels",
+        "match_characters",
         "collect_assets",
         "assemble_prompt",
         "generate_image",
@@ -41,7 +44,9 @@ def test_storyboard_workflow_contract_is_serial_and_uses_expected_nodes(test_set
     assert {node_id: node["ref"] for node_id, node in nodes_by_id.items()} == {
         "split_script": "tool.script_split.v1",
         "analyze_characters": "ai.deepseek_structured_json.v1",
+        "assemble_context": "tool.assemble_segment_context.v1",
         "describe_panels": "ai.deepseek_structured_json.v1",
+        "match_characters": "ai.deepseek_structured_json.v1",
         "collect_assets": "system.human_approval.v1",
         "assemble_prompt": "tool.storyboard_prompt_assembler.v1",
         "generate_image": "ai.runninghub_image_to_image.v1",
@@ -49,8 +54,10 @@ def test_storyboard_workflow_contract_is_serial_and_uses_expected_nodes(test_set
     assert contract["edges"] == [
         {"from": "START", "to": "split_script"},
         {"from": "split_script", "to": "analyze_characters"},
-        {"from": "analyze_characters", "to": "describe_panels"},
-        {"from": "describe_panels", "to": "collect_assets"},
+        {"from": "analyze_characters", "to": "assemble_context"},
+        {"from": "assemble_context", "to": "describe_panels"},
+        {"from": "describe_panels", "to": "match_characters"},
+        {"from": "match_characters", "to": "collect_assets"},
         {"from": "collect_assets", "to": "assemble_prompt"},
         {"from": "assemble_prompt", "to": "generate_image"},
         {"from": "generate_image", "to": "END"},
@@ -59,8 +66,8 @@ def test_storyboard_workflow_contract_is_serial_and_uses_expected_nodes(test_set
     assert nodes_by_id["split_script"]["inputs"]["script"] == {
         "from": "$workflow.input.script"
     }
-    assert nodes_by_id["describe_panels"]["inputs"]["prompt"]["vars"]["segment_text"] == {
-        "from": "$nodes.split_script.output.segments.0.text"
+    assert nodes_by_id["describe_panels"]["inputs"]["prompt"]["vars"]["segments_context"] == {
+        "from": "$nodes.assemble_context.output.context_string"
     }
     assert nodes_by_id["collect_assets"]["outputs"]["properties"]["image_urls"] == {
         "type": "array",
@@ -70,11 +77,17 @@ def test_storyboard_workflow_contract_is_serial_and_uses_expected_nodes(test_set
     assert nodes_by_id["assemble_prompt"]["inputs"]["image_urls"] == {
         "from": "$nodes.collect_assets.output.image_urls"
     }
+    assert nodes_by_id["assemble_prompt"]["inputs"]["description"] == {
+        "from": "$nodes.describe_panels.output.segment_descriptions.0.panels.0.description"
+    }
     assert nodes_by_id["generate_image"]["inputs"]["prompt"] == {
         "from": "$nodes.assemble_prompt.output.prompt"
     }
     assert nodes_by_id["generate_image"]["inputs"]["image_urls"] == {
         "from": "$nodes.assemble_prompt.output.image_urls"
+    }
+    assert nodes_by_id["generate_image"]["inputs"]["negative_prompt"] == {
+        "from": "$nodes.assemble_prompt.output.negative_prompt"
     }
     assert nodes_by_id["generate_image"]["inputs"]["poll_interval_seconds"] == {"value": 2}
     assert nodes_by_id["generate_image"]["inputs"]["poll_timeout_seconds"] == {"value": 720}
@@ -90,11 +103,11 @@ def test_storyboard_workflow_declares_structured_llm_output_schemas(test_setting
     panel_schema = nodes_by_id["describe_panels"]["outputs"]
 
     assert character_schema["type"] == "object"
-    assert "characters" in character_schema["required"]
-    assert character_schema["properties"]["characters"]["type"] == "array"
+    assert "segment_analyses" in character_schema["required"]
+    assert character_schema["properties"]["segment_analyses"]["type"] == "array"
     assert panel_schema["type"] == "object"
-    assert "panels" in panel_schema["required"]
-    assert panel_schema["properties"]["panels"]["type"] == "array"
+    assert "segment_descriptions" in panel_schema["required"]
+    assert panel_schema["properties"]["segment_descriptions"]["type"] == "array"
 
     validate_workflow_contract(contract, build_node_registry(test_settings))
 
@@ -104,13 +117,18 @@ def test_storyboard_character_prompt_requires_object_root_with_characters() -> N
     nodes_by_id = {node["id"]: node for node in contract["nodes"]}
 
     prompt_template = nodes_by_id["analyze_characters"]["inputs"]["prompt"]["template"]
+    system_prompt = nodes_by_id["analyze_characters"]["inputs"]["system"]["value"]
 
-    assert "JSON object" in prompt_template
-    assert "root key" in prompt_template
-    assert "characters" in prompt_template
-    assert "Do not return a root array" in prompt_template
-    assert nodes_by_id["describe_panels"]["inputs"]["prompt"]["vars"]["characters"] == {
-        "from": "$nodes.analyze_characters.output.characters"
+    assert "JSON 对象" in prompt_template
+    assert "根键" in prompt_template
+    assert "segment_analyses" in prompt_template
+    assert "不要返回根数组" in prompt_template
+    assert "clothing" in prompt_template
+    assert "event" in prompt_template
+    assert "服装" in system_prompt
+    assert "事件" in system_prompt
+    assert nodes_by_id["describe_panels"]["inputs"]["prompt"]["vars"]["segments_context"] == {
+        "from": "$nodes.assemble_context.output.context_string"
     }
 
 
@@ -122,11 +140,19 @@ def test_storyboard_character_schema_accepts_common_role_field(test_settings) ->
     validate_json_value(
         character_schema,
         {
-            "characters": [
+            "segment_analyses": [
                 {
-                    "name": "protagonist",
-                    "description": "lead character carrying a sword",
-                    "role": "hero",
+                    "index": 0,
+                    "thinking": "Paragraph describes a sword-draw scene.",
+                    "location": "Mountain gate",
+                    "time": "Night",
+                    "characters": {
+                        "protagonist": {
+                            "clothing": "未指定",
+                            "event": "在场",
+                            "aliases": ["hero"],
+                        }
+                    },
                 }
             ]
         },
@@ -140,10 +166,11 @@ def test_storyboard_panel_prompt_limits_panel_item_fields() -> None:
 
     prompt_template = nodes_by_id["describe_panels"]["inputs"]["prompt"]["template"]
 
-    assert "Each panel object may only use these keys" in prompt_template
+    assert "每个分格对象必须包含" in prompt_template
     assert "character_focus" in prompt_template
     assert "environment_details" in prompt_template
-    assert "Do not include any other panel object keys" in prompt_template
+    assert "分格对象不得包含上述以外的其他键" in prompt_template
+    assert "segment_descriptions" in prompt_template
 
 
 def test_storyboard_panel_schema_accepts_common_optional_panel_fields(test_settings) -> None:
@@ -154,18 +181,25 @@ def test_storyboard_panel_schema_accepts_common_optional_panel_fields(test_setti
     validate_json_value(
         panel_schema,
         {
-            "panels": [
+            "segment_descriptions": [
                 {
-                    "description": "The protagonist holds position in a snowy temple yard.",
-                    "style": "cinematic ink animation",
-                    "constraints": "Keep costume, weapon, snow, and fire continuity.",
-                    "character_focus": "protagonist with a spear",
-                    "environment_details": "snowy temple yard with distant firelight",
-                    "shot_type": "wide shot",
-                    "camera_angle": "low angle",
-                    "lighting": "cold moonlight contrasted with warm firelight",
-                    "mood": "tense and decisive",
-                    "continuity_notes": "Preserve the same costume and location as references.",
+                    "index": 0,
+                    "segment_title": "Snowy Temple",
+                    "thinking": "Cold moonlight vs warm firelight creates tension.",
+                    "panels": [
+                        {
+                            "description": "The protagonist holds position in a snowy temple yard.",
+                            "style": "cinematic ink animation",
+                            "constraints": "Keep costume, weapon, snow, and fire continuity.",
+                            "character_focus": "protagonist with a spear",
+                            "environment_details": "snowy temple yard with distant firelight",
+                            "shot_type": "wide shot",
+                            "camera_angle": "low angle",
+                            "lighting": "cold moonlight contrasted with warm firelight",
+                            "mood": "tense and decisive",
+                            "continuity_notes": "Preserve the same costume and location as references.",
+                        }
+                    ],
                 }
             ]
         },
@@ -179,10 +213,11 @@ async def test_storyboard_workflow_accepts_panel_segment_title_from_deepseek(
 ) -> None:
     router = FakeStoryboardRouter()
     router._deepseek_responses[1] = (
-        '{"segment_title": "风雪山神庙", '
+        '{"segment_descriptions": [{"index": 0, "segment_title": "风雪山神庙", '
+        '"thinking": "林冲在雪夜山神庙外，冷色雪夜与暖色火光强对比营造紧张氛围。", '
         '"panels": [{"description": "林冲在雪夜山神庙外按住花枪，远处草料场火光冲天。", '
         '"style": "电影感国风动画，冷色雪夜与暖色火光强对比", '
-        '"constraints": "保持林冲服装、花枪和雪夜环境一致，不要添加文字。"}]}'
+        '"constraints": "保持林冲服装、花枪和雪夜环境一致，不要添加文字。"}]}]}'
     )
     monkeypatch.setattr(
         "xiagent.workflows.testing.builder.build_node_registry",
@@ -215,8 +250,9 @@ async def test_storyboard_workflow_accepts_panel_segment_title_from_deepseek(
         for execution in result.node_executions
         if execution.node_id == "describe_panels"
     )
-    assert describe_execution.output_snapshot["segment_title"] == "风雪山神庙"
-    assert describe_execution.output_snapshot["panels"][0]["description"].startswith("林冲")
+    assert describe_execution.output_snapshot["segment_descriptions"][0]["segment_title"] == "风雪山神庙"
+    assert describe_execution.output_snapshot["segment_descriptions"][0]["panels"][0]["description"].startswith("林冲")
+    assert describe_execution.output_snapshot["segment_descriptions"][0]["thinking"] == "林冲在雪夜山神庙外，冷色雪夜与暖色火光强对比营造紧张氛围。"
 
 
 async def test_storyboard_workflow_runs_with_manual_asset_input(
@@ -253,7 +289,9 @@ async def test_storyboard_workflow_runs_with_manual_asset_input(
     assert [execution.node_id for execution in result.node_executions] == [
         "split_script",
         "analyze_characters",
+        "assemble_context",
         "describe_panels",
+        "match_characters",
         "collect_assets",
         "assemble_prompt",
         "generate_image",
@@ -262,6 +300,7 @@ async def test_storyboard_workflow_runs_with_manual_asset_input(
         "https://cdn.runninghub.test/storyboard.png"
     )
     assert [request.provider for request in router.requests] == [
+        "deepseek",
         "deepseek",
         "deepseek",
         "runninghub_image",
@@ -276,12 +315,18 @@ class FakeStoryboardRouter(ChatModelRouter):
         super().__init__()
         self.requests: list[Any] = []
         self._deepseek_responses = [
-            '{"characters": [{"name": "主角", "description": "持剑人物", "role": "hero"}]}',
+            # analyze_characters
+            '{"segment_analyses": [{"index": 0, "thinking": "Paragraph describes protagonist drawing sword.", "location": "山门前", "time": "", "characters": {"主角": {"clothing": "未指定", "event": "在场", "aliases": []}}}]}',
+            # describe_panels
             (
-                '{"panels": [{"description": "主角在山门前拔剑，雨雾压低远山。", '
+                '{"segment_descriptions": [{"index": 0, "segment_title": "山门前拔剑", '
+                '"thinking": " protagonist draws sword in rain and mist.", '
+                '"panels": [{"description": "主角在山门前拔剑，雨雾压低远山。", '
                 '"style": "电影感国风动画", '
-                '"constraints": "保持角色服装和发型一致。"}]}'
+                '"constraints": "保持角色服装和发型一致。"}]}]}'
             ),
+            # match_characters
+            '{"character_matches": [{"script_name": "主角", "matched_asset": null, "reason": "Generic protagonist name.", "confidence": "uncertain"}]}',
         ]
 
     async def chat(self, request: Any) -> ChatResponse:
@@ -310,6 +355,7 @@ def _storyboard_registry(router: FakeStoryboardRouter) -> NodeRegistry:
     registry = NodeRegistry()
     registry.register(HumanApprovalNode())
     registry.register(ScriptSplitNode())
+    registry.register(AssembleSegmentContextNode())
     registry.register(StoryboardPromptAssemblerNode())
     registry.register(
         DeepSeekStructuredJsonNode(

@@ -54,59 +54,134 @@ nodes:
     ref: ai.deepseek_structured_json.v1
     inputs:
       system:
-        value: Return valid JSON only.
+        value: |
+          仅返回合法 JSON。你是一位专业的剧本分析师。
+          仅收录出现在叙事段落（而非仅在对话中被提及）中的角色。
+          对话提及、计划、命令或引用均不构成角色在场。
+          对每一段分析角色在场情况、服装与事件状态。
+          对于具名群体（如“三英”、“七星”），在可能时拆分为《水浒传》中的单个具名角色。
+          匿名群体（如“守卫”、“百姓”）保留为单一群体条目。
+          服装优先级：明确描写 > 外貌特征 > 身份推断 > “未指定”。
+          若未描写变化，则继承上一段的服装。
+          事件取值：入场（首次出现）、在场（持续在场）、换装（服装变化）、离场（已离开场景）。
+          别名放入 aliases 数组；官衔（巡检、都头等）是身份标识，不是群体别名。
       prompt:
         template: |
-          Analyze the characters in this storyboard script segment and return a JSON object.
-          The response root must be an object with exactly one root key:
-          - characters: array of character objects
-          Do not return a root array.
-          Do not include keys other than characters at the root.
-          Return each character with name, description, and role when role is identifiable.
+          剧本已被切分为 {paragraph_count} 个段落。请逐段分析角色。
 
-          Segment:
-          {segment_text}
+          段落 JSON：
+          {segments_json}
+
+          返回一个仅包含一个根键的 JSON 对象：
+          - segment_analyses：段落分析对象数组，按段落顺序排列，每个段落一个
+
+          每个段落分析对象必须包含：
+          - index：整数（段落索引，从 0 开始）
+          - thinking：字符串（对本段的分析推理）
+          - location：字符串（可推断的场景地点）
+          - time：字符串（可推断的时间段）
+          - characters：对象，键为角色名，值为角色详情对象
+
+          每个角色详情对象必须包含：
+          - clothing：字符串（2-4 字关键词，或“未指定”）
+          - event：字符串（取值：入场、在场、换装、离场）
+          - aliases：字符串数组（该角色的别名，可选）
+
+          不要返回根数组。根层级除 segment_analyses 外不得包含其他键。
         vars:
-          segment_text:
-            from: "$nodes.split_script.output.segments.0.text"
+          paragraph_count:
+            from: "$nodes.split_script.output.count"
+          segments_json:
+            from: "$nodes.split_script.output.segments"
     outputs:
       type: object
-      required: ["characters"]
+      required: ["segment_analyses"]
       properties:
-        characters:
+        segment_analyses:
           type: array
           items:
             type: object
-            required: ["name", "description"]
+            required: ["index", "characters"]
             properties:
-              name:
+              index:
+                type: integer
+                minimum: 0
+              thinking:
                 type: string
                 minLength: 1
-              description:
+              location:
                 type: string
-                minLength: 1
-              role:
+              time:
                 type: string
-                minLength: 1
+              characters:
+                type: object
+                additionalProperties:
+                  type: object
+                  required: ["clothing", "event"]
+                  properties:
+                    clothing:
+                      type: string
+                      minLength: 1
+                    event:
+                      type: string
+                      enum: ["入场", "在场", "换装", "离场"]
+                    aliases:
+                      type: array
+                      items:
+                        type: string
+                        minLength: 1
+                  additionalProperties: false
             additionalProperties: false
+      additionalProperties: false
+
+  - id: assemble_context
+    ref: tool.assemble_segment_context.v1
+    inputs:
+      segments:
+        from: "$nodes.split_script.output.segments"
+      segment_analyses:
+        from: "$nodes.analyze_characters.output.segment_analyses"
+    outputs:
+      type: object
+      required: ["context_string"]
+      properties:
+        context_string:
+          type: string
+          minLength: 1
       additionalProperties: false
 
   - id: describe_panels
     ref: ai.deepseek_structured_json.v1
     inputs:
       system:
-        value: Return valid JSON only.
+        value: |
+          仅返回合法 JSON。你是一位专业的分镜设计师。
+          核心原则：
+          - 先读情绪，再选镜头语言。选择能够放大场景核心情绪的拍摄角度、景别与透视。
+          - 拒绝默认构图：避免中心对称、平面布局或懒惰对称。
+          - 每个分格必须有明确的视觉意图。
+          - 不要描写对话、服装或角色的外貌特征。
+          - 禁止出现腿部相关描写。标注角色朝向镜头/背向镜头。
+          - 仅在场角色可出现在分格中；缺席角色不得被提及。
+          - 使用现在时。禁止未来时或“预示”类描写。
+          自检清单（在 thinking 中回答）：纵深层次、叙事道具、光影冲突、动态瞬间捕捉、角度潜台词。
       prompt:
         template: |
-          Describe storyboard panels for the first segment and return JSON.
-          Return a JSON object with only these root keys:
-          - segment_title: short optional title for the segment
-          - panels: array of storyboard panel objects
-          Each panel object must include description, style, and constraints.
-          Each panel object may only use these keys:
-          - description
-          - style
-          - constraints
+          为以下所有段落设计分镜。返回一个仅包含一个根键的 JSON 对象：
+          - segment_descriptions：段落描述对象数组，按段落顺序排列，每个段落一个
+
+          每个段落描述对象必须包含：
+          - index：整数（段落索引，从 0 开始）
+          - segment_title：本段落的简短标题
+          - thinking：字符串（对本段的自检推理）
+          - panels：分格对象数组
+
+          每个分格对象必须包含：
+          - description：字符串（分格视觉描述）
+          - style：字符串（艺术风格描述）
+          - constraints：字符串（技术约束）
+
+          每个分格对象还可以使用以下键：
           - character_focus
           - environment_details
           - shot_type
@@ -117,83 +192,161 @@ nodes:
           - action
           - key_props
           - continuity_notes
-          Do not include keys other than segment_title and panels at the root.
-          Do not include any other panel object keys.
 
-          Segment:
-          {segment_text}
+          根层级除 segment_descriptions 外不得包含其他键。
+          分格对象不得包含上述以外的其他键。
 
-          Characters:
-          {characters}
+          上下文：
+          {segments_context}
         vars:
-          segment_text:
-            from: "$nodes.split_script.output.segments.0.text"
-          characters:
-            from: "$nodes.analyze_characters.output.characters"
+          segments_context:
+            from: "$nodes.assemble_context.output.context_string"
       max_attempts:
         value: 2
     outputs:
       type: object
-      required: ["panels"]
+      required: ["segment_descriptions"]
       properties:
-        segment_title:
-          type: string
-          minLength: 1
-        panels:
+        segment_descriptions:
           type: array
           items:
             type: object
-            required: ["description", "style", "constraints"]
+            required: ["index", "segment_title", "thinking", "panels"]
             properties:
-              description:
+              index:
+                type: integer
+                minimum: 0
+              segment_title:
                 type: string
                 minLength: 1
-              style:
+              thinking:
                 type: string
                 minLength: 1
-              constraints:
-                type: string
-                minLength: 1
-              character_focus:
-                type: string
-                minLength: 1
-              environment_details:
-                type: string
-                minLength: 1
-              shot_type:
-                type: string
-                minLength: 1
-              camera_angle:
-                type: string
-                minLength: 1
-              composition:
-                type: string
-                minLength: 1
-              lighting:
-                type: string
-                minLength: 1
-              mood:
-                type: string
-                minLength: 1
-              action:
-                type: string
-                minLength: 1
-              key_props:
-                type: string
-                minLength: 1
-              continuity_notes:
-                type: string
-                minLength: 1
+              panels:
+                type: array
+                items:
+                  type: object
+                  required: ["description", "style", "constraints"]
+                  properties:
+                    description:
+                      type: string
+                      minLength: 1
+                    style:
+                      type: string
+                      minLength: 1
+                    constraints:
+                      type: string
+                      minLength: 1
+                    character_focus:
+                      type: string
+                      minLength: 1
+                    environment_details:
+                      type: string
+                      minLength: 1
+                    shot_type:
+                      type: string
+                      minLength: 1
+                    camera_angle:
+                      type: string
+                      minLength: 1
+                    composition:
+                      type: string
+                      minLength: 1
+                    lighting:
+                      type: string
+                      minLength: 1
+                    mood:
+                      type: string
+                      minLength: 1
+                    action:
+                      type: string
+                      minLength: 1
+                    key_props:
+                      type: string
+                      minLength: 1
+                    continuity_notes:
+                      type: string
+                      minLength: 1
+                  additionalProperties: false
             additionalProperties: false
       additionalProperties: false
 
+  - id: match_characters
+    ref: ai.deepseek_structured_json.v1
+    inputs:
+      system:
+        value: |
+          仅返回合法 JSON。你是一位角色名匹配助手。
+          使用语义规则将剧本角色名匹配到资产库角色名：
+          - 官衔（巡检、都头、押司等）可能是已知角色的别名。
+          - 绰号（如“及时雨”）映射到真名（如“宋江”）。
+          - 姓+官衔（如“宋押司”）映射到全名。
+          - 具名群体在可能时拆分为单个角色。
+          - 匿名群体（如“众公差”）若存在对应群体资产则原样匹配。
+          - 若不确定，将 matched_asset 设为 null，confidence 设为 "uncertain"。
+      prompt:
+        template: |
+          将以下剧本角色名匹配到资产库角色。
+
+          剧本角色：
+          {script_characters}
+
+          返回一个仅包含一个根键的 JSON 对象：
+          - character_matches：匹配对象数组
+
+          每个匹配对象必须包含：
+          - script_name：字符串（剧本中的名称）
+          - matched_asset：字符串或 null（匹配到的资产名，无匹配则为 null）
+          - reason：字符串（匹配理由，≤50 字）
+          - confidence：字符串（取值：matched、not_matched、uncertain）
+        vars:
+          script_characters:
+            from: "$nodes.assemble_context.output.context_string"
+    outputs:
+      type: object
+      required: ["character_matches"]
+      properties:
+        character_matches:
+          type: array
+          items:
+            type: object   
+            required: ["script_name", "confidence", "reason"]
+            properties:
+              script_name:
+                type: string
+                minLength: 1
+              matched_asset:
+                type: ["string", "null"]
+              reason:
+                type: string
+                minLength: 1
+              confidence:
+                type: string
+                enum: ["matched", "not_matched", "uncertain"]
+            additionalProperties: false
+      additionalProperties: false
+ 
   - id: collect_assets
     ref: system.human_approval.v1
     inputs:
       question:
-        value: Provide reference image URLs for this storyboard panel.
-      panel_description:
-        from: "$nodes.describe_panels.output.panels.0.description"
+        template: |
+          Provide reference image URLs for the first storyboard panel.
+
+          Panel description: {panel_description}
+
+          Character matching results:
+          {character_matches}
+
+          Instructions:
+          - For each matched character, provide a reference image URL.
+          - Clothing/accessory hints follow semantic rules (e.g. "遮了面巾" → label "蒙面").
+          - If a character has multiple variants (different clothing), pick the one matching the current scene.
+        vars:
+          panel_description:
+            from: "$nodes.describe_panels.output.segment_descriptions.0.panels.0.description"
+          character_matches:
+            from: "$nodes.match_characters.output.character_matches"
     outputs:
       type: object
       required: ["image_urls"]
@@ -210,18 +363,21 @@ nodes:
     ref: tool.storyboard_prompt_assembler.v1
     inputs:
       description:
-        from: "$nodes.describe_panels.output.panels.0.description"
+        from: "$nodes.describe_panels.output.segment_descriptions.0.panels.0.description"
       style:
-        from: "$nodes.describe_panels.output.panels.0.style"
+        from: "$nodes.describe_panels.output.segment_descriptions.0.panels.0.style"
       constraints:
-        from: "$nodes.describe_panels.output.panels.0.constraints"
+        from: "$nodes.describe_panels.output.segment_descriptions.0.panels.0.constraints"
       image_urls:
         from: "$nodes.collect_assets.output.image_urls"
     outputs:
       type: object
-      required: ["prompt", "image_urls", "aspect_ratio", "resolution"]
+      required: ["prompt", "negative_prompt", "image_urls", "aspect_ratio", "resolution"]
       properties:
         prompt:
+          type: string
+          minLength: 1
+        negative_prompt:
           type: string
           minLength: 1
         image_urls:
@@ -249,6 +405,8 @@ nodes:
         from: "$nodes.assemble_prompt.output.aspect_ratio"
       resolution:
         from: "$nodes.assemble_prompt.output.resolution"
+      negative_prompt:
+        from: "$nodes.assemble_prompt.output.negative_prompt"
       poll_interval_seconds:
         value: 2
       poll_timeout_seconds:
@@ -290,8 +448,12 @@ edges:
   - from: split_script
     to: analyze_characters
   - from: analyze_characters
+    to: assemble_context
+  - from: assemble_context
     to: describe_panels
   - from: describe_panels
+    to: match_characters
+  - from: match_characters
     to: collect_assets
   - from: collect_assets
     to: assemble_prompt

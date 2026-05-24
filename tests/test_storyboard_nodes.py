@@ -36,6 +36,7 @@ def test_storyboard_nodes_are_registered(test_settings) -> None:
         "tool.script_split.v1",
         "ai.deepseek_structured_json.v1",
         "tool.storyboard_prompt_assembler.v1",
+        "tool.assemble_segment_context.v1",
     }.issubset(refs)
 
 
@@ -110,6 +111,8 @@ async def test_storyboard_prompt_assembler_builds_prompt_and_defaults(test_setti
     assert result.output["image_urls"] == image_urls
     assert result.output["aspect_ratio"] == "16:9"
     assert result.output["resolution"] == "2K"
+    assert "negative_prompt" in result.output
+    assert "low quality" in result.output["negative_prompt"]
     prompt = result.output["prompt"]
     assert "分镜描述" in prompt
     assert "主角在雨夜码头回头" in prompt
@@ -118,6 +121,11 @@ async def test_storyboard_prompt_assembler_builds_prompt_and_defaults(test_setti
     assert "额外约束" in prompt
     assert "保持角色服装和发型一致" in prompt
     assert "固定图像生成规则" in prompt
+    assert "风格指令" in prompt
+    assert "罗小黑战记" in prompt
+    assert "角色一致性约束" in prompt
+    assert "达摩/不倒翁体型" in prompt
+    assert "负面提示词" not in prompt
 
 
 async def test_storyboard_prompt_assembler_allows_render_options(test_settings) -> None:
