@@ -52,6 +52,8 @@ def test_build_node_registry_registers_builtin_nodes(test_settings) -> None:
         "tool.script_split.v1",
         "tool.assemble_segment_context.v1",
         "tool.asset_lookup.v1",
+        "tool.create_text_asset.v1",
+        "tool.enrich_characters.v1",
         "tool.storyboard_prompt_assembler.v1",
         "ai.deepseek_chat.v1",
         "ai.deepseek_structured_json.v1",

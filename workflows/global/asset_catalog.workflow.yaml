@@ -19,7 +19,6 @@ workflow:
         minLength: 1
       template_image_url:
         type: string
-        minLength: 1
     additionalProperties: false
 
 nodes:
@@ -31,18 +30,21 @@ nodes:
       system:
         template: |
           仅返回合法 JSON。你是专业的剧本分析师。请从剧本中提取所有角色信息。
-          世界背景：{background}。请根据世界背景推断每个被提及角色的全名。
-          同时判断当前剧本对应原作的哪一回、剧情发展到什么阶段。
-          叙述 vs 对话：剧本包含叙述段（无前缀，描述已发生的事实）和对话段（-开头，角色说的话）。
+          世界背景（原作）：{background}。
+
+          思维链要求：在输出最终 JSON 前，你必须先逐步分析并记录你的思考过程：
+          1. 判断当前剧本对应原作的哪一回、剧情发展到什么阶段。
+          2. 逐段区分叙述段与对话段，识别哪些角色满足收录条件。
+          3. 对使用代称或非全名称呼的角色，根据原作推断其全名。
+          4. 当多个角色被一起称呼时，根据原作和剧情发展拆解为具体角色。
+          将你的完整分析过程写入 reasoning 字段。
+
+          叙述 vs 对话：剧本包含叙述段（无前缀，描述已发生的事实）和对话段。
           只有叙述段才构成事实依据。对话中的计划、命令、提及、回忆均不构成角色出场的证据。
           角色收录条件：叙述段中有动作或状态描写，或作为对话段发言者且叙述段中在场。
+          当使用代称或非全名称呼时，请根据原作推断角色的全名（如果不是你了解的作品，不需要推断全名。）
+          当多个角色被一起称呼时，比如几位好汉，请根据原作和此时的剧情发展记录具体角色，每个角色单独记录。（没有名称的龙套角色不需要单独记录并且合称只作为一个单独角色。）
           排除条件：仅在对话中被提及、谈论、派遣、回忆的角色不收录。
-          对每个角色提取：
-          - full_name：根据世界背景推断的全名（如"武松"而非"武二郎"），保存时固定使用全名作为资产名
-          - aliases：别名列表
-          - summary：角色梗概（≤100字）
-          - character_status：当前剧情阶段该角色的状态（一段自然语言的近况描述，含身份、处境、外貌等）
-          - accessories：当前可能有的配件列表（如["蒙面"]，无配件时为空数组）
         vars:
           background:
             from: "$workflow.input.background"
@@ -53,18 +55,19 @@ nodes:
           剧本内容：
           {script}
 
-          返回一个仅包含一个根键的 JSON 对象：
+          返回一个仅包含以下根键的 JSON 对象：
+          - reasoning：你的逐步分析过程（字符串，不能为空）
           - characters：角色数组
           - character_names：所有角色的全名数组（仅字符串）
 
           每个角色对象必须包含：
-          - full_name：全名
-          - aliases：别名数组（无别名时为空数组）
-          - summary：≤100字角色梗概
-          - character_status：当前剧情阶段的角色状态描述
-          - accessories：配件数组（无配件时为空数组）
+          - full_name：根据世界背景推断的全名（如"武松"而非"武二郎"），保存时固定使用全名作为资产名
+          - aliases：别名列表
+          - summary：角色梗概（≤100字）
+          - character_status：当前剧情阶段该角色的状态（一段自然语言的近况描述，含身份、处境、外貌等）
+          - accessories：当前可能有的配件列表（如["蒙面"]，无配件时为空数组）
 
-          根层级除 characters 和 character_names 外不得包含其他键。
+          根层级除 reasoning、characters 和 character_names 外不得包含其他键。
         vars:
           script:
             from: "$workflow.input.script"
@@ -74,8 +77,11 @@ nodes:
         value: 2
     outputs:
       type: object
-      required: ["characters", "character_names"]
+      required: ["reasoning", "characters", "character_names"]
       properties:
+        reasoning:
+          type: string
+          minLength: 1
         characters:
           type: array
           items:
@@ -114,6 +120,8 @@ nodes:
         value: "combined"
       asset_type:
         value: "text"
+      tags:
+        value: ["角色"]
       limit:
         value: 200
     outputs:
@@ -157,6 +165,8 @@ nodes:
         from: "$nodes.extract_characters.output.character_names"
       asset_type:
         value: "text"
+      tags:
+        value: ["角色"]
       limit:
         value: 200
     outputs:
@@ -217,7 +227,6 @@ nodes:
           - matched：true 或 false
           - matched_asset_name：匹配到的资产名（matched=true时必填）
           - matched_asset_id：匹配到的资产ID（matched=true时必填）
-          - reason：≤50字判断理由
 
           根层级除 match_results 外不得包含其他键。
         vars:
@@ -255,48 +264,16 @@ nodes:
   # ===== 角色数据 enrich =====
 
   - id: enrich_characters
-    ref: ai.deepseek_structured_json.v1
+    ref: tool.enrich_characters.v1
     inputs:
-      system:
-        value: |
-          仅返回合法 JSON。将 P1 匹配结果合并到每个角色对象中，使每个角色自包含匹配状态和已有变体。
-      prompt:
-        template: |
-          请将匹配结果合并到每个角色对象中。
-
-          所有角色：
-          {characters}
-
-          精确匹配结果：
-          {matched_by_name}
-
-          语义匹配结果：
-          {semantic_matches}
-
-          所有已有资产（含变体信息）：
-          {existing_assets}
-
-          返回一个仅包含一个根键的 JSON 对象：
-          - characters：enrich 后的角色数组
-
-          每个角色对象必须包含原有字段，并新增：
-          - matched：是否匹配到已有资产（true/false）
-          - matched_asset_id：匹配到的资产ID（未匹配时为null）
-          - matched_asset_name：匹配到的资产名（未匹配时为空字符串）
-          - existing_variants：该资产下已有变体列表（含name、status、storage_uri，未匹配时为空数组）
-
-          根层级除 characters 外不得包含其他键。
-        vars:
-          characters:
-            from: "$nodes.extract_characters.output.characters"
-          matched_by_name:
-            from: "$nodes.match_by_name.output.assets"
-          semantic_matches:
-            from: "$nodes.semantic_match_characters.output.match_results"
-          existing_assets:
-            from: "$nodes.lookup_existing_assets.output.assets"
-      max_attempts:
-        value: 2
+      characters:
+        from: "$nodes.extract_characters.output.characters"
+      matched_by_name:
+        from: "$nodes.match_by_name.output.assets"
+      semantic_matches:
+        from: "$nodes.semantic_match_characters.output.match_results"
+      existing_assets:
+        from: "$nodes.lookup_existing_assets.output.assets"
     outputs:
       type: object
       required: ["characters"]
@@ -318,6 +295,21 @@ nodes:
                 type: string
               existing_variants:
                 type: array
+                items:
+                  type: object
+                  required: ["asset_id", "name", "variant"]
+                  properties:
+                    asset_id:
+                      type: string
+                      minLength: 1
+                    name:
+                      type: string
+                      minLength: 1
+                    variant:
+                      type: string
+                      minLength: 1
+                    metadata:
+                      type: object
             additionalProperties: true
       additionalProperties: false
 
@@ -328,22 +320,27 @@ nodes:
     inputs:
       system:
         value: |
-          仅返回合法 JSON。你是资产库管理员。请根据角色当前状态匹配已有变体。
-          变体匹配规则：按身份状态进行语义匹配，同一身份对应同一套服装。
-          角色默认变体是角色创建时的第一个变体。
+          仅返回合法 JSON。你是资产库管理员。请根据角色当前状态与已有变体进行语义匹配。
+          变体匹配规则：将角色当前状态描述（character_status）与已有变体列表逐个比对，判断是否属于同一身份/服装。
+          同一身份对应同一套服装，即同一变体。角色默认变体是角色创建时的第一个变体。
+          如果已有变体中无匹配，则判定为新变体，需要给出新变体名称。
       prompt_template:
         value: |
           请为以下角色匹配变体。
 
           角色信息：{item}
 
+          注意：角色对象的 existing_variants 字段包含该角色在资产库中已有的变体列表，
+          每个变体包含 asset_id、name、variant（变体标签）和 metadata（含四级标签 tags）。
+          请将角色的 character_status 与已有变体做语义匹配。
+
           返回一个 JSON 对象：
           - full_name：角色全名
           - accessories：角色当前配件列表
-          - matched_variant：匹配到的变体名（无匹配时为空字符串）
+          - matched_variant：匹配到的变体标签（无匹配时为空字符串）
           - matched_variant_id：匹配到的变体资产ID（无匹配时为null）
           - is_new_variant：是否需要新建变体
-          - new_variant_name：新变体名称（is_new_variant=true时必填）
+          - new_variant_name：新变体名称（is_new_variant=true时必填，格式：角色名_变体标签）
           - default_variant_status：角色默认变体的状态描述
           - default_variant_storage_uri：角色默认变体的参考图URL（无参考图时为空字符串）
           - reason：≤50字判断理由
@@ -624,13 +621,8 @@ nodes:
           - 宽高比：建议 1:1（正方形）
           - 文件大小：单个文件不超过 10MB
 
-          变体图像命名规范：{{角色名}}_{{变体名}}.png
+          变体图像命名规范：{{角色名}}_{{变体名}}.
 
-          注意事项：
-          - 同一角色的不同变体图像中，面部特征和体型应保持一致
-          - 使用胶囊形/达摩式体型风格（无腿部设计）
-          - 建议使用纯色或简洁背景
-          - 上传后将自动调用 LLM 识别图像并生成外貌描述
         vars:
           characters:
             from: "$nodes.extract_characters.output.characters"

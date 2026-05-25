@@ -16,6 +16,8 @@ from xiagent.nodes.ai.runninghub_image import RunningHubImageToImageNode
 from xiagent.nodes.registry import NodeRegistry
 from xiagent.nodes.system.human_approval import HumanApprovalNode
 from xiagent.nodes.tools.asset_lookup import AssetLookupNode
+from xiagent.nodes.tools.create_text_asset import CreateTextAssetNode
+from xiagent.nodes.tools.enrich_characters import EnrichCharactersNode
 from xiagent.workflows.loader import load_workflow_file
 from xiagent.workflows.testing import WorkflowTestBuilder
 from xiagent.workflows.testing.console import ConsoleIO
@@ -58,7 +60,7 @@ def test_asset_catalog_workflow_contract_structure(test_settings) -> None:
         "lookup_existing_assets": "tool.asset_lookup.v1",
         "match_by_name": "tool.asset_lookup.v1",
         "semantic_match_characters": "ai.deepseek_structured_json.v1",
-        "enrich_characters": "ai.deepseek_structured_json.v1",
+        "enrich_characters": "tool.enrich_characters.v1",
         "match_variants": "ai.parallel_deepseek_structured_json.v1",
         "check_accessories": "ai.parallel_deepseek_structured_json.v1",
         "review_assets": "system.human_approval.v1",
@@ -112,12 +114,14 @@ def test_asset_catalog_extract_characters_output_schema(test_settings) -> None:
 
     extract_schema = nodes_by_id["extract_characters"]["outputs"]
     assert extract_schema["type"] == "object"
+    assert "reasoning" in extract_schema["required"]
     assert "characters" in extract_schema["required"]
     assert "character_names" in extract_schema["required"]
 
     validate_json_value(
         extract_schema,
         {
+            "reasoning": "剧本中叙述段提到林冲在山神庙外踏雪而来，满足收录条件。",
             "characters": [
                 {
                     "full_name": "林冲",
@@ -245,11 +249,14 @@ def test_asset_catalog_extract_prompt_includes_key_instructions() -> None:
     assert "世界背景" in system_prompt
     assert "叙述" in system_prompt
     assert "对话" in system_prompt
+    assert "思维链" in system_prompt
+    assert "reasoning" in system_prompt
     assert "characters" in prompt_template
     assert "full_name" in prompt_template
     assert "character_status" in prompt_template
     assert "accessories" in prompt_template
     assert "character_names" in prompt_template
+    assert "reasoning" in prompt_template
 
 
 def test_asset_catalog_match_by_name_uses_names_array() -> None:
@@ -386,7 +393,8 @@ class FakeAssetCatalogRouter(ChatModelRouter):
         self._deepseek_responses = [
             # extract_characters
             (
-                '{"characters": [{"full_name": "林冲", "aliases": ["林教头"], '
+                '{"reasoning": "剧本中叙述段提到林冲在山神庙外踏雪而来，满足收录条件。", '
+                '"characters": [{"full_name": "林冲", "aliases": ["林教头"], '
                 '"summary": "八十万禁军教头，武艺高强。", '
                 '"character_status": "被发配沧州途中，身着囚服，面带风霜。", '
                 '"accessories": []}], '
@@ -396,14 +404,6 @@ class FakeAssetCatalogRouter(ChatModelRouter):
             (
                 '{"match_results": [{"full_name": "林冲", "matched": false, '
                 '"reason": "资产库中无匹配角色"}]}'
-            ),
-            # enrich_characters
-            (
-                '{"characters": [{"full_name": "林冲", "aliases": ["林教头"], '
-                '"summary": "八十万禁军教头，武艺高强。", '
-                '"character_status": "被发配沧州途中，身着囚服，面带风霜。", '
-                '"accessories": [], "matched": false, "matched_asset_id": null, '
-                '"matched_asset_name": "", "existing_variants": []}]}'
             ),
             # match_variants (parallel - 1 call for 1 character)
             (
@@ -455,6 +455,8 @@ def _asset_catalog_registry(router: FakeAssetCatalogRouter) -> NodeRegistry:
     registry = NodeRegistry()
     registry.register(HumanApprovalNode())
     registry.register(AssetLookupNode())
+    registry.register(CreateTextAssetNode())
+    registry.register(EnrichCharactersNode())
     registry.register(
         DeepSeekStructuredJsonNode(
             model_router=router,
@@ -503,7 +505,7 @@ async def _seed_file_asset(
             """,
             (
                 asset_id, "global", None, "file", name, "image/png", None,
-                0, storage_uri, None, "{}", user_id,
+                0, storage_uri, None, '{"tags": ["角色"]}', user_id,
                 now, now, None,
             ),
         )

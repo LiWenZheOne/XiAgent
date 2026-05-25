@@ -33,6 +33,10 @@ class AssetLookupNode(BaseNode):
                         "type": "string",
                         "enum": ["exact", "contains"],
                     },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
                 },
                 "required": ["scope"],
                 "additionalProperties": False,
@@ -101,6 +105,13 @@ class AssetLookupNode(BaseNode):
         if not isinstance(match_mode, str) or match_mode not in {"exact", "contains"}:
             match_mode = "contains"
 
+        tags = inputs.get("tags")
+        if not isinstance(tags, list) or not all(isinstance(t, str) and t.strip() for t in tags):
+            tags = None
+        elif tags is not None:
+            tags = [t.strip() for t in tags]
+            tags = [t for t in tags if t]
+
         project_id = ctx.project_id if scope in {"project", "combined"} else None
 
         if names is not None:
@@ -127,6 +138,25 @@ class AssetLookupNode(BaseNode):
             result = type(result)(
                 items=[item for item in result.items if item.name in name_set],
                 total=sum(1 for item in result.items if item.name in name_set),
+            )
+
+        if tags is not None and tags:
+            tag_set = set(tags)
+            result = type(result)(
+                items=[
+                    item
+                    for item in result.items
+                    if isinstance(item.metadata, dict)
+                    and isinstance(item.metadata.get("tags"), list)
+                    and any(t in tag_set for t in item.metadata["tags"])
+                ],
+                total=sum(
+                    1
+                    for item in result.items
+                    if isinstance(item.metadata, dict)
+                    and isinstance(item.metadata.get("tags"), list)
+                    and any(t in tag_set for t in item.metadata["tags"])
+                ),
             )
 
         assets: list[dict[str, Any]] = []

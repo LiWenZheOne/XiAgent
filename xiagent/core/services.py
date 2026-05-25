@@ -40,6 +40,33 @@ class AssetService(ABC):
     ) -> Any:
         raise NotImplementedError
 
+    @abstractmethod
+    async def create_text_asset(
+        self,
+        *,
+        user_id: str,
+        scope: str,
+        project_id: str | None,
+        name: str,
+        text: str,
+        metadata: dict[str, Any],
+    ) -> Any:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def import_file_asset(
+        self,
+        *,
+        user_id: str,
+        scope: str,
+        project_id: str | None,
+        file_name: str,
+        content_type: str | None,
+        content: bytes,
+        metadata: dict[str, Any],
+    ) -> Any:
+        raise NotImplementedError
+
 
 class WorkflowService(ABC):
     @abstractmethod

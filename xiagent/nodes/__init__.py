@@ -26,7 +26,9 @@ from xiagent.nodes.registry import NodeRegistry
 from xiagent.nodes.system.human_approval import HumanApprovalNode
 from xiagent.nodes.tools.assemble_segment_context import AssembleSegmentContextNode
 from xiagent.nodes.tools.asset_lookup import AssetLookupNode
+from xiagent.nodes.tools.create_text_asset import CreateTextAssetNode
 from xiagent.nodes.tools.echo_tool import EchoToolNode
+from xiagent.nodes.tools.enrich_characters import EnrichCharactersNode
 from xiagent.nodes.tools.script_split import ScriptSplitNode
 from xiagent.nodes.tools.storyboard_prompt import StoryboardPromptAssemblerNode
 
@@ -73,6 +75,8 @@ def build_node_registry(settings: Settings) -> NodeRegistry:
     registry.register(ScriptSplitNode())
     registry.register(AssembleSegmentContextNode())
     registry.register(AssetLookupNode())
+    registry.register(CreateTextAssetNode())
+    registry.register(EnrichCharactersNode())
     registry.register(StoryboardPromptAssemblerNode())
     registry.register(
         DeepSeekChatNode(
