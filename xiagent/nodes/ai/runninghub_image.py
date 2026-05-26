@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from xiagent.core.errors import ValidationError
+from xiagent.core.schemas import ASSET_IMAGE_RESULT_LIST_SCHEMA
 from xiagent.models import ChatMessage, ChatModelRouter, ChatRequest, ChatResponse
 from xiagent.nodes.base import BaseNode, NodeContext, NodeDescriptor, NodeResult
 
@@ -129,6 +130,127 @@ class RunningHubImageToImageNode(_RunningHubImageNodeBase):
         return metadata
 
 
+class RunningHubImageToImageNodeV2(BaseNode):
+    _ref = "ai.runninghub_image_to_image.v2"
+    _name = "RunningHub Image To Image V2"
+    _description = "Batch image-to-image generation: one RunningHub call per character from prompt_results array."
+    _input_schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {
+            "prompt_results": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "full_name": {"type": "string", "minLength": 1},
+                        "prompt": {"type": "string", "minLength": 1},
+                        "reference_image_url": {"type": "string", "minLength": 1},
+                    },
+                    "required": ["full_name", "prompt", "reference_image_url"],
+                    "additionalProperties": False,
+                },
+                "minItems": 1,
+            },
+            "aspect_ratio": {"type": "string", "minLength": 1},
+            "aspectRatio": {"type": "string", "minLength": 1},
+            "resolution": {"type": "string", "minLength": 1},
+            "poll_interval_seconds": {"type": "number", "minimum": 0},
+            "poll_timeout_seconds": {"type": "number", "minimum": 0},
+        },
+        "required": ["prompt_results"],
+        "additionalProperties": False,
+    }
+
+    def __init__(
+        self,
+        *,
+        model_router: ChatModelRouter,
+        provider: str,
+        model: str,
+    ) -> None:
+        if not isinstance(model_router, ChatModelRouter):
+            raise TypeError("model_router must be ChatModelRouter")
+        self._model_router = model_router
+        self._provider = provider
+        self._model = model
+
+    def describe(self) -> NodeDescriptor:
+        return NodeDescriptor(
+            ref=self._ref,
+            name=self._name,
+            version="1.0.0",
+            kind="ai",
+            input_schema=self._input_schema,
+            output_schema=ASSET_IMAGE_RESULT_LIST_SCHEMA,
+            description=self._description,
+        )
+
+    async def run(self, ctx: NodeContext | None, inputs: Mapping[str, Any]) -> NodeResult:
+        prompt_results = _required_prompt_results(inputs)
+        metadata_base = self._metadata(inputs)
+
+        asset_images: list[dict[str, Any]] = []
+        for item in prompt_results:
+            full_name = _required_text(item, "full_name", "runninghub_full_name_required")
+            prompt = _required_text(item, "prompt", "runninghub_prompt_required")
+            reference_image_url = _required_text(
+                item, "reference_image_url", "runninghub_reference_image_url_required"
+            )
+
+            char_metadata = dict(metadata_base)
+            char_metadata["reference_image_url"] = reference_image_url
+            char_metadata["image_urls"] = [reference_image_url]
+
+            response = await self._model_router.chat(
+                ChatRequest(
+                    provider=self._provider,
+                    model=self._model,
+                    messages=[ChatMessage(role="user", content=prompt)],
+                    metadata=char_metadata,
+                )
+            )
+
+            asset_result: dict[str, Any] = {
+                "full_name": full_name,
+                "image_url": response.text,
+                "source": "ai_generated",
+            }
+            task_id = response.metadata.get("task_id")
+            if isinstance(task_id, str):
+                asset_result["runninghub_task_id"] = task_id
+            variant = response.metadata.get("variant")
+            if isinstance(variant, str):
+                asset_result["variant"] = variant
+            asset_id = response.metadata.get("asset_id")
+            if isinstance(asset_id, str):
+                asset_result["asset_id"] = asset_id
+
+            asset_images.append(asset_result)
+
+        return NodeResult(
+            status="succeeded",
+            output={"asset_images": asset_images},
+        )
+
+    def _metadata(self, inputs: Mapping[str, Any]) -> dict[str, Any]:
+        metadata: dict[str, Any] = {}
+        aspect_ratio = _optional_text(inputs, "aspect_ratio") or _optional_text(
+            inputs, "aspectRatio"
+        )
+        if aspect_ratio is not None:
+            metadata["aspect_ratio"] = aspect_ratio
+        resolution = _optional_text(inputs, "resolution")
+        if resolution is not None:
+            metadata["resolution"] = resolution
+        poll_interval_seconds = _optional_number(inputs, "poll_interval_seconds")
+        if poll_interval_seconds is not None:
+            metadata["poll_interval_seconds"] = poll_interval_seconds
+        poll_timeout_seconds = _optional_number(inputs, "poll_timeout_seconds")
+        if poll_timeout_seconds is not None:
+            metadata["poll_timeout_seconds"] = poll_timeout_seconds
+        return metadata
+
+
 class RunningHubTextToImageNode(_RunningHubImageNodeBase):
     _ref = "ai.runninghub_text_to_image.v1"
     _name = "RunningHub Text To Image"
@@ -230,3 +352,13 @@ def _public_results(results: Any) -> list[dict[str, str]]:
 def _mapping_text(value: Mapping[str, Any], key: str) -> str | None:
     item = value.get(key)
     return item.strip() if isinstance(item, str) and item.strip() else None
+
+
+def _required_prompt_results(inputs: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    value = inputs.get("prompt_results")
+    if not isinstance(value, list) or len(value) == 0:
+        raise ValidationError(
+            code="runninghub_prompt_results_required",
+            message="prompt_results must be a non-empty array",
+        )
+    return value

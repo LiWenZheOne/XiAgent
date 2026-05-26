@@ -18,3 +18,8 @@ model = "nano-banana-pro/text-to-image-channel-low-price"
 endpoint = "/rhart-image-n-pro/text-to-image"
 poll_interval_seconds = 2.0
 poll_timeout_seconds = 180.0
+
+[gemini]
+api_key = ""
+base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
+model = "gemini-3-flash-preview"

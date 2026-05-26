@@ -3,12 +3,14 @@ from __future__ import annotations
 from xiagent.infrastructure.config import Settings
 from xiagent.models import ChatModelRouter
 from xiagent.models.providers.deepseek import DeepSeekChatProvider
+from xiagent.models.providers.gemini import GeminiChatProvider
 from xiagent.models.providers.runninghub import (
     RunningHubImageProvider,
     RunningHubTextToImageProvider,
 )
 from xiagent.models.types import (
     DeepSeekModelConfig,
+    GeminiModelConfig,
     RunningHubImageModelConfig,
     RunningHubTextToImageModelConfig,
 )
@@ -17,20 +19,29 @@ from xiagent.nodes.ai.deepseek_structured_json import DeepSeekStructuredJsonNode
 from xiagent.nodes.ai.parallel_deepseek_structured_json import (
     ParallelDeepSeekStructuredJsonNode,
 )
+from xiagent.nodes.ai.gemini_vision import GeminiVisionNode
+from xiagent.nodes.ai.assign_assets_to_segments import AssignAssetsToSegmentsNode
 from xiagent.nodes.ai.runninghub_image import (
     RunningHubImageToImageNode,
+    RunningHubImageToImageNodeV2,
     RunningHubTextToImageNode,
 )
 from xiagent.nodes.base import AssetRef, BaseNode, NodeContext, NodeDescriptor, NodeResult
 from xiagent.nodes.registry import NodeRegistry
 from xiagent.nodes.system.human_approval import HumanApprovalNode
 from xiagent.nodes.tools.assemble_segment_context import AssembleSegmentContextNode
+from xiagent.nodes.tools.assemble_storyboard_context import AssembleStoryboardContextNode
 from xiagent.nodes.tools.asset_lookup import AssetLookupNode
 from xiagent.nodes.tools.create_text_asset import CreateTextAssetNode
 from xiagent.nodes.tools.echo_tool import EchoToolNode
+from xiagent.nodes.tools.merge_asset_images import MergeAssetImagesNode
 from xiagent.nodes.tools.enrich_characters import EnrichCharactersNode
 from xiagent.nodes.tools.script_split import ScriptSplitNode
-from xiagent.nodes.tools.storyboard_prompt import StoryboardPromptAssemblerNode
+from xiagent.nodes.tools.extract_panel_image_urls import ExtractPanelImageUrlsNode
+from xiagent.nodes.tools.storyboard_prompt import (
+    StoryboardPromptAssemblerNode,
+    StoryboardPromptAssemblerNodeV2,
+)
 
 
 def build_node_registry(settings: Settings) -> NodeRegistry:
@@ -55,6 +66,11 @@ def build_node_registry(settings: Settings) -> NodeRegistry:
         poll_interval_seconds=settings.runninghub_text_to_image_poll_interval_seconds,
         poll_timeout_seconds=settings.runninghub_text_to_image_poll_timeout_seconds,
     )
+    gemini_config = GeminiModelConfig(
+        api_key=settings.gemini_api_key,
+        base_url=settings.gemini_base_url,
+        model=settings.gemini_model,
+    )
     router = ChatModelRouter()
     router.register_provider(
         "deepseek",
@@ -68,16 +84,31 @@ def build_node_registry(settings: Settings) -> NodeRegistry:
         "runninghub_text_to_image",
         RunningHubTextToImageProvider(config=runninghub_text_config),
     )
+    router.register_provider(
+        "gemini",
+        GeminiChatProvider(config=gemini_config),
+    )
 
     registry = NodeRegistry()
     registry.register(HumanApprovalNode())
     registry.register(EchoToolNode())
+    registry.register(MergeAssetImagesNode())
     registry.register(ScriptSplitNode())
     registry.register(AssembleSegmentContextNode())
+    registry.register(AssembleStoryboardContextNode())
     registry.register(AssetLookupNode())
     registry.register(CreateTextAssetNode())
     registry.register(EnrichCharactersNode())
     registry.register(StoryboardPromptAssemblerNode())
+    registry.register(StoryboardPromptAssemblerNodeV2())
+    registry.register(ExtractPanelImageUrlsNode())
+    registry.register(
+        AssignAssetsToSegmentsNode(
+            model_router=router,
+            provider="deepseek",
+            model=deepseek_config.model,
+        )
+    )
     registry.register(
         DeepSeekChatNode(
             model_router=router,
@@ -107,10 +138,24 @@ def build_node_registry(settings: Settings) -> NodeRegistry:
         )
     )
     registry.register(
+        RunningHubImageToImageNodeV2(
+            model_router=router,
+            provider="runninghub_image",
+            model=runninghub_image_config.model,
+        )
+    )
+    registry.register(
         RunningHubTextToImageNode(
             model_router=router,
             provider="runninghub_text_to_image",
             model=runninghub_text_config.model,
+        )
+    )
+    registry.register(
+        GeminiVisionNode(
+            model_router=router,
+            provider="gemini",
+            model=gemini_config.model,
         )
     )
     return registry

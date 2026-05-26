@@ -27,6 +27,9 @@ class Settings:
     runninghub_text_to_image_endpoint: str
     runninghub_text_to_image_poll_interval_seconds: float
     runninghub_text_to_image_poll_timeout_seconds: float
+    gemini_api_key: str | None
+    gemini_base_url: str
+    gemini_model: str
 
 
 def load_settings() -> Settings:
@@ -56,4 +59,7 @@ def load_settings() -> Settings:
         runninghub_text_to_image_poll_timeout_seconds=(
             model_config.runninghub_text_to_image.poll_timeout_seconds
         ),
+        gemini_api_key=model_config.gemini.api_key,
+        gemini_base_url=model_config.gemini.base_url,
+        gemini_model=model_config.gemini.model,
     )

@@ -28,4 +28,7 @@ def test_settings(tmp_path: Path) -> Settings:
         runninghub_text_to_image_endpoint="/rhart-image-n-pro/text-to-image",
         runninghub_text_to_image_poll_interval_seconds=2.0,
         runninghub_text_to_image_poll_timeout_seconds=180.0,
+        gemini_api_key=None,
+        gemini_base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+        gemini_model="gemini-3-flash-preview",
     )

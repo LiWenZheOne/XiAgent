@@ -7,6 +7,7 @@ from typing import Any
 
 from xiagent.models.types import (
     DeepSeekModelConfig,
+    GeminiModelConfig,
     ModelConfig,
     RunningHubImageModelConfig,
     RunningHubTextToImageModelConfig,
@@ -63,6 +64,7 @@ def load_model_config(path: Path = DEFAULT_MODEL_CONFIG_PATH) -> ModelConfig:
     deepseek = _section(raw, "deepseek")
     runninghub_image = _section(raw, "runninghub_image")
     runninghub_text_to_image = _section(raw, "runninghub_text_to_image")
+    gemini = _section(raw, "gemini")
 
     api_key = _optional_text(deepseek.get("api_key"))
     base_url = _optional_text(deepseek.get("base_url")) or "https://api.deepseek.com"
@@ -138,6 +140,14 @@ def load_model_config(path: Path = DEFAULT_MODEL_CONFIG_PATH) -> ModelConfig:
         default=180.0,
     )
 
+    gemini_api_key = _optional_text(gemini.get("api_key"))
+    gemini_base_url = _optional_text(gemini.get("base_url")) or "https://generativelanguage.googleapis.com/v1beta/openai/"
+    gemini_model = _optional_text(gemini.get("model")) or "gemini-3-flash-preview"
+
+    gemini_api_key = os.getenv("GEMINI_API_KEY") or gemini_api_key
+    gemini_base_url = os.getenv("GEMINI_BASE_URL") or gemini_base_url
+    gemini_model = os.getenv("GEMINI_MODEL") or gemini_model
+
     return ModelConfig(
         deepseek=DeepSeekModelConfig(
             api_key=api_key,
@@ -159,5 +169,10 @@ def load_model_config(path: Path = DEFAULT_MODEL_CONFIG_PATH) -> ModelConfig:
             endpoint=runninghub_text_endpoint,
             poll_interval_seconds=runninghub_text_poll_interval_seconds,
             poll_timeout_seconds=runninghub_text_poll_timeout_seconds,
+        ),
+        gemini=GeminiModelConfig(
+            api_key=gemini_api_key,
+            base_url=gemini_base_url,
+            model=gemini_model,
         ),
     )

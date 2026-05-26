@@ -51,15 +51,22 @@ def test_build_node_registry_registers_builtin_nodes(test_settings) -> None:
         "tool.echo.v1",
         "tool.script_split.v1",
         "tool.assemble_segment_context.v1",
+        "tool.assemble_storyboard_context.v1",
         "tool.asset_lookup.v1",
         "tool.create_text_asset.v1",
         "tool.enrich_characters.v1",
+        "tool.extract_panel_image_urls.v1",
         "tool.storyboard_prompt_assembler.v1",
+        "tool.storyboard_prompt_assembler.v2",
+        "ai.assign_assets_to_segments.v1",
         "ai.deepseek_chat.v1",
         "ai.deepseek_structured_json.v1",
         "ai.parallel_deepseek_structured_json.v1",
         "ai.runninghub_image_to_image.v1",
+        "ai.runninghub_image_to_image.v2",
         "ai.runninghub_text_to_image.v1",
+        "ai.gemini_vision.v1",
+        "tool.merge_asset_images.v1",
     }
 
 
