@@ -47,6 +47,8 @@ description: Use when creating or modifying XiAgent BaseNode implementations, no
 - `ui_defaults` 只能引用后端 UI 控件 manifest 中存在的 `control_id`、`variant`、`mode` 和 `bindings`。不要引用 V2 React 组件路径或前端内部实现。
 - 节点输出 schema 必须先稳定描述业务数据，再让 UI 控件绑定它；不要为了某个控件临时暴露内部字段。
 - 图片、资产、候选列表、三选一等 UI 需求应通过稳定字段表达，例如图片候选数组、图片 URL 字段、选择结果字段。字段是否足够应由工作流 validator 和 UI manifest 校验。
+- 默认推荐把生成候选图和用户三选一拆成不同节点；如果三选一可复用于多个工作流，优先新增或复用用户选择节点。
+- 保留高级单节点模式：复合节点可以生成候选图并等待用户选择，但必须使用标准 waiting/resume 语义，候选图和选择结果都要能由 schema 或快照稳定表达。
 - 如果需要新的展示方式，优先新增或扩展 UI 控件 manifest 和 V2 控件库；不要在节点实现中加入前端布局逻辑。
 - 当节点提供 `ui_defaults` 时，节点测试至少覆盖 `NodeDescriptor` 中 schema 与默认 bindings 指向字段的一致性。
 

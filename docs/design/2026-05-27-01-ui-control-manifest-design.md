@@ -184,6 +184,33 @@ NodeDescriptor(
 
 节点默认只表达“这个节点一般适合怎样展示”，不表达具体工作流体验。工作流可以完全覆盖它。
 
+## 节点拆分与高级单节点模式
+
+默认推荐把“模型生成候选”和“用户三选一”拆成两个节点：
+
+```text
+generate_images
+  ref: ai.runninghub_text_to_image.v1
+  输出 3 张候选图
+
+choose_image
+  ref: system.user_choice.v1
+  输入候选图数组
+  等待用户三选一
+  输出 selected_image
+```
+
+这样三选一节点可以复用于多个工作流。不同工作流只需要通过 `nodes[].ui` 给 `choose_image` 绑定不同控件变体，例如等宽三图、首图大列表或 hover 放大三选一。
+
+保留高级单节点模式：某些复合节点可以在一个节点内完成“生成候选图并等待用户选择”。这种节点仍必须通过标准节点结果表达等待状态，输入输出 schema 必须同时声明候选图和选择结果，UI 配置仍通过 `workflow.ui` 或 `nodes[].ui` 指定。该模式适合强绑定的领域能力，但不作为普通工作流的默认建模方式。
+
+单节点高级模式的约束：
+
+- 节点 `output_schema` 必须声明用户恢复后写入的选择结果字段。
+- 节点等待时的 metadata 或快照必须能让 UI 控件通过 binding 读取候选图。
+- 恢复接口提交的 payload 必须继续按节点 `output_schema` 校验。
+- 如果三选一交互可被多个工作流复用，应优先拆成独立 `system.user_choice.v1` 或同类交互节点。
+
 ## UI 控件 Manifest
 
 控件 manifest 是后端与前端共同遵守的稳定元数据，不包含 React 代码。
@@ -249,10 +276,11 @@ Manifest 字段规则：
 $workflow.input.<field>
 $node.input.<field>
 $node.output.<field>
+$node.metadata.<field>
 $nodes.<node_id>.output.<field>
 ```
 
-7. 绑定路径必须能从工作流 input schema、当前节点 input schema、当前节点 output schema 或上游节点 output schema 中解析。
+7. 绑定路径必须能从工作流 input schema、当前节点 input schema、当前节点 output schema、当前节点等待 metadata schema 或上游节点 output schema 中解析。
 8. 绑定目标 schema 必须满足控件 manifest 的约束，例如数组长度、元素类型、图片地址字段要求。
 9. 控件能力标签必须满足用途要求，例如 `interaction + image + select_one + candidates_3`。
 10. 用户交互提交的 payload 必须满足节点 `outputs` schema。
@@ -369,12 +397,14 @@ ui.choice.image_three.v1 / hover_focus
 1. 定义 UI 控件 manifest 数据结构和后端加载入口。
 2. 扩展 workflow validator，校验 `workflow.ui`、`nodes[].ui` 和有效 UI 配置。
 3. 扩展 `NodeDescriptor`，增加 `ui_defaults`。
-4. 增加 `/api/ui/node-controls` 只读接口。
-5. V2 新建 `node-ui` 注册表和 fallback 控件。
-6. 把任务详情页的输入/输出/等待交互渲染迁移到控件库。
-7. 增加“控件库”顶部导航页签。
-8. 给现有图片工作流补充 `workflow.ui` 和 `nodes[].ui` 示例。
-9. 增加后端校验测试、V2 控件渲染测试和浏览器主流程测试。
+4. 增加通用用户选择节点，例如 `system.user_choice.v1`，优先支撑生成候选图后独立三选一的工作流建模方式。
+5. 保留并测试高级单节点模式，确保生成并等待选择的复合节点仍走标准 waiting/resume 和 output schema 校验。
+6. 增加 `/api/ui/node-controls` 只读接口。
+7. V2 新建 `node-ui` 注册表和 fallback 控件。
+8. 把任务详情页的输入/输出/等待交互渲染迁移到控件库。
+9. 增加“控件库”顶部导航页签。
+10. 给现有图片工作流补充 `workflow.ui` 和 `nodes[].ui` 示例。
+11. 增加后端校验测试、V2 控件渲染测试和浏览器主流程测试。
 
 ## 测试策略
 
@@ -386,6 +416,8 @@ ui.choice.image_three.v1 / hover_focus
 - `items_path` 指向不存在字段时失败。
 - 三选一控件绑定非数组字段时失败。
 - 三选一控件绑定数组但没有图片 URL 字段时失败。
+- 独立三选一节点能接收上游候选图并在恢复后输出选择结果。
+- 高级单节点模式能在同一节点内生成候选图、进入 waiting，并在恢复后输出选择结果。
 - 交互提交 payload 不满足节点 output schema 时失败。
 - 节点 `ui_defaults` 能作为保底生效，工作流显式配置能覆盖默认值。
 
@@ -411,4 +443,5 @@ ui.choice.image_three.v1 / hover_focus
 - 后端只依赖控件 manifest，不依赖 V2 React 实现，保持泛化能力。
 - 工作流显式配置优先，节点默认配置保底，节点保持可复用。
 - 控件 manifest 支持标签、变体和 schema 约束，能覆盖三图、列表、首图大列表、悬停放大等图片选择场景。
+- 默认推荐生成节点与三选一交互节点拆分，保留高级单节点模式，兼顾复用和特殊场景能力。
 - V2 控件库浏览页提供可发现性，避免工作流作者不知道当前有哪些控件可用。

@@ -48,6 +48,8 @@ description: Use when creating or modifying XiAgent workflow YAML/JSON contracts
 - 新工作流需要定制展示时，优先在 `nodes[].ui` 指定 `control_id`、`variant`、`mode` 和 `bindings`；工作流级通用默认放在 `workflow.ui.defaults`。
 - 不得凭空发明控件 ID、variant、mode 或 binding 名称。必须对照 UI 控件 manifest、后端 `/api/ui/node-controls`（实现后）或 V2 控件注册表。
 - 三选一图片等控件必须让节点 `outputs` schema 和绑定路径满足控件 manifest：候选图数组数量、元素图片地址字段、选择结果字段都要可校验。
+- 默认推荐把模型生成候选图和用户三选一拆成两个节点；三选一交互节点负责等待选择并输出选择结果，便于跨工作流复用。
+- 保留高级单节点模式：复合节点可以生成候选图并等待用户选择，但仍必须使用标准 waiting/resume、output schema 校验和 UI 控件绑定规则。
 - 如果现有节点输出无法满足目标控件，不要用 UI 配置掩盖数据契约问题；应先调整工作流输出 schema、补节点能力或选择兼容控件。
 - 节点级 `ui_defaults` 只能当保底建议，不应用来表达某个工作流的具体体验，例如首图大列表、hover 放大三选一等。
 
