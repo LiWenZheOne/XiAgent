@@ -13,7 +13,7 @@ from xiagent.nodes.ai.gemini_vision import GeminiVisionNode
 def _make_vision_node(
     *,
     model_router: ChatModelRouter | None = None,
-    provider: str = "gemini",
+    provider: str = "openai_compatible",
     model: str = "gemini-3-flash-preview",
 ) -> GeminiVisionNode:
     if model_router is None:
@@ -26,7 +26,7 @@ def _mock_chat_response(text: str, model: str = "gemini-3-flash-preview") -> Cha
         text=text,
         model=model,
         usage={"prompt_tokens": 10, "completion_tokens": 5},
-        metadata={"provider": "gemini"},
+        metadata={"provider": "openai_compatible"},
     )
 
 
@@ -92,7 +92,7 @@ async def test_gemini_vision_node_extracts_caption() -> None:
     mock_router.chat.assert_called_once()
     call_arg = mock_router.chat.call_args.args[0]
     assert isinstance(call_arg, ChatRequest)
-    assert call_arg.provider == "gemini"
+    assert call_arg.provider == "openai_compatible"
     assert len(call_arg.messages) >= 1
     user_msg = call_arg.messages[-1]
     assert user_msg.role == "user"
@@ -136,7 +136,7 @@ async def test_gemini_vision_node_handles_api_timeout() -> None:
     mock_router = MagicMock(spec=ChatModelRouter)
     mock_router.chat = AsyncMock(
         side_effect=ExternalServiceError(
-            code="gemini_request_failed",
+            code="openai_compatible_request_failed",
             message="API request timed out",
         )
     )
@@ -153,7 +153,7 @@ async def test_gemini_vision_node_handles_api_timeout() -> None:
             },
         )
 
-    assert exc_info.value.code == "gemini_request_failed"
+    assert exc_info.value.code == "openai_compatible_request_failed"
 
 
 # ---------------------------------------------------------------------------
@@ -168,7 +168,7 @@ async def test_gemini_vision_node_max_attempts_retry() -> None:
     mock_router = MagicMock(spec=ChatModelRouter)
     mock_router.chat = AsyncMock(
         side_effect=[
-            ExternalServiceError(code="gemini_request_failed", message="API error"),
+            ExternalServiceError(code="openai_compatible_request_failed", message="API error"),
             second_response,
         ]
     )
@@ -317,7 +317,7 @@ async def test_gemini_vision_handles_safety_blocked_response() -> None:
             text="",
             model="gemini-3-flash-preview",
             usage={"prompt_tokens": 10, "completion_tokens": 0},
-            metadata={"provider": "gemini", "safety_blocked": True},
+            metadata={"provider": "openai_compatible", "safety_blocked": True},
         )
     )
 

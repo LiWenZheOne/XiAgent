@@ -7,14 +7,14 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from xiagent.core.errors import ExternalServiceError, ValidationError
-from xiagent.models.providers.gemini import GeminiChatProvider
-from xiagent.models.types import ChatMessage, ChatRequest, GeminiModelConfig
+from xiagent.models.providers.openai_compatible import OpenAICompatibleChatProvider
+from xiagent.models.types import ChatMessage, ChatRequest, OpenAICompatibleModelConfig
 
 
 def _make_request(
     *,
     messages: list[ChatMessage] | None = None,
-    provider: str = "gemini",
+    provider: str = "openai_compatible",
     model: str = "gemini-3-flash-preview",
 ) -> ChatRequest:
     if messages is None:
@@ -26,13 +26,13 @@ def _make_request(
 # Test 1: api_key 为空时必须抛出 ValidationError
 # ---------------------------------------------------------------------------
 async def test_gemini_provider_requires_api_key() -> None:
-    config = GeminiModelConfig(api_key=None)
-    provider = GeminiChatProvider(config=config)
+    config = OpenAICompatibleModelConfig(api_key=None)
+    provider = OpenAICompatibleChatProvider(config=config)
 
     with pytest.raises(ValidationError) as exc_info:
         await provider.chat(_make_request())
 
-    assert exc_info.value.code == "gemini_api_key_missing"
+    assert exc_info.value.code == "openai_compatible_api_key_missing"
 
 
 # ---------------------------------------------------------------------------
@@ -55,8 +55,8 @@ async def test_gemini_provider_sends_multimodal_messages() -> None:
 
     client_factory: Callable[..., Any] = MagicMock(return_value=mock_client)
 
-    config = GeminiModelConfig(api_key="test-key")
-    provider = GeminiChatProvider(config=config, client_factory=client_factory)
+    config = OpenAICompatibleModelConfig(api_key="test-key")
+    provider = OpenAICompatibleChatProvider(config=config, client_factory=client_factory)
 
     multimodal_content: list[dict[str, Any]] = [
         {"type": "text", "text": "Describe this image"},
@@ -98,13 +98,13 @@ async def test_gemini_provider_handles_api_error() -> None:
 
     client_factory: Callable[..., Any] = MagicMock(return_value=mock_client)
 
-    config = GeminiModelConfig(api_key="test-key")
-    provider = GeminiChatProvider(config=config, client_factory=client_factory)
+    config = OpenAICompatibleModelConfig(api_key="test-key")
+    provider = OpenAICompatibleChatProvider(config=config, client_factory=client_factory)
 
     with pytest.raises(ExternalServiceError) as exc_info:
         await provider.chat(_make_request())
 
-    assert exc_info.value.code == "gemini_request_failed"
+    assert exc_info.value.code == "openai_compatible_request_failed"
 
 
 # ---------------------------------------------------------------------------
@@ -128,8 +128,8 @@ async def test_gemini_provider_client_factory_injection() -> None:
 
     custom_factory: Callable[..., Any] = MagicMock(return_value=mock_client)
 
-    config = GeminiModelConfig(api_key="injected-key")
-    provider = GeminiChatProvider(config=config, client_factory=custom_factory)
+    config = OpenAICompatibleModelConfig(api_key="injected-key")
+    provider = OpenAICompatibleChatProvider(config=config, client_factory=custom_factory)
 
     response = await provider.chat(_make_request())
 

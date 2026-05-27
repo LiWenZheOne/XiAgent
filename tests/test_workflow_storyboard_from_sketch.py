@@ -80,8 +80,8 @@ class FakeRouter(ChatModelRouter):
 
         if request.provider == "deepseek":
             return self._deepseek_response(request)
-        if request.provider == "gemini":
-            return self._gemini_response(request)
+        if request.provider == "openai_compatible":
+            return self._openai_compatible_response(request)
         if request.provider == "runninghub_image":
             return self._runninghub_response(request)
         if request.provider == "runninghub_workflow":
@@ -176,9 +176,9 @@ class FakeRouter(ChatModelRouter):
             metadata={"provider": request.provider},
         )
 
-    # ---- gemini ----
+    # ---- openai_compatible ----
 
-    def _gemini_response(self, request: ChatRequest) -> ChatResponse:
+    def _openai_compatible_response(self, request: ChatRequest) -> ChatResponse:
         return ChatResponse(
             text="<think>分析过程测试</think><caption>描述文本</caption>",
             model=request.model,
@@ -271,7 +271,7 @@ def _registry_for_test(router: FakeRouter) -> NodeRegistry:
     registry.register(
         RunningHubTextToImageNode(provider="runninghub_text_to_image", model="rh-txt-test", **factory)
     )
-    registry.register(GeminiVisionNode(provider="gemini", model="gemini-test", **factory))
+    registry.register(GeminiVisionNode(provider="openai_compatible", model="gemini-test", **factory))
     return registry
 
 
@@ -404,10 +404,10 @@ async def test_workflow_full_pipeline_with_mocks(tmp_path: Path, monkeypatch) ->
     assert gemini_exec.output_snapshot["think"] == "分析过程测试"
     assert gemini_exec.output_snapshot["caption"] == "描述文本"
 
-    # 确认 AI provider 调用次数：deepseek 6 次 + gemini 1 次 + runninghub_workflow 1 次
+    # 确认 AI provider 调用次数：deepseek 6 次 + openai_compatible 1 次 + runninghub_workflow 1 次
     providers = [req.provider for req in router.requests]
     assert providers.count("deepseek") == 6  # extract_characters, extract_scenes, extract_props, semantic_match, match_variants, check_accessories
-    assert providers.count("gemini") == 1
+    assert providers.count("openai_compatible") == 1
     assert providers.count("runninghub_workflow") == 1  # V3 node
 
 
