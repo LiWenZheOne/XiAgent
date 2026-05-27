@@ -46,6 +46,21 @@ class WorkflowCatalog:
     def list(self) -> list[dict[str, Any]]:
         return [deepcopy(contract) for contract in self._contracts.values()]
 
+    def list_global(self) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        for contract in self._contracts.values():
+            if contract["workflow"]["scope"] == "global":
+                items.append(deepcopy(contract))
+        return items
+
+    def list_for_project(self, project_id: str) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        for contract in self._contracts.values():
+            workflow = contract["workflow"]
+            if workflow["scope"] == "global" or workflow.get("project_id") == project_id:
+                items.append(deepcopy(contract))
+        return items
+
 
 InMemoryWorkflowService = WorkflowCatalog
 

@@ -1,0 +1,71 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  buildSchemaFields,
+  extractImageUrls,
+  formatFieldLabel,
+  humanizeValue,
+  statusLabel,
+} from "../utils/display";
+
+describe("display helpers", () => {
+  it("turns workflow schema fields into user-facing labels without exposing schema words", () => {
+    const fields = buildSchemaFields({
+      type: "object",
+      required: ["topic", "image_urls"],
+      properties: {
+        topic: { type: "string", title: "创作主题" },
+        image_urls: { type: "array", items: { type: "string" } },
+        draft_count: { type: "integer", default: 3 },
+      },
+    });
+
+    expect(fields.map((field) => field.label)).toEqual(["创作主题", "参考图片", "草稿数量"]);
+    expect(fields.find((field) => field.key === "image_urls")?.control).toBe("asset_images");
+    expect(JSON.stringify(fields)).not.toContain("input_schema");
+  });
+
+  it("summarizes nested outputs as readable field groups instead of raw JSON", () => {
+    const summary = humanizeValue({
+      selected_image: "https://cdn.example.com/final.png",
+      usage: { prompt_tokens: 12, completion_tokens: 8 },
+      notes: ["可用", "已发布"],
+    });
+
+    expect(summary.kind).toBe("object");
+    expect(summary.text).toContain("3 个字段");
+    expect(summary.text).not.toContain("{");
+    expect(summary.text).not.toContain("}");
+  });
+
+  it("extracts displayable image urls from node outputs", () => {
+    const urls = extractImageUrls({
+      results: [
+        { public_url: "https://cdn.example.com/a.png" },
+        { url: "https://cdn.example.com/b.jpg" },
+      ],
+      ignored: "not-an-image",
+    });
+
+    expect(urls).toEqual(["https://cdn.example.com/a.png", "https://cdn.example.com/b.jpg"]);
+  });
+
+  it("uses Chinese status labels and readable snake case labels", () => {
+    expect(statusLabel("task_waiting")).toBe("等待用户");
+    expect(statusLabel("node_succeeded")).toBe("成功");
+    expect(formatFieldLabel("current_node_id")).toBe("当前节点");
+  });
+  it("turns English workflow labels into user-facing Chinese labels", () => {
+    const fields = buildSchemaFields({
+      type: "object",
+      properties: {
+        script: { type: "string", title: "Script" },
+        generate_assets: { type: "string", title: "Generate Assets" },
+        template_image_url: { type: "string", title: "Template Image Url", format: "uri" },
+      },
+    });
+
+    expect(fields.map((field) => field.label)).toEqual(["剧本", "生成方式", "模板图片地址"]);
+    expect(fields.find((field) => field.key === "template_image_url")?.control).toBe("asset_images");
+  });
+});

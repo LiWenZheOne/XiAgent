@@ -260,9 +260,96 @@ class SqliteRuntimeService:
         await self._authorize_task_read(user_id=user_id, project_id=project_id, task_id=task_id)
         return await self._store.list_events(task_id)
 
+    async def list_tasks(self, *, user_id: str, project_id: str) -> list[TaskRecord]:
+        await self._user_service.ensure_project_access(
+            user_id=user_id,
+            project_id=project_id,
+            action="task:list",
+        )
+        return await self._store.list_tasks(user_id=user_id, project_id=project_id)
+
     async def get_task(self, *, user_id: str, project_id: str, task_id: str) -> TaskRecord:
         await self._authorize_task_read(user_id=user_id, project_id=project_id, task_id=task_id)
         return await self._get_task_by_id(task_id)
+
+    async def get_task_workflow_snapshot(
+        self,
+        *,
+        user_id: str,
+        project_id: str,
+        task_id: str,
+    ) -> dict[str, Any]:
+        await self._authorize_task_read(user_id=user_id, project_id=project_id, task_id=task_id)
+        snapshot = await self._store.fetch_task_workflow_snapshot(task_id)
+        if snapshot is None:
+            raise NotFoundError("workflow_snapshot_not_found", "Workflow snapshot was not found")
+        return snapshot
+
+    async def rerun_node(
+        self,
+        *,
+        user_id: str,
+        project_id: str,
+        task_id: str,
+        node_id: str,
+    ) -> TaskRecord:
+        await self._user_service.ensure_project_access(
+            user_id=user_id,
+            project_id=project_id,
+            action="task:rerun",
+        )
+        task, contract = await self._get_task_and_contract(task_id)
+        _ensure_task_belongs_to_project(task, user_id=user_id, project_id=project_id)
+        _node_by_id(contract, node_id)
+
+        affected_node_ids = {node_id, *_downstream_node_ids(contract, node_id)}
+        now = _utc_now()
+        async with connect_db(self._database_path) as db:
+            executions = await _fetch_node_executions(db, task_id)
+            current_execution_ids = _latest_execution_ids_for_nodes(executions, affected_node_ids)
+            if current_execution_ids:
+                placeholders = ", ".join("?" for _ in current_execution_ids)
+                await db.execute(
+                    f"""
+                    update node_executions
+                    set status = ?, updated_at = ?
+                    where node_execution_id in ({placeholders})
+                    """,
+                    ("superseded", now, *current_execution_ids),
+                )
+            refreshed_executions = await _fetch_node_executions(db, task_id)
+            current_view = build_current_view("running", refreshed_executions)
+            await db.execute(
+                """
+                update tasks
+                set status = ?, current_view_json = ?, finished_at = ?, updated_at = ?
+                where task_id = ?
+                """,
+                ("running", dump_json(current_view), None, now, task_id),
+            )
+            await insert_event(
+                db,
+                task_id=task_id,
+                event_type="node_rerun_started",
+                payload={"node_id": node_id},
+                created_at=now,
+            )
+            await insert_event(
+                db,
+                task_id=task_id,
+                event_type="downstream_cleared",
+                payload={"node_id": node_id, "cleared_node_ids": sorted(affected_node_ids)},
+                created_at=now,
+            )
+
+        return await self._continue_task(
+            task_id=task_id,
+            user_id=user_id,
+            project_id=project_id,
+            contract=contract,
+            workflow_input=task.input_data,
+            start_node_id=node_id,
+        )
 
     async def _get_task_by_id(self, task_id: str) -> TaskRecord:
         task = await self._store.fetch_task(task_id)
@@ -458,6 +545,13 @@ class SqliteRuntimeService:
                 where task_id = ?
                 """,
                 ("waiting", dump_json(current_view), now, task_id),
+            )
+            await insert_event(
+                db,
+                task_id=task_id,
+                event_type="node_waiting",
+                payload={"node_id": node_id, "node_execution_id": node_execution_id},
+                created_at=now,
             )
             await insert_event(
                 db,
@@ -690,7 +784,9 @@ def _ready_node_ids(
         workflow_input,
         node_outputs,
     )
-    started_node_ids = {execution.node_id for execution in executions}
+    started_node_ids = {
+        execution.node_id for execution in executions if execution.status != "superseded"
+    }
     ready: list[str] = []
     for node in contract["nodes"]:
         node_id = node["id"]
@@ -943,6 +1039,33 @@ def _latest_node_outputs(executions: list[NodeExecutionRecord]) -> dict[str, dic
         if execution.status == "succeeded":
             outputs[execution.node_id] = execution.output_snapshot
     return outputs
+
+
+def _latest_execution_ids_for_nodes(
+    executions: list[NodeExecutionRecord],
+    node_ids: set[str],
+) -> list[str]:
+    latest_by_node: dict[str, NodeExecutionRecord] = {}
+    for execution in executions:
+        if execution.node_id in node_ids and execution.status != "superseded":
+            latest_by_node[execution.node_id] = execution
+    return [execution.node_execution_id for execution in latest_by_node.values()]
+
+
+def _downstream_node_ids(contract: dict[str, Any], node_id: str) -> set[str]:
+    downstream: set[str] = set()
+    stack = [node_id]
+    while stack:
+        current = stack.pop()
+        for edge in contract["edges"]:
+            if edge["from"] != current or edge["to"] == _END:
+                continue
+            next_node_id = edge["to"]
+            if next_node_id in downstream:
+                continue
+            downstream.add(next_node_id)
+            stack.append(next_node_id)
+    return downstream
 
 
 def _loads_contract(value: str) -> dict[str, Any]:

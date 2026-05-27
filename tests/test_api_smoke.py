@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 
 from fastapi.testclient import TestClient
 
 from xiagent.api.app import create_app
+from xiagent.infrastructure.database import connect_db
+from xiagent.infrastructure.migrations import migrate
 
 
 def _auth_headers(
@@ -45,6 +48,49 @@ def _echo_contract() -> dict:
             }
         ],
         "edges": [{"from": "START", "to": "echo"}, {"from": "echo", "to": "END"}],
+    }
+
+
+def _approval_contract() -> dict:
+    return {
+        "workflow": {
+            "id": "api-approval",
+            "version": "1.0.0",
+            "scope": "global",
+            "name": "API Approval",
+            "input_schema": {
+                "type": "object",
+                "required": ["topic"],
+                "properties": {"topic": {"type": "string"}},
+            },
+        },
+        "nodes": [
+            {
+                "id": "review",
+                "ref": "system.human_approval.v1",
+                "inputs": {"topic": {"from": "$workflow.input.topic"}},
+                "outputs": {
+                    "type": "object",
+                    "required": ["decision"],
+                    "properties": {"decision": {"type": "string"}},
+                },
+            },
+            {
+                "id": "echo",
+                "ref": "tool.echo.v1",
+                "inputs": {"decision": {"from": "$nodes.review.output.decision"}},
+                "outputs": {"type": "object"},
+            },
+        ],
+        "edges": [
+            {"from": "START", "to": "review"},
+            {
+                "from": "review",
+                "to": "echo",
+                "when": {"path": "$nodes.review.output.decision", "equals": "approve"},
+            },
+            {"from": "echo", "to": "END"},
+        ],
     }
 
 
@@ -91,8 +137,64 @@ def test_auth_and_project_endpoints_create_and_list_projects(test_settings) -> N
         list_response = client.get("/api/projects", headers=headers)
         assert list_response.status_code == 200
         assert [item["project_id"] for item in list_response.json()["items"]] == [
+            "global",
             project["project_id"]
         ]
+
+
+def test_global_project_is_default_shared_project_and_supports_user_tasks(test_settings) -> None:
+    app = create_app(settings=test_settings)
+    with TestClient(app) as client:
+        alice = client.post(
+            "/api/auth/register",
+            json={"username": "global-alice", "password": "secret-123"},
+        ).json()
+        alice_headers = _auth_headers(client, username="global-alice")
+        client.post(
+            "/api/auth/register",
+            json={"username": "global-bob", "password": "secret-123"},
+        )
+        bob_headers = _auth_headers(client, username="global-bob")
+
+        alice_projects_response = client.get("/api/projects", headers=alice_headers)
+        bob_projects_response = client.get("/api/projects", headers=bob_headers)
+        create_response = client.post(
+            "/api/tasks",
+            json={
+                "project_id": "global",
+                "contract": _echo_contract(),
+                "input_data": {"topic": "global task"},
+            },
+            headers=alice_headers,
+        )
+        alice_tasks_response = client.get(
+            "/api/tasks",
+            params={"project_id": "global"},
+            headers=alice_headers,
+        )
+        bob_tasks_response = client.get(
+            "/api/tasks",
+            params={"project_id": "global"},
+            headers=bob_headers,
+        )
+
+    assert alice_projects_response.status_code == 200
+    assert bob_projects_response.status_code == 200
+    assert alice_projects_response.json()["items"][0]["project_id"] == "global"
+    assert alice_projects_response.json()["items"][0]["name"] == "全局项目"
+    assert bob_projects_response.json()["items"][0]["project_id"] == "global"
+
+    assert create_response.status_code == 200
+    task = create_response.json()
+    assert task["project_id"] == "global"
+    assert task["user_id"] == alice["user_id"]
+
+    assert alice_tasks_response.status_code == 200
+    assert [item["task_id"] for item in alice_tasks_response.json()["items"]] == [
+        task["task_id"]
+    ]
+    assert bob_tasks_response.status_code == 200
+    assert bob_tasks_response.json()["items"] == []
 
 
 def test_protected_api_requires_valid_bearer_token(test_settings) -> None:
@@ -165,6 +267,57 @@ def test_text_asset_create_and_search_endpoints(test_settings) -> None:
     assert result["items"][0]["asset_id"] == asset["asset_id"]
 
 
+def test_file_asset_upload_returns_public_url_and_searches_by_tag(test_settings) -> None:
+    app = create_app(settings=test_settings)
+    with TestClient(app) as client:
+        client.post(
+            "/api/auth/register",
+            json={"username": "asset-uploader", "password": "secret-123"},
+        )
+        headers = _auth_headers(client, username="asset-uploader")
+        project = client.post(
+            "/api/projects",
+            json={"name": "Upload Project"},
+            headers=headers,
+        ).json()
+        tag_response = client.post(
+            "/api/assets/tags",
+            json={"scope": "project", "project_id": project["project_id"], "name": "主角"},
+            headers=headers,
+        )
+        assert tag_response.status_code == 200
+        tag = tag_response.json()
+
+        upload_response = client.post(
+            "/api/assets/files",
+            data={
+                "scope": "project",
+                "project_id": project["project_id"],
+                "name": "hero.png",
+                "tag_ids": tag["tag_id"],
+                "publish": "true",
+            },
+            files={"file": ("hero.png", b"fake image", "image/png")},
+            headers=headers,
+        )
+
+        assert upload_response.status_code == 200
+        asset = upload_response.json()
+        assert asset["metadata"]["public_url"]
+
+        search_response = client.get(
+            "/api/assets/search",
+            params={
+                "scope": "project",
+                "project_id": project["project_id"],
+                "tag_ids": tag["tag_id"],
+            },
+            headers=headers,
+        )
+        assert search_response.status_code == 200
+        assert search_response.json()["items"][0]["asset_id"] == asset["asset_id"]
+
+
 def test_task_endpoints_create_succeeded_echo_task_and_read_it(test_settings) -> None:
     app = create_app(settings=test_settings)
     with TestClient(app) as client:
@@ -203,6 +356,120 @@ def test_task_endpoints_create_succeeded_echo_task_and_read_it(test_settings) ->
     body = read_response.json()
     assert body["task"]["task_id"] == task["task_id"]
     assert body["task"]["status"] == "succeeded"
+
+
+def test_task_list_detail_and_stream_return_project_scoped_runtime_data(test_settings) -> None:
+    app = create_app(settings=test_settings)
+    with TestClient(app) as client:
+        client.post(
+            "/api/auth/register",
+            json={"username": "task-list-owner", "password": "secret-123"},
+        )
+        headers = _auth_headers(client, username="task-list-owner")
+        first_project = client.post(
+            "/api/projects",
+            json={"name": "First Task Project"},
+            headers=headers,
+        ).json()
+        second_project = client.post(
+            "/api/projects",
+            json={"name": "Second Task Project"},
+            headers=headers,
+        ).json()
+        contract = _echo_contract()
+
+        first_task = client.post(
+            "/api/tasks",
+            json={
+                "project_id": first_project["project_id"],
+                "contract": contract,
+                "input_data": {"topic": "first"},
+            },
+            headers=headers,
+        ).json()
+        second_task = client.post(
+            "/api/tasks",
+            json={
+                "project_id": second_project["project_id"],
+                "contract": contract,
+                "input_data": {"topic": "second"},
+            },
+            headers=headers,
+        ).json()
+
+        list_response = client.get(
+            "/api/tasks",
+            params={"project_id": first_project["project_id"]},
+            headers=headers,
+        )
+        detail_response = client.get(
+            f"/api/tasks/{first_task['task_id']}",
+            params={"project_id": first_project["project_id"]},
+            headers=headers,
+        )
+        stream_response = client.get(
+            f"/api/tasks/{first_task['task_id']}/stream",
+            params={"project_id": first_project["project_id"]},
+            headers=headers,
+        )
+
+    assert list_response.status_code == 200
+    assert [item["task_id"] for item in list_response.json()["items"]] == [
+        first_task["task_id"]
+    ]
+    assert second_task["task_id"] not in {
+        item["task_id"] for item in list_response.json()["items"]
+    }
+
+    assert detail_response.status_code == 200
+    detail = detail_response.json()
+    assert detail["workflow_snapshot"] == contract
+    assert detail["node_attempts"]["echo"][0]["attempt"] == 1
+    assert detail["node_attempts"]["echo"][0]["node_execution_id"] == detail["task"][
+        "current_view"
+    ]["active_node_outputs"]["echo"]
+
+    assert stream_response.status_code == 200
+    assert stream_response.headers["content-type"].startswith("text/event-stream")
+    assert "event: task_created\n" in stream_response.text
+    assert "event: task_succeeded\n" in stream_response.text
+
+
+def test_task_interactions_endpoint_resumes_waiting_task(test_settings) -> None:
+    app = create_app(settings=test_settings)
+    with TestClient(app) as client:
+        client.post(
+            "/api/auth/register",
+            json={"username": "task-interactor", "password": "secret-123"},
+        )
+        headers = _auth_headers(client, username="task-interactor")
+        project = client.post(
+            "/api/projects",
+            json={"name": "Interaction Project"},
+            headers=headers,
+        ).json()
+        task = client.post(
+            "/api/tasks",
+            json={
+                "project_id": project["project_id"],
+                "contract": _approval_contract(),
+                "input_data": {"topic": "needs approval"},
+            },
+            headers=headers,
+        ).json()
+
+        response = client.post(
+            f"/api/tasks/{task['task_id']}/interactions",
+            json={
+                "project_id": project["project_id"],
+                "node_id": "review",
+                "output": {"decision": "approve"},
+            },
+            headers=headers,
+        )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "succeeded"
 
 
 def test_protected_post_routes_reject_body_user_id(test_settings) -> None:
@@ -385,14 +652,93 @@ edges:
 """.lstrip(),
         encoding="utf-8",
     )
+    (nested_dir / "project-only.workflow.yaml").write_text(
+        _workflow_yaml(
+            workflow_id="project-only-sample",
+            name="Project Only Sample",
+            scope="project",
+            project_id="project-only",
+        ),
+        encoding="utf-8",
+    )
     app = create_app(settings=replace(test_settings, workflow_dir=workflow_dir))
 
     with TestClient(app) as client:
-        response = client.get("/api/workflows")
+        client.post("/api/auth/register", json={"username": "alice", "password": "secret-123"})
+        headers = _auth_headers(client, username="alice")
+        response = client.get("/api/workflows", headers=headers)
 
     assert response.status_code == 200
     workflow_ids = {item["workflow"]["id"] for item in response.json()["items"]}
     assert "nested-sample" in workflow_ids
+    assert "project-only-sample" not in workflow_ids
+
+
+def test_workflows_endpoint_filters_workflows_for_current_project(test_settings) -> None:
+    workflow_dir = test_settings.workflow_dir / "global"
+    workflow_dir.mkdir(parents=True)
+    (workflow_dir / "global.workflow.yaml").write_text(
+        _workflow_yaml(workflow_id="global-sample", name="Global Sample", scope="global"),
+        encoding="utf-8",
+    )
+    (workflow_dir / "project-a.workflow.yaml").write_text(
+        _workflow_yaml(
+            workflow_id="project-a-sample",
+            name="Project A Sample",
+            scope="project",
+            project_id="project-a",
+        ),
+        encoding="utf-8",
+    )
+    (workflow_dir / "project-b.workflow.yaml").write_text(
+        _workflow_yaml(
+            workflow_id="project-b-sample",
+            name="Project B Sample",
+            scope="project",
+            project_id="project-b",
+        ),
+        encoding="utf-8",
+    )
+    asyncio.run(_insert_user_project(test_settings.database_path, user_id="user-a", project_id="project-a"))
+    app = create_app(settings=replace(test_settings, workflow_dir=test_settings.workflow_dir))
+
+    with TestClient(app) as client:
+        client.app.state.services.access_tokens["token-a"] = "user-a"
+        response = client.get(
+            "/api/workflows",
+            params={"project_id": "project-a"},
+            headers={"Authorization": "Bearer token-a"},
+        )
+
+    assert response.status_code == 200
+    workflow_ids = {item["workflow"]["id"] for item in response.json()["items"]}
+    assert workflow_ids == {"global-sample", "project-a-sample"}
+
+
+def test_workflows_endpoint_accepts_default_global_project(test_settings) -> None:
+    workflow_dir = test_settings.workflow_dir / "global"
+    workflow_dir.mkdir(parents=True)
+    (workflow_dir / "global.workflow.yaml").write_text(
+        _workflow_yaml(workflow_id="global-sample", name="Global Sample", scope="global"),
+        encoding="utf-8",
+    )
+    app = create_app(settings=replace(test_settings, workflow_dir=test_settings.workflow_dir))
+
+    with TestClient(app) as client:
+        client.post(
+            "/api/auth/register",
+            json={"username": "global-workflow-user", "password": "secret-123"},
+        )
+        headers = _auth_headers(client, username="global-workflow-user")
+        response = client.get(
+            "/api/workflows",
+            params={"project_id": "global"},
+            headers=headers,
+        )
+
+    assert response.status_code == 200
+    workflow_ids = {item["workflow"]["id"] for item in response.json()["items"]}
+    assert workflow_ids == {"global-sample"}
 
 
 def test_request_validation_errors_use_standard_error_shape(test_settings) -> None:
@@ -406,3 +752,53 @@ def test_request_validation_errors_use_standard_error_shape(test_settings) -> No
     assert body["error"]["code"] == "request_validation_failed"
     assert body["error"]["message"]
     assert body["error"]["details"]
+
+
+def _workflow_yaml(*, workflow_id: str, name: str, scope: str, project_id: str | None = None) -> str:
+    project_line = f"  project_id: {project_id}\n" if project_id else ""
+    return f"""
+workflow:
+  id: {workflow_id}
+  version: 1.0.0
+  scope: {scope}
+{project_line}  name: {name}
+  input_schema:
+    type: object
+    required:
+      - topic
+    properties:
+      topic:
+        type: string
+nodes:
+  - id: echo
+    ref: tool.echo.v1
+    inputs:
+      topic:
+        from: $workflow.input.topic
+    outputs:
+      type: object
+edges:
+  - from: START
+    to: echo
+  - from: echo
+    to: END
+""".lstrip()
+
+
+async def _insert_user_project(database_path, *, user_id: str, project_id: str) -> None:
+    await migrate(database_path)
+    async with connect_db(database_path) as db:
+        await db.execute(
+            """
+            insert into users (user_id, username, password_hash, status, created_at, updated_at)
+            values (?, ?, ?, ?, ?, ?)
+            """,
+            (user_id, "workflow-owner", "not-used", "active", "2026-05-27T00:00:00Z", "2026-05-27T00:00:00Z"),
+        )
+        await db.execute(
+            """
+            insert into projects (project_id, owner_user_id, name, description, status, created_at, updated_at)
+            values (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (project_id, user_id, "Project A", None, "active", "2026-05-27T00:00:00Z", "2026-05-27T00:00:00Z"),
+        )

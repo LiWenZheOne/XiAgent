@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -8,7 +9,13 @@ from typing import Any
 import aiosqlite
 
 from xiagent.assets.local_storage import LocalAssetStorage
-from xiagent.assets.models import AssetContent, AssetRecord, AssetSearchResult
+from xiagent.assets.models import (
+    AssetCollectionRecord,
+    AssetContent,
+    AssetRecord,
+    AssetSearchResult,
+    AssetTagRecord,
+)
 from xiagent.core.errors import NotFoundError, ValidationError
 from xiagent.core.ids import new_id
 from xiagent.core.services import AssetService, UserService
@@ -22,10 +29,12 @@ class SqliteAssetService(AssetService):
         database_path: Path,
         storage_dir: Path,
         user_service: UserService,
+        object_storage: Any | None = None,
     ) -> None:
         self._database_path = database_path
         self._storage = LocalAssetStorage(storage_dir)
         self._user_service = user_service
+        self._object_storage = object_storage
 
     async def create_text_asset(
         self,
@@ -111,6 +120,9 @@ class SqliteAssetService(AssetService):
         content_type: str | None,
         content: bytes,
         metadata: dict[str, Any],
+        publish: bool = False,
+        collection_ids: list[str] | None = None,
+        tag_ids: list[str] | None = None,
     ) -> AssetRecord:
         await self._validate_write_scope(user_id=user_id, scope=scope, project_id=project_id)
         clean_name = file_name.strip()
@@ -127,8 +139,26 @@ class SqliteAssetService(AssetService):
         ) = self._storage.put_bytes_with_status(file_name=clean_name, content=content)
         asset_id = new_id("asset")
         now = _utc_now()
-        metadata_json = _metadata_json(metadata)
+        stored_object = None
+        clean_metadata = dict(metadata)
         try:
+            if publish:
+                if self._object_storage is None:
+                    raise ValidationError(
+                        "object_storage_not_configured",
+                        "Object storage must be configured before publishing file assets",
+                    )
+                stored_object = await self._object_storage.put_object(
+                    key=_object_key(storage_uri),
+                    content=content,
+                    content_type=content_type,
+                )
+                clean_metadata["public_url"] = stored_object.public_url
+                clean_metadata["object_storage"] = asdict(stored_object)
+
+            clean_collection_ids = _clean_string_list(collection_ids)
+            clean_tag_ids = _clean_string_list(tag_ids)
+            metadata_json = _metadata_json(clean_metadata)
             async with connect_db(self._database_path) as db:
                 await db.execute(
                     """
@@ -163,7 +193,31 @@ class SqliteAssetService(AssetService):
                     project_id=project_id,
                     search_text=f"{clean_name}\n{metadata_json}",
                 )
+                for collection_id in clean_collection_ids:
+                    await _insert_index_entry(
+                        db,
+                        asset_id=asset_id,
+                        scope=scope,
+                        project_id=project_id,
+                        collection_id=collection_id,
+                        tag_id=None,
+                        search_text=clean_name,
+                        now=now,
+                    )
+                for tag_id in clean_tag_ids:
+                    await _insert_index_entry(
+                        db,
+                        asset_id=asset_id,
+                        scope=scope,
+                        project_id=project_id,
+                        collection_id=None,
+                        tag_id=tag_id,
+                        search_text=clean_name,
+                        now=now,
+                    )
         except Exception:
+            if stored_object is not None:
+                await self._object_storage.delete_object(key=stored_object.key)
             if storage_created:
                 self._storage.delete_uri(storage_uri)
             raise
@@ -179,12 +233,138 @@ class SqliteAssetService(AssetService):
             size_bytes=size_bytes,
             storage_uri=storage_uri,
             text_content=None,
-            metadata=dict(metadata),
+            metadata=clean_metadata,
             created_by=user_id,
             created_at=now,
             updated_at=now,
             deleted_at=None,
         )
+
+    async def create_collection_node(
+        self,
+        *,
+        user_id: str,
+        scope: str,
+        project_id: str | None,
+        parent_id: str | None,
+        name: str,
+        description: str | None = None,
+    ) -> AssetCollectionRecord:
+        await self._validate_write_scope(user_id=user_id, scope=scope, project_id=project_id)
+        clean_name = name.strip()
+        if not clean_name:
+            raise ValidationError(
+                "asset_collection_name_required",
+                "Asset collection name must not be empty",
+            )
+        collection_id = new_id("collection")
+        now = _utc_now()
+        async with connect_db(self._database_path) as db:
+            await db.execute(
+                """
+                insert into asset_collections (
+                  collection_id, scope, project_id, parent_id, name, description,
+                  sort_order, created_by, created_at, updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    collection_id,
+                    scope,
+                    project_id,
+                    parent_id,
+                    clean_name,
+                    description,
+                    0,
+                    user_id,
+                    now,
+                    now,
+                ),
+            )
+            row = await _fetch_one(
+                db,
+                "select * from asset_collections where collection_id = ?",
+                (collection_id,),
+            )
+        assert row is not None
+        return _collection_from_row(row)
+
+    async def list_collection_nodes(
+        self,
+        *,
+        user_id: str,
+        scope: str,
+        project_id: str | None,
+    ) -> list[AssetCollectionRecord]:
+        await self._validate_search_scope(user_id=user_id, scope=scope, project_id=project_id)
+        where, parameters = _scope_filter(scope=scope, project_id=project_id)
+        async with connect_db(self._database_path) as db:
+            cursor = await db.execute(
+                f"""
+                select *
+                from asset_collections
+                where {' and '.join(where)}
+                order by sort_order asc, created_at asc, collection_id asc
+                """,
+                tuple(parameters),
+            )
+            try:
+                rows = await cursor.fetchall()
+            finally:
+                await cursor.close()
+        return [_collection_from_row(row) for row in rows]
+
+    async def create_tag(
+        self,
+        *,
+        user_id: str,
+        scope: str,
+        project_id: str | None,
+        name: str,
+        description: str | None = None,
+    ) -> AssetTagRecord:
+        await self._validate_write_scope(user_id=user_id, scope=scope, project_id=project_id)
+        clean_name = name.strip()
+        if not clean_name:
+            raise ValidationError("asset_tag_name_required", "Asset tag name must not be empty")
+        tag_id = new_id("tag")
+        now = _utc_now()
+        async with connect_db(self._database_path) as db:
+            await db.execute(
+                """
+                insert into asset_tags (
+                  tag_id, scope, project_id, name, description, created_by, created_at, updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (tag_id, scope, project_id, clean_name, description, user_id, now, now),
+            )
+            row = await _fetch_one(db, "select * from asset_tags where tag_id = ?", (tag_id,))
+        assert row is not None
+        return _tag_from_row(row)
+
+    async def list_tags(
+        self,
+        *,
+        user_id: str,
+        scope: str,
+        project_id: str | None,
+    ) -> list[AssetTagRecord]:
+        await self._validate_search_scope(user_id=user_id, scope=scope, project_id=project_id)
+        where, parameters = _scope_filter(scope=scope, project_id=project_id)
+        async with connect_db(self._database_path) as db:
+            cursor = await db.execute(
+                f"""
+                select *
+                from asset_tags
+                where {' and '.join(where)}
+                order by created_at asc, tag_id asc
+                """,
+                tuple(parameters),
+            )
+            try:
+                rows = await cursor.fetchall()
+            finally:
+                await cursor.close()
+        return [_tag_from_row(row) for row in rows]
 
     async def get_asset(
         self,
@@ -300,6 +480,8 @@ class SqliteAssetService(AssetService):
         keyword: str | None = None,
         asset_type: str | None = None,
         mime_type: str | None = None,
+        tag_ids: list[str] | None = None,
+        collection_id: str | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> AssetSearchResult:
@@ -310,6 +492,8 @@ class SqliteAssetService(AssetService):
             keyword=keyword,
             asset_type=asset_type,
             mime_type=mime_type,
+            tag_ids=tag_ids,
+            collection_id=collection_id,
         )
         async with connect_db(self._database_path) as db:
             total_row = await _fetch_one(
@@ -401,32 +585,76 @@ def _search_filter(
     keyword: str | None,
     asset_type: str | None,
     mime_type: str | None,
+    tag_ids: list[str] | None,
+    collection_id: str | None,
 ) -> tuple[list[str], list[str]]:
-    where = ["deleted_at is null"]
-    parameters: list[str] = []
-    if scope == "global":
-        where.append("scope = ?")
-        parameters.append("global")
-    elif scope == "project":
-        where.append("scope = ?")
-        where.append("project_id = ?")
-        parameters.extend(["project", project_id or ""])
-    else:
-        where.append("(scope = ? or (scope = ? and project_id = ?))")
-        parameters.extend(["global", "project", project_id or ""])
+    scope_where, parameters = _scope_filter(scope=scope, project_id=project_id)
+    where = ["deleted_at is null", *scope_where]
 
     if asset_type is not None:
         where.append("asset_type = ?")
         parameters.append(asset_type)
     if mime_type is not None:
-        where.append("mime_type = ?")
-        parameters.append(mime_type)
+        if mime_type.endswith("/*"):
+            where.append("mime_type like ?")
+            parameters.append(f"{mime_type[:-1]}%")
+        else:
+            where.append("mime_type = ?")
+            parameters.append(mime_type)
     clean_keyword = keyword.strip() if keyword is not None else ""
     if clean_keyword:
         where.append("(name like ? or text_content like ? or metadata_json like ?)")
         pattern = f"%{clean_keyword}%"
         parameters.extend([pattern, pattern, pattern])
+    clean_tag_ids = _clean_string_list(tag_ids)
+    if clean_tag_ids:
+        placeholders = ", ".join("?" for _ in clean_tag_ids)
+        where.append(
+            "asset_id in ("
+            "select asset_id from asset_index_entries "
+            f"where tag_id in ({placeholders}) "
+            "group by asset_id having count(distinct tag_id) = ?"
+            ")"
+        )
+        parameters.extend(clean_tag_ids)
+        parameters.append(len(clean_tag_ids))
+    if collection_id is not None and collection_id.strip():
+        where.append(
+            "asset_id in ("
+            "with recursive collection_tree(collection_id) as ("
+            "select collection_id from asset_collections where collection_id = ? "
+            "union all "
+            "select child.collection_id from asset_collections child "
+            "join collection_tree parent on child.parent_id = parent.collection_id"
+            ") "
+            "select asset_id from asset_index_entries "
+            "where collection_id in (select collection_id from collection_tree)"
+            ")"
+        )
+        parameters.append(collection_id.strip())
     return where, parameters
+
+
+def _scope_filter(*, scope: str, project_id: str | None) -> tuple[list[str], list[str]]:
+    if scope == "global":
+        return ["scope = ?"], ["global"]
+    if scope == "project":
+        return ["scope = ?", "project_id = ?"], ["project", project_id or ""]
+    return ["(scope = ? or (scope = ? and project_id = ?))"], [
+        "global",
+        "project",
+        project_id or "",
+    ]
+
+
+def _clean_string_list(values: list[str] | None) -> list[str]:
+    if values is None:
+        return []
+    return [value.strip() for value in values if isinstance(value, str) and value.strip()]
+
+
+def _object_key(storage_uri: str) -> str:
+    return storage_uri.strip("/")
 
 
 async def _insert_search_entry(
@@ -443,6 +671,38 @@ async def _insert_search_entry(
         values (?, ?, ?, ?)
         """,
         (asset_id, scope, project_id or "", search_text),
+    )
+
+
+async def _insert_index_entry(
+    db: aiosqlite.Connection,
+    *,
+    asset_id: str,
+    scope: str,
+    project_id: str | None,
+    collection_id: str | None,
+    tag_id: str | None,
+    search_text: str,
+    now: str,
+) -> None:
+    await db.execute(
+        """
+        insert into asset_index_entries (
+          entry_id, scope, project_id, asset_id, collection_id, tag_id,
+          search_text, created_at, updated_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            new_id("asset_index"),
+            scope,
+            project_id,
+            asset_id,
+            collection_id,
+            tag_id,
+            search_text,
+            now,
+            now,
+        ),
     )
 
 
@@ -475,4 +735,32 @@ def _asset_from_row(row: aiosqlite.Row) -> AssetRecord:
         created_at=row["created_at"],
         updated_at=row["updated_at"],
         deleted_at=row["deleted_at"],
+    )
+
+
+def _collection_from_row(row: aiosqlite.Row) -> AssetCollectionRecord:
+    return AssetCollectionRecord(
+        collection_id=row["collection_id"],
+        scope=row["scope"],
+        project_id=row["project_id"],
+        parent_id=row["parent_id"],
+        name=row["name"],
+        description=row["description"],
+        sort_order=row["sort_order"],
+        created_by=row["created_by"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _tag_from_row(row: aiosqlite.Row) -> AssetTagRecord:
+    return AssetTagRecord(
+        tag_id=row["tag_id"],
+        scope=row["scope"],
+        project_id=row["project_id"],
+        name=row["name"],
+        description=row["description"],
+        created_by=row["created_by"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
     )

@@ -36,3 +36,29 @@ class AssetContent:
 class AssetSearchResult:
     items: list[AssetRecord] = field(default_factory=list)
     total: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class AssetCollectionRecord:
+    collection_id: str
+    scope: str
+    project_id: str | None
+    parent_id: str | None
+    name: str
+    description: str | None
+    sort_order: int
+    created_by: str
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class AssetTagRecord:
+    tag_id: str
+    scope: str
+    project_id: str | None
+    name: str
+    description: str | None
+    created_by: str
+    created_at: str
+    updated_at: str

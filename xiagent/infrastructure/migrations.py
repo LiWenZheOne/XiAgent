@@ -1,8 +1,18 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 from xiagent.infrastructure.database import connect_db
+from xiagent.infrastructure.password import hash_password
+from xiagent.users.global_project import (
+    GLOBAL_PROJECT_DESCRIPTION,
+    GLOBAL_PROJECT_ID,
+    GLOBAL_PROJECT_NAME,
+    GLOBAL_PROJECT_OWNER_PASSWORD,
+    GLOBAL_PROJECT_OWNER_USER_ID,
+    GLOBAL_PROJECT_OWNER_USERNAME,
+)
 
 SCHEMA_SQL = """
 create table if not exists users (
@@ -165,6 +175,7 @@ async def migrate(path: Path) -> None:
             column_name="asset_refs_json",
             definition="asset_refs_json text not null default '[]'",
         )
+        await _ensure_global_project(db)
 
 
 async def _ensure_column(
@@ -181,3 +192,54 @@ async def _ensure_column(
         await cursor.close()
     if column_name not in columns:
         await db.execute(f"alter table {table_name} add column {definition}")
+
+
+async def _ensure_global_project(db) -> None:
+    now = datetime.now(UTC).isoformat()
+    await db.execute(
+        """
+        insert or ignore into users (
+          user_id, username, password_hash, status, created_at, updated_at
+        ) values (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            GLOBAL_PROJECT_OWNER_USER_ID,
+            GLOBAL_PROJECT_OWNER_USERNAME,
+            hash_password(GLOBAL_PROJECT_OWNER_PASSWORD),
+            "system",
+            now,
+            now,
+        ),
+    )
+    await db.execute(
+        """
+        update users
+        set status = 'system'
+        where user_id = ?
+        """,
+        (GLOBAL_PROJECT_OWNER_USER_ID,),
+    )
+    await db.execute(
+        """
+        insert or ignore into projects (
+          project_id, owner_user_id, name, description, status, created_at, updated_at
+        ) values (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            GLOBAL_PROJECT_ID,
+            GLOBAL_PROJECT_OWNER_USER_ID,
+            GLOBAL_PROJECT_NAME,
+            GLOBAL_PROJECT_DESCRIPTION,
+            "active",
+            now,
+            now,
+        ),
+    )
+    await db.execute(
+        """
+        update projects
+        set name = ?, description = ?, status = 'active'
+        where project_id = ?
+        """,
+        (GLOBAL_PROJECT_NAME, GLOBAL_PROJECT_DESCRIPTION, GLOBAL_PROJECT_ID),
+    )

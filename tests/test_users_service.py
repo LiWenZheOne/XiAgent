@@ -5,6 +5,7 @@ import pytest
 from xiagent.core.errors import ConflictError, PermissionDeniedError
 from xiagent.infrastructure.database import connect_db
 from xiagent.infrastructure.migrations import migrate
+from xiagent.users.global_project import GLOBAL_PROJECT_OWNER_PASSWORD, GLOBAL_PROJECT_OWNER_USERNAME
 from xiagent.users.service import SqliteUserService
 
 
@@ -119,6 +120,49 @@ async def test_get_project_denies_inactive_user(test_settings) -> None:
     assert exc_info.value.details == {"user_id": alice.user_id}
 
 
+async def test_global_project_is_listed_first_and_accessible_to_all_active_users(test_settings) -> None:
+    await migrate(test_settings.database_path)
+    service = SqliteUserService(test_settings.database_path)
+    alice = await service.create_user(username="alice", password="secret-123")
+    bob = await service.create_user(username="bob", password="secret-456")
+    alice_project = await service.create_project(owner_user_id=alice.user_id, name="Project A")
+
+    alice_projects = await service.list_projects_for_user(user_id=alice.user_id)
+    bob_projects = await service.list_projects_for_user(user_id=bob.user_id)
+    bob_global_project = await service.get_project(user_id=bob.user_id, project_id="global")
+
+    assert [project.project_id for project in alice_projects] == [
+        "global",
+        alice_project.project_id,
+    ]
+    assert alice_projects[0].name == "全局项目"
+    assert [project.project_id for project in bob_projects] == ["global"]
+    assert bob_global_project.project_id == "global"
+    await service.ensure_project_access(
+        user_id=alice.user_id,
+        project_id="global",
+        action="task:create",
+    )
+    await service.ensure_project_access(
+        user_id=bob.user_id,
+        project_id="global",
+        action="task:create",
+    )
+
+
+async def test_global_project_system_owner_cannot_authenticate(test_settings) -> None:
+    await migrate(test_settings.database_path)
+    service = SqliteUserService(test_settings.database_path)
+
+    with pytest.raises(PermissionDeniedError) as exc_info:
+        await service.authenticate(
+            username=GLOBAL_PROJECT_OWNER_USERNAME,
+            password=GLOBAL_PROJECT_OWNER_PASSWORD,
+        )
+
+    assert exc_info.value.code == "invalid_credentials"
+
+
 async def test_inactive_user_cannot_create_project(test_settings) -> None:
     await migrate(test_settings.database_path)
     service = SqliteUserService(test_settings.database_path)
@@ -182,7 +226,7 @@ async def test_wrong_password_raises_permission_denied(test_settings) -> None:
     assert exc_info.value.code == "invalid_credentials"
 
 
-async def test_list_projects_for_user_returns_only_owned_active_projects(test_settings) -> None:
+async def test_list_projects_for_user_returns_global_and_only_owned_active_projects(test_settings) -> None:
     await migrate(test_settings.database_path)
     service = SqliteUserService(test_settings.database_path)
     alice = await service.create_user(username="alice", password="secret-123")
@@ -199,7 +243,7 @@ async def test_list_projects_for_user_returns_only_owned_active_projects(test_se
 
     projects = await service.list_projects_for_user(user_id=alice.user_id)
 
-    assert [project.project_id for project in projects] == [first.project_id]
+    assert [project.project_id for project in projects] == ["global", first.project_id]
 
 
 async def test_list_projects_for_user_denies_inactive_user(test_settings) -> None:

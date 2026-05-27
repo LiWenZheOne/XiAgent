@@ -28,6 +28,7 @@
 | `langgraph` | `>=1.0.0` | 工作流执行引擎适配层依赖，核心接口不直接依赖 LangGraph。 |
 | `openai` | `>=1.0.0` | 通过 `AsyncOpenAI` 调用 DeepSeek 兼容的 Chat Completions 接口。 |
 | `python-multipart` | `>=0.0.9` | FastAPI 表单和上传能力依赖，保留给资产上传等接口扩展使用。 |
+| `qiniu` | `>=7.15.0` | 七牛云对象存储适配器依赖，业务代码只通过对象存储抽象访问。 |
 
 `pydantic` 由 FastAPI 传递安装，当前 API 请求模型直接使用 `pydantic.BaseModel`。如果未来 API 层继续直接使用 Pydantic 且 FastAPI 依赖被替换，应把 `pydantic` 提升为显式正式依赖。
 
@@ -80,6 +81,13 @@ XiAgent 配置分为基础运行配置和模型配置。
 | `XIAGENT_DATABASE_PATH` | `.data/xiagent.sqlite3` | SQLite 数据库文件路径。启动 API 或测试构建器时会自动创建父目录。 |
 | `XIAGENT_ASSET_STORAGE_DIR` | `storage/assets` | 本地文件资产存储目录。 |
 | `XIAGENT_WORKFLOW_DIR` | `workflows` | 工作流模板目录，启动时会加载该目录下的工作流契约。 |
+| `XIAGENT_OBJECT_STORAGE_PROVIDER` | `local_public_url` | 对象存储路由器 provider。开发测试可用 `local_public_url`，真实图片发布使用 `qiniu`。 |
+| `QINIU_ACCESS_KEY` | 空 | 七牛云 Access Key。 |
+| `QINIU_SECRET_KEY` | 空 | 七牛云 Secret Key。 |
+| `QINIU_BUCKET` | 空 | 七牛云 bucket 名称。 |
+| `QINIU_REGION` | 空 | 七牛云区域标识，保留给适配器和部署记录使用。 |
+| `QINIU_PUBLIC_BASE_URL` | 空 | 七牛云 bucket 绑定的公开访问域名，例如 `https://cdn.example.com`。 |
+| `QINIU_KEY_PREFIX` | `xiagent/assets` | 上传对象 key 前缀。 |
 
 ### 模型配置
 
@@ -103,6 +111,30 @@ XiAgent 配置分为基础运行配置和模型配置。
 | `RUNNINGHUB_POLL_TIMEOUT_SECONDS` | `180.0` | RunningHub 任务轮询超时时间。 |
 
 不要提交真实 API Key。如果 API Key 曾经进入聊天窗口、日志、Issue、文档或 Git 提交，应立即轮换。
+
+### 对象存储配置
+
+对象存储配置支持两种来源：
+
+- 环境变量，适合部署和 CI。
+- `xiagent/infrastructure/object_storage.local.toml`，适合本机调试；该文件已被 `.gitignore` 排除，可从 `xiagent/infrastructure/object_storage.example.toml` 复制生成。
+
+本地七牛云配置示例：
+
+```toml
+[object_storage]
+provider = "qiniu"
+
+[object_storage.qiniu]
+access_key = "替换为真实 AK"
+secret_key = "替换为真实 SK"
+bucket = "替换为 bucket 名称"
+region = "替换为区域"
+public_base_url = "替换为公开访问域名"
+key_prefix = "xiagent/assets"
+```
+
+对象存储属于基础设施能力。资产服务、工作流节点和前端不得直接依赖七牛云接口，只能通过 `AssetService`、资产 API 或对象存储抽象访问。
 
 ## 本地开发部署
 

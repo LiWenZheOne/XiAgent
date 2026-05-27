@@ -9,6 +9,13 @@ from fastapi import Depends, Header, Request
 from xiagent.assets.service import SqliteAssetService
 from xiagent.core.errors import AuthenticationError, NotFoundError, ValidationError
 from xiagent.infrastructure.config import Settings
+from xiagent.infrastructure.object_storage import (
+    DisabledObjectStorageService,
+    LocalPublicUrlObjectStorageService,
+    ObjectStorageRouter,
+    load_object_storage_config,
+)
+from xiagent.infrastructure.object_storage.qiniu import QiniuObjectStorageService
 from xiagent.nodes import build_node_registry
 from xiagent.nodes.registry import NodeRegistry
 from xiagent.runtime.service import SqliteRuntimeService
@@ -34,10 +41,20 @@ class ApiServices:
 
 def build_services(settings: Settings) -> ApiServices:
     users = SqliteUserService(settings.database_path)
+    object_storage_config = load_object_storage_config()
+    object_storage = ObjectStorageRouter(
+        provider=object_storage_config.provider,
+        services={
+            "local_none": DisabledObjectStorageService(),
+            "local_public_url": LocalPublicUrlObjectStorageService(),
+            "qiniu": QiniuObjectStorageService(object_storage_config.qiniu),
+        },
+    )
     assets = SqliteAssetService(
         database_path=settings.database_path,
         storage_dir=settings.asset_storage_dir,
         user_service=users,
+        object_storage=object_storage,
     )
     node_registry = build_node_registry(settings)
     runtime = SqliteRuntimeService(

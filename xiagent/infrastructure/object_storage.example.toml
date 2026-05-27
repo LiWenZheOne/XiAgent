@@ -1,0 +1,10 @@
+[object_storage]
+provider = "qiniu"
+
+[object_storage.qiniu]
+access_key = ""
+secret_key = ""
+bucket = ""
+region = ""
+public_base_url = ""
+key_prefix = "xiagent/assets"

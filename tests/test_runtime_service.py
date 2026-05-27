@@ -309,6 +309,55 @@ class JoinInputsProbeNode(BaseNode):
         return NodeResult(status="succeeded", output={"joined": dict(inputs)})
 
 
+class CountingValueNode(BaseNode):
+    def __init__(self) -> None:
+        self._count = 0
+
+    def describe(self) -> NodeDescriptor:
+        return NodeDescriptor(
+            ref="test.counting_value.v1",
+            name="Counting Value",
+            version="1.0.0",
+            kind="test",
+            input_schema={"type": "object", "additionalProperties": False},
+            output_schema={
+                "type": "object",
+                "required": ["value"],
+                "properties": {"value": {"type": "integer"}},
+                "additionalProperties": False,
+            },
+        )
+
+    async def run(self, ctx: NodeContext | None, inputs: Mapping[str, Any]) -> NodeResult:
+        self._count += 1
+        return NodeResult(status="succeeded", output={"value": self._count})
+
+
+class ValueConsumerNode(BaseNode):
+    def describe(self) -> NodeDescriptor:
+        return NodeDescriptor(
+            ref="test.value_consumer.v1",
+            name="Value Consumer",
+            version="1.0.0",
+            kind="test",
+            input_schema={
+                "type": "object",
+                "required": ["value"],
+                "properties": {"value": {"type": "integer"}},
+                "additionalProperties": False,
+            },
+            output_schema={
+                "type": "object",
+                "required": ["seen"],
+                "properties": {"seen": {"type": "integer"}},
+                "additionalProperties": False,
+            },
+        )
+
+    async def run(self, ctx: NodeContext | None, inputs: Mapping[str, Any]) -> NodeResult:
+        return NodeResult(status="succeeded", output={"seen": inputs["value"]})
+
+
 def _single_node_contract(*, workflow_id: str, node_id: str, ref: str) -> dict:
     return {
         "workflow": {
@@ -379,6 +428,47 @@ async def _list_tasks(test_settings) -> list[dict]:
         rows = await cursor.fetchall()
         await cursor.close()
     return [dict(row) for row in rows]
+
+
+def _rerun_contract() -> dict:
+    return {
+        "workflow": {
+            "id": "rerun-linear",
+            "version": "1.0.0",
+            "scope": "global",
+            "name": "Rerun Linear",
+            "input_schema": {"type": "object", "additionalProperties": False},
+        },
+        "nodes": [
+            {
+                "id": "produce",
+                "ref": "test.counting_value.v1",
+                "inputs": {},
+                "outputs": {
+                    "type": "object",
+                    "required": ["value"],
+                    "properties": {"value": {"type": "integer"}},
+                    "additionalProperties": False,
+                },
+            },
+            {
+                "id": "consume",
+                "ref": "test.value_consumer.v1",
+                "inputs": {"value": {"from": "$nodes.produce.output.value"}},
+                "outputs": {
+                    "type": "object",
+                    "required": ["seen"],
+                    "properties": {"seen": {"type": "integer"}},
+                    "additionalProperties": False,
+                },
+            },
+        ],
+        "edges": [
+            {"from": "START", "to": "produce"},
+            {"from": "produce", "to": "consume"},
+            {"from": "consume", "to": "END"},
+        ],
+    }
 
 
 async def test_simple_workflow_task_succeeds(test_settings) -> None:
@@ -691,6 +781,7 @@ async def test_list_events_are_ordered_for_wait_and_resume(test_settings) -> Non
         "task_created",
         "task_started",
         "node_started",
+        "node_waiting",
         "human_input_requested",
         "task_waiting",
         "task_resumed",
@@ -699,6 +790,59 @@ async def test_list_events_are_ordered_for_wait_and_resume(test_settings) -> Non
         "node_succeeded",
         "task_succeeded",
     ]
+
+
+async def test_rerun_node_creates_new_attempt_and_rebuilds_downstream_current_view(
+    test_settings,
+) -> None:
+    registry = NodeRegistry()
+    registry.register(CountingValueNode())
+    registry.register(ValueConsumerNode())
+    runtime, user_id, project_id = await _runtime(test_settings, registry)
+    task = await runtime.create_task_from_contract(
+        user_id=user_id,
+        project_id=project_id,
+        contract=_rerun_contract(),
+        input_data={},
+    )
+
+    rerun_task = await runtime.rerun_node(
+        user_id=user_id,
+        project_id=project_id,
+        task_id=task.task_id,
+        node_id="produce",
+    )
+
+    executions = await runtime.list_node_executions(
+        user_id=user_id,
+        project_id=project_id,
+        task_id=task.task_id,
+    )
+    events = await runtime.list_events(
+        user_id=user_id,
+        project_id=project_id,
+        task_id=task.task_id,
+    )
+    attempts_by_node = {
+        node_id: [item.attempt for item in executions if item.node_id == node_id]
+        for node_id in {"produce", "consume"}
+    }
+    latest_by_node = {
+        node_id: [item for item in executions if item.node_id == node_id][-1]
+        for node_id in {"produce", "consume"}
+    }
+
+    assert rerun_task.status == "succeeded"
+    assert attempts_by_node == {"produce": [1, 2], "consume": [1, 2]}
+    assert latest_by_node["produce"].output_snapshot == {"value": 2}
+    assert latest_by_node["consume"].input_snapshot == {"value": 2}
+    assert latest_by_node["consume"].output_snapshot == {"seen": 2}
+    assert rerun_task.current_view["active_node_outputs"] == {
+        "produce": latest_by_node["produce"].node_execution_id,
+        "consume": latest_by_node["consume"].node_execution_id,
+    }
+    assert "node_rerun_started" in [event.event_type for event in events]
+    assert "downstream_cleared" in [event.event_type for event in events]
 
 
 async def test_resume_with_invalid_output_keeps_task_waiting(test_settings) -> None:

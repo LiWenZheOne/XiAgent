@@ -9,7 +9,45 @@ from xiagent.assets.local_storage import LocalAssetStorage
 from xiagent.assets.service import SqliteAssetService
 from xiagent.core.errors import NotFoundError, PermissionDeniedError, ValidationError
 from xiagent.infrastructure.migrations import migrate
+from xiagent.infrastructure.object_storage.base import ObjectStorageService
+from xiagent.infrastructure.object_storage.models import StoredObject
 from xiagent.users.service import SqliteUserService
+
+
+class FakeObjectStorage(ObjectStorageService):
+    async def put_object(
+        self,
+        *,
+        key: str,
+        content: bytes,
+        content_type: str | None,
+    ) -> StoredObject:
+        return StoredObject(
+            provider="fake",
+            bucket="test",
+            key=key,
+            public_url=f"https://cdn.example.test/{key}",
+            content_type=content_type,
+            size_bytes=len(content),
+            etag="fake-etag",
+        )
+
+    async def delete_object(self, *, key: str) -> None:
+        return None
+
+
+class FailingObjectStorage(ObjectStorageService):
+    async def put_object(
+        self,
+        *,
+        key: str,
+        content: bytes,
+        content_type: str | None,
+    ) -> StoredObject:
+        raise RuntimeError("upload failed")
+
+    async def delete_object(self, *, key: str) -> None:
+        return None
 
 
 async def test_create_text_asset_and_search_project_scope(test_settings) -> None:
@@ -390,3 +428,124 @@ async def test_combined_search_returns_global_and_current_project_only(test_sett
         project_asset.asset_id,
     }
     assert result.total == 2
+
+
+async def test_import_image_asset_publishes_public_url_and_indexes_tags(test_settings) -> None:
+    await migrate(test_settings.database_path)
+    users = SqliteUserService(test_settings.database_path)
+    user = await users.create_user(username="asset-publisher", password="secret-123")
+    project = await users.create_project(owner_user_id=user.user_id, name="Image Project")
+    assets = SqliteAssetService(
+        database_path=test_settings.database_path,
+        storage_dir=test_settings.asset_storage_dir,
+        user_service=users,
+        object_storage=FakeObjectStorage(),
+    )
+    collection = await assets.create_collection_node(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project.project_id,
+        parent_id=None,
+        name="角色参考",
+    )
+    tag = await assets.create_tag(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project.project_id,
+        name="主角",
+    )
+
+    asset = await assets.import_file_asset(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project.project_id,
+        file_name="hero.png",
+        content_type="image/png",
+        content=b"fake image",
+        metadata={},
+        publish=True,
+        collection_ids=[collection.collection_id],
+        tag_ids=[tag.tag_id],
+    )
+    result = await assets.search_assets(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project.project_id,
+        tag_ids=[tag.tag_id],
+        collection_id=collection.collection_id,
+    )
+
+    assert asset.metadata["public_url"].startswith("https://cdn.example.test/")
+    assert result.items[0].asset_id == asset.asset_id
+
+
+async def test_search_assets_by_parent_collection_includes_child_collections(test_settings) -> None:
+    await migrate(test_settings.database_path)
+    users = SqliteUserService(test_settings.database_path)
+    user = await users.create_user(username="asset-tree-search", password="secret-123")
+    project = await users.create_project(owner_user_id=user.user_id, name="Tree Project")
+    assets = SqliteAssetService(
+        database_path=test_settings.database_path,
+        storage_dir=test_settings.asset_storage_dir,
+        user_service=users,
+    )
+    parent = await assets.create_collection_node(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project.project_id,
+        parent_id=None,
+        name="角色",
+    )
+    child = await assets.create_collection_node(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project.project_id,
+        parent_id=parent.collection_id,
+        name="主角",
+    )
+    asset = await assets.import_file_asset(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project.project_id,
+        file_name="hero.png",
+        content_type="image/png",
+        content=b"fake image",
+        metadata={},
+        collection_ids=[child.collection_id],
+    )
+
+    result = await assets.search_assets(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project.project_id,
+        collection_id=parent.collection_id,
+    )
+
+    assert [item.asset_id for item in result.items] == [asset.asset_id]
+
+
+async def test_import_file_asset_cleans_local_file_when_publish_fails(test_settings) -> None:
+    await migrate(test_settings.database_path)
+    users = SqliteUserService(test_settings.database_path)
+    user = await users.create_user(username="publish-failure", password="secret-123")
+    assets = SqliteAssetService(
+        database_path=test_settings.database_path,
+        storage_dir=test_settings.asset_storage_dir,
+        user_service=users,
+        object_storage=FailingObjectStorage(),
+    )
+
+    with pytest.raises(RuntimeError, match="upload failed"):
+        await assets.import_file_asset(
+            user_id=user.user_id,
+            scope="global",
+            project_id=None,
+            file_name="hero.png",
+            content_type="image/png",
+            content=b"fake image",
+            metadata={},
+            publish=True,
+        )
+
+    stored_files = [item for item in test_settings.asset_storage_dir.rglob("*") if item.is_file()]
+    assert stored_files == []

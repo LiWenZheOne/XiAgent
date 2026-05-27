@@ -101,6 +101,7 @@ class UserService(ABC):
 第一版规则：
 
 - 用户只能访问自己创建的项目。
+- 系统内置全局项目 `project_id=global` 是例外，所有 active 用户都可以访问，但全局项目下的任务仍按 `user_id` 隔离。
 - 创建任务必须拥有项目访问权限。
 - 创建项目资产、项目目录、项目标签必须拥有项目访问权限。
 - 使用项目工作流模板必须拥有项目访问权限。
@@ -123,4 +124,3 @@ project_id
 ```
 
 其他模块校验项目权限时只调用 `UserService.ensure_project_access()`。
-

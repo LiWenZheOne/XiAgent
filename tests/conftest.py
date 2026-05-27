@@ -8,7 +8,8 @@ from xiagent.infrastructure.config import Settings
 
 
 @pytest.fixture
-def test_settings(tmp_path: Path) -> Settings:
+def test_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Settings:
+    monkeypatch.setenv("XIAGENT_OBJECT_STORAGE_PROVIDER", "local_public_url")
     return Settings(
         database_path=tmp_path / "xiagent-test.sqlite3",
         asset_storage_dir=tmp_path / "assets",

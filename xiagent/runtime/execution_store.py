@@ -22,6 +22,40 @@ class SqliteExecutionStore:
             row = await _fetch_one(db, "select * from tasks where task_id = ?", (task_id,))
         return _task_from_row(row) if row is not None else None
 
+    async def list_tasks(self, *, user_id: str, project_id: str) -> list[TaskRecord]:
+        async with connect_db(self._database_path) as db:
+            cursor = await db.execute(
+                """
+                select *
+                from tasks
+                where user_id = ? and project_id = ?
+                order by created_at desc, rowid desc
+                """,
+                (user_id, project_id),
+            )
+            rows = await cursor.fetchall()
+            await cursor.close()
+        return [_task_from_row(row) for row in rows]
+
+    async def fetch_task_workflow_snapshot(self, task_id: str) -> dict[str, Any] | None:
+        async with connect_db(self._database_path) as db:
+            row = await _fetch_one(
+                db,
+                """
+                select wt.contract_json
+                from tasks t
+                join workflow_templates wt on wt.template_id = t.workflow_template_id
+                where t.task_id = ?
+                """,
+                (task_id,),
+            )
+        if row is None:
+            return None
+        loaded = _load_json(row["contract_json"])
+        if not isinstance(loaded, dict):
+            return None
+        return loaded
+
     async def list_node_executions(self, task_id: str) -> list[NodeExecutionRecord]:
         async with connect_db(self._database_path) as db:
             cursor = await db.execute(

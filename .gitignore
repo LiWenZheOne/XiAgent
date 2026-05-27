@@ -5,8 +5,14 @@
 __pycache__/
 .pytest_cache/
 *.egg-info/
+node_modules/
+dist/
+*.tsbuildinfo
+test-results/
+playwright-report/
 storage/assets/
 .env
 .env.*
 !.env.example
 xiagent/models/local_config.toml
+xiagent/infrastructure/object_storage.local.toml

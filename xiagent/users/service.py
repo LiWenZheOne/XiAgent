@@ -16,6 +16,7 @@ from xiagent.core.ids import new_id
 from xiagent.core.services import UserService
 from xiagent.infrastructure.database import connect_db
 from xiagent.infrastructure.password import hash_password, verify_password
+from xiagent.users.global_project import GLOBAL_PROJECT_ID
 from xiagent.users.models import AuthResult, ProjectRecord, UserRecord
 
 
@@ -145,11 +146,7 @@ class SqliteUserService(UserService):
     async def get_project(self, *, user_id: str, project_id: str) -> ProjectRecord:
         await self._ensure_active_user(user_id=user_id)
         async with connect_db(self._database_path) as db:
-            row = await _fetch_authorized_active_project(
-                db,
-                user_id=user_id,
-                project_id=project_id,
-            )
+            row = await _fetch_project_for_user(db, user_id=user_id, project_id=project_id)
 
         if row is None:
             raise _project_access_denied(
@@ -165,10 +162,12 @@ class SqliteUserService(UserService):
                 """
                 select *
                 from projects
-                where owner_user_id = ? and status = 'active'
-                order by created_at asc
+                where status = 'active' and (project_id = ? or owner_user_id = ?)
+                order by
+                  case when project_id = ? then 0 else 1 end,
+                  created_at asc
                 """,
-                (user_id,),
+                (GLOBAL_PROJECT_ID, user_id, GLOBAL_PROJECT_ID),
             )
             rows = await cursor.fetchall()
             await cursor.close()
@@ -178,11 +177,7 @@ class SqliteUserService(UserService):
     async def ensure_project_access(self, *, user_id: str, project_id: str, action: str) -> None:
         await self._ensure_active_user(user_id=user_id)
         async with connect_db(self._database_path) as db:
-            row = await _fetch_authorized_active_project(
-                db,
-                user_id=user_id,
-                project_id=project_id,
-            )
+            row = await _fetch_project_for_user(db, user_id=user_id, project_id=project_id)
 
         if row is None:
             raise _project_access_denied(action=action, project_id=project_id)
@@ -227,6 +222,37 @@ async def _fetch_authorized_active_project(
         where project_id = ? and owner_user_id = ? and status = 'active'
         """,
         (project_id, user_id),
+    )
+
+
+async def _fetch_active_project(
+    db: aiosqlite.Connection,
+    *,
+    project_id: str,
+) -> aiosqlite.Row | None:
+    return await _fetch_one(
+        db,
+        """
+        select *
+        from projects
+        where project_id = ? and status = 'active'
+        """,
+        (project_id,),
+    )
+
+
+async def _fetch_project_for_user(
+    db: aiosqlite.Connection,
+    *,
+    user_id: str,
+    project_id: str,
+) -> aiosqlite.Row | None:
+    if project_id == GLOBAL_PROJECT_ID:
+        return await _fetch_active_project(db, project_id=project_id)
+    return await _fetch_authorized_active_project(
+        db,
+        user_id=user_id,
+        project_id=project_id,
     )
 
 
