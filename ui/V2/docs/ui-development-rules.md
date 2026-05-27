@@ -46,11 +46,15 @@
 - V2 页面不得直接显示 `input_schema`、`output_snapshot`、`public_url`、节点 ref 或原始 JSON。
 - 工作流输入 schema 应渲染成可读表单：字符串输入、长文本、选择项、图片资产选择、公开图片地址等。
 - 节点执行输入/输出应渲染为用户卡片：字段列表、文本段落、图片预览、状态、错误和等待操作。
+- 节点控件选择遵循工作流优先、节点默认保底：`nodes[].ui` 高于 `workflow.ui.defaults`，`workflow.ui.defaults` 高于 `NodeDescriptor.ui_defaults`，最后才使用系统 fallback。
+- 工作流可以分别指定节点的输入、输出、交互和详情控件；工作流只覆盖某一区域时，不应清空其他区域的默认控件。
+- 后端 UI 控件 manifest 是控件兼容性的硬性检查来源，V2 React 控件实现必须使用相同 `control_id`、`variant`、`mode` 和 `bindings` 语义。
 - 后续新增可复用节点 UI 时，应建立 `ui/V2/src/node-ui/` 或等价注册库：
   - 每个控件有稳定 `control_id` 或 `block_ref`。
   - 工作流或节点配置只引用控件 ID、variant、mode、bindings。
   - 控件输入输出必须匹配工作流 schema、节点 descriptor 和运行时交互 payload。
   - 新控件必须补测试，并在本文件记录用途和 payload 约束。
+- 顶部导航应增加“控件库”页签，用于浏览可用控件、变体、能力标签、绑定要求和预览 fixture。
 
 ## 交互状态
 
