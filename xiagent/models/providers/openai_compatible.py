@@ -7,14 +7,14 @@ from openai import AsyncOpenAI
 
 from xiagent.core.errors import ExternalServiceError, ValidationError
 from xiagent.models.router import ChatModelProvider
-from xiagent.models.types import ChatRequest, ChatResponse, GeminiModelConfig
+from xiagent.models.types import ChatRequest, ChatResponse, OpenAICompatibleModelConfig
 
 
-class GeminiChatProvider(ChatModelProvider):
+class OpenAICompatibleChatProvider(ChatModelProvider):
     def __init__(
         self,
         *,
-        config: GeminiModelConfig,
+        config: OpenAICompatibleModelConfig,
         client_factory: Callable[..., Any] | None = None,
     ) -> None:
         self._config = config
@@ -23,9 +23,9 @@ class GeminiChatProvider(ChatModelProvider):
     async def chat(self, request: ChatRequest) -> ChatResponse:
         if not self._config.api_key:
             raise ValidationError(
-                code="gemini_api_key_missing",
-                message="Gemini API key is not configured",
-                details={"provider": "gemini"},
+                code="openai_compatible_api_key_missing",
+                message="OpenAI Compatible API key is not configured",
+                details={"provider": "openai_compatible"},
             )
 
         try:
@@ -43,9 +43,9 @@ class GeminiChatProvider(ChatModelProvider):
                 )
         except Exception as exc:
             raise ExternalServiceError(
-                code="gemini_request_failed",
-                message="Gemini request failed",
-                details={"provider": "gemini"},
+                code="openai_compatible_request_failed",
+                message="OpenAI Compatible request failed",
+                details={"provider": "openai_compatible"},
             ) from exc
 
         choice = response.choices[0] if response.choices else None
@@ -55,5 +55,5 @@ class GeminiChatProvider(ChatModelProvider):
             text=content,
             model=response.model,
             usage=usage,
-            metadata={"provider": "gemini"},
+            metadata={"provider": "openai_compatible"},
         )

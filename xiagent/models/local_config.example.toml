@@ -23,9 +23,9 @@ default_resolution = "1k"
 poll_interval_seconds = 2.0
 poll_timeout_seconds = 180.0
 
-[gemini]
+[openai_compatible]
 api_key = ""
-base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
+base_url = "https://api.vectorengine.cn"
 model = "gemini-3-flash-preview"
 
 [runninghub_workflow]

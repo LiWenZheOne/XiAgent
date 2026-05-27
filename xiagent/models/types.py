@@ -72,9 +72,9 @@ class RunningHubWorkflowModelConfig:
 
 
 @dataclass(frozen=True, slots=True)
-class GeminiModelConfig:
+class OpenAICompatibleModelConfig:
     api_key: str | None = None
-    base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
+    base_url: str = "https://api.vectorengine.cn"
     model: str = "gemini-3-flash-preview"
 
 
@@ -90,4 +90,4 @@ class ModelConfig:
     runninghub_workflow: RunningHubWorkflowModelConfig = field(
         default_factory=RunningHubWorkflowModelConfig
     )
-    gemini: GeminiModelConfig = field(default_factory=GeminiModelConfig)
+    openai_compatible: OpenAICompatibleModelConfig = field(default_factory=OpenAICompatibleModelConfig)

@@ -3,7 +3,7 @@ from __future__ import annotations
 from xiagent.infrastructure.config import Settings
 from xiagent.models import ChatModelRouter
 from xiagent.models.providers.deepseek import DeepSeekChatProvider
-from xiagent.models.providers.gemini import GeminiChatProvider
+from xiagent.models.providers.openai_compatible import OpenAICompatibleChatProvider
 from xiagent.models.providers.runninghub import (
     RunningHubImageProvider,
     RunningHubTextToImageProvider,
@@ -11,7 +11,7 @@ from xiagent.models.providers.runninghub import (
 )
 from xiagent.models.types import (
     DeepSeekModelConfig,
-    GeminiModelConfig,
+    OpenAICompatibleModelConfig,
     RunningHubImageModelConfig,
     RunningHubTextToImageModelConfig,
     RunningHubWorkflowModelConfig,
@@ -82,10 +82,10 @@ def build_node_registry(settings: Settings) -> NodeRegistry:
         poll_interval_seconds=settings.runninghub_workflow_poll_interval_seconds,
         poll_timeout_seconds=settings.runninghub_workflow_poll_timeout_seconds,
     )
-    gemini_config = GeminiModelConfig(
-        api_key=settings.gemini_api_key,
-        base_url=settings.gemini_base_url,
-        model=settings.gemini_model,
+    openai_compatible_config = OpenAICompatibleModelConfig(
+        api_key=settings.openai_compatible_api_key,
+        base_url=settings.openai_compatible_base_url,
+        model=settings.openai_compatible_model,
     )
     router = ChatModelRouter()
     router.register_provider(
@@ -105,8 +105,8 @@ def build_node_registry(settings: Settings) -> NodeRegistry:
         RunningHubWorkflowProvider(config=rh_workflow_config),
     )
     router.register_provider(
-        "gemini",
-        GeminiChatProvider(config=gemini_config),
+        "openai_compatible",
+        OpenAICompatibleChatProvider(config=openai_compatible_config),
     )
 
     registry = NodeRegistry()
@@ -182,8 +182,8 @@ def build_node_registry(settings: Settings) -> NodeRegistry:
     registry.register(
         GeminiVisionNode(
             model_router=router,
-            provider="gemini",
-            model=gemini_config.model,
+            provider="openai_compatible",
+            model=openai_compatible_config.model,
         )
     )
     return registry
