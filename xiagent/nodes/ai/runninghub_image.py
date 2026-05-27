@@ -4,7 +4,6 @@ from collections.abc import Mapping
 from typing import Any
 
 from xiagent.core.errors import ValidationError
-from xiagent.core.schemas import ASSET_IMAGE_RESULT_LIST_SCHEMA
 from xiagent.models import ChatMessage, ChatModelRouter, ChatRequest, ChatResponse
 from xiagent.nodes.base import BaseNode, NodeContext, NodeDescriptor, NodeResult
 
@@ -30,6 +29,15 @@ _OUTPUT_SCHEMA = {
         "status": {"type": "string"},
     },
     "required": ["image_url", "model", "usage", "results"],
+    "additionalProperties": False,
+}
+
+_ASSET_IMAGES_OUTPUT_SCHEMA = {
+    "type": "object",
+    "required": ["asset_images"],
+    "properties": {
+        "asset_images": {"type": "array"},
+    },
     "additionalProperties": False,
 }
 
@@ -181,7 +189,7 @@ class RunningHubImageToImageNodeV2(BaseNode):
             version="1.0.0",
             kind="ai",
             input_schema=self._input_schema,
-            output_schema=ASSET_IMAGE_RESULT_LIST_SCHEMA,
+            output_schema=_ASSET_IMAGES_OUTPUT_SCHEMA,
             description=self._description,
         )
 
@@ -372,20 +380,35 @@ class RunningHubImageToImageNodeV3(BaseNode):
         "type": "object",
         "properties": {
             "prompt": {"type": "string", "minLength": 1},
-            "image_urls": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1},
-            "line_art_url": {"type": "string", "minLength": 1},
+            "image_urls": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1},
+                "minItems": 1,
+            },
             "node_mapping": {
                 "type": "object",
                 "properties": {
                     "images": {"type": "array", "items": {"type": "string"}},
-                    "text": {"type": "object", "properties": {"nodeId": {"type": "string"}, "fieldName": {"type": "string"}}},
-                    "select": {"type": "object", "properties": {"nodeIds": {"type": "array", "items": {"type": "string"}}, "fieldName": {"type": "string"}}},
+                    "text": {
+                        "type": "object",
+                        "properties": {
+                            "nodeId": {"type": "string"},
+                            "fieldName": {"type": "string"},
+                        },
+                    },
+                    "select": {
+                        "type": "object",
+                        "properties": {
+                            "nodeIds": {"type": "array", "items": {"type": "string"}},
+                            "fieldName": {"type": "string"},
+                        },
+                    },
                 },
             },
             "poll_interval_seconds": {"type": "number", "minimum": 0},
             "poll_timeout_seconds": {"type": "number", "minimum": 0},
         },
-        "required": ["prompt", "image_urls"],
+        "required": ["prompt", "image_urls", "node_mapping"],
         "additionalProperties": False,
     }
 
@@ -421,15 +444,12 @@ class RunningHubImageToImageNodeV3(BaseNode):
                 code="runninghub_v3_image_urls_required",
                 message="V3 image_urls required",
             )
-        line_art_url = inputs.get("line_art_url", "")
-        if isinstance(line_art_url, str) and line_art_url.strip():
-            image_urls.insert(0, line_art_url)  # line art first
-
-        node_mapping = inputs.get("node_mapping") or {
-            "images": ["81", "141", "139", "140", "176", "182"],
-            "text": {"nodeId": "150", "fieldName": "text"},
-            "select": {"nodeIds": ["190", "191"], "fieldName": "select"},
-        }
+        node_mapping = inputs.get("node_mapping")
+        if not isinstance(node_mapping, Mapping):
+            raise ValidationError(
+                code="runninghub_v3_node_mapping_required",
+                message="V3 node_mapping required",
+            )
 
         metadata = {"image_urls": image_urls, "node_mapping": node_mapping}
         # Copy polling overrides

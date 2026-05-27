@@ -1320,6 +1320,17 @@ nodes:
           角色为达摩/不倒翁体型：上半身正常比例，下半身为圆润饱满的半球形底部。完全没有腿部、没有膝盖、没有脚踝、没有足部。
           时代背景在中国古代，以水浒传为背景。
           保持人物武器和参考完全一致，人物比例不变。
+      generation_rules:
+        value: |
+          风格标签：digital illustration, chibi style, children's book art style, manhwa style, clean lineart, soft cel shading, vibrant colors, dynamic action atmosphere, masterpiece, best quality, 8k。
+          透视与空间约束
+          - 严格遵守近大远小的透视关系。
+          - 透视线体现强烈的空间纵深感。
+          - 前景遮挡感强烈。
+          - 每个分格的消失点必须统一。
+          - 多分格页面：采用不规则的梯形与矩形组合排版，打破平庸的视觉节奏。
+          场景比例约束
+          - 场景建筑比例符合 chibi style（不追求写实建筑比例）。
       image_urls:
         from: "$nodes.merge_asset_images_auto.output.asset_images"
     outputs:
@@ -1345,15 +1356,41 @@ nodes:
 
   # ===== 分镜图像生成 =====
 
+  - id: prepare_runninghub_images
+    ref: tool.runninghub_workflow_images.v1
+    inputs:
+      line_art_url:
+        from: "$nodes.upload_line_art.output.segment_images.0.image_url"
+      image_urls:
+        from: "$nodes.assemble_prompt_v3.output.image_urls"
+    outputs:
+      type: object
+      required: ["image_urls"]
+      properties:
+        image_urls:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            minLength: 1
+      additionalProperties: false
+
   - id: generate_storyboard_image
     ref: ai.runninghub_image_to_image.v3
     inputs:
       prompt:
         from: "$nodes.assemble_prompt_v3.output.prompt"
       image_urls:
-        from: "$nodes.assemble_prompt_v3.output.image_urls"
-      line_art_url:
-        from: "$nodes.upload_line_art.output.segment_images.0.image_url"
+        from: "$nodes.prepare_runninghub_images.output.image_urls"
+      node_mapping:
+        value:
+          images: ["81", "141", "139", "140", "176", "182"]
+          text:
+            nodeId: "150"
+            fieldName: "text"
+          select:
+            nodeIds: ["190", "191"]
+            fieldName: "select"
       poll_interval_seconds:
         value: 2
       poll_timeout_seconds:
@@ -1492,6 +1529,10 @@ edges:
   - from: gemini_vision_analysis
     to: assemble_prompt_v3
   - from: assemble_prompt_v3
+    to: prepare_runninghub_images
+  - from: upload_line_art
+    to: prepare_runninghub_images
+  - from: prepare_runninghub_images
     to: generate_storyboard_image
   - from: generate_storyboard_image
     to: review_storyboard_image

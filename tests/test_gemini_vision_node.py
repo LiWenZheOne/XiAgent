@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
@@ -78,6 +78,7 @@ async def test_gemini_vision_node_extracts_caption() -> None:
         inputs={
             "prompt": "请描述这张漫画",
             "image_urls": ["https://example.com/comic.png"],
+            "system": "test system prompt",
         },
     )
 
@@ -119,6 +120,7 @@ async def test_gemini_vision_node_handles_missing_caption() -> None:
         inputs={
             "prompt": "请描述这张漫画",
             "image_urls": ["https://example.com/comic.png"],
+            "system": "test system prompt",
         },
     )
 
@@ -147,6 +149,7 @@ async def test_gemini_vision_node_handles_api_timeout() -> None:
             inputs={
                 "prompt": "请描述这张漫画",
                 "image_urls": ["https://example.com/comic.png"],
+            "system": "test system prompt",
             },
         )
 
@@ -177,6 +180,7 @@ async def test_gemini_vision_node_max_attempts_retry() -> None:
         inputs={
             "prompt": "请描述这张漫画",
             "image_urls": ["https://example.com/comic.png"],
+            "system": "test system prompt",
             "max_attempts": 2,
         },
     )
@@ -209,6 +213,7 @@ async def test_gemini_vision_handles_malformed_xml() -> None:
         inputs={
             "prompt": "请描述这张漫画",
             "image_urls": ["https://example.com/comic.png"],
+            "system": "test system prompt",
         },
     )
 
@@ -235,6 +240,7 @@ async def test_gemini_vision_handles_empty_response() -> None:
         inputs={
             "prompt": "请描述这张漫画",
             "image_urls": ["https://example.com/comic.png"],
+            "system": "test system prompt",
         },
     )
 
@@ -261,6 +267,7 @@ async def test_gemini_vision_handles_no_tags_at_all() -> None:
         inputs={
             "prompt": "请描述这张漫画",
             "image_urls": ["https://example.com/comic.png"],
+            "system": "test system prompt",
         },
     )
 
@@ -289,6 +296,7 @@ async def test_gemini_vision_multiple_caption_tags() -> None:
         inputs={
             "prompt": "请描述这张漫画",
             "image_urls": ["https://example.com/comic.png"],
+            "system": "test system prompt",
         },
     )
 
@@ -320,6 +328,7 @@ async def test_gemini_vision_handles_safety_blocked_response() -> None:
         inputs={
             "prompt": "请描述这张漫画",
             "image_urls": ["https://example.com/comic.png"],
+            "system": "test system prompt",
         },
     )
 

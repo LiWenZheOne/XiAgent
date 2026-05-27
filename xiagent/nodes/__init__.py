@@ -39,6 +39,7 @@ from xiagent.nodes.tools.create_text_asset import CreateTextAssetNode
 from xiagent.nodes.tools.echo_tool import EchoToolNode
 from xiagent.nodes.tools.merge_asset_images import MergeAssetImagesNode
 from xiagent.nodes.tools.enrich_characters import EnrichCharactersNode
+from xiagent.nodes.tools.runninghub_workflow_images import RunningHubWorkflowImagesNode
 from xiagent.nodes.tools.script_split import ScriptSplitNode
 from xiagent.nodes.tools.extract_panel_image_urls import ExtractPanelImageUrlsNode
 from xiagent.nodes.tools.storyboard_prompt import (
@@ -118,6 +119,7 @@ def build_node_registry(settings: Settings) -> NodeRegistry:
     registry.register(AssetLookupNode())
     registry.register(CreateTextAssetNode())
     registry.register(EnrichCharactersNode())
+    registry.register(RunningHubWorkflowImagesNode())
     registry.register(StoryboardPromptAssemblerNode())
     registry.register(StoryboardPromptAssemblerNodeV2())
     registry.register(ExtractPanelImageUrlsNode())

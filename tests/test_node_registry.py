@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import pytest
 
@@ -56,6 +56,7 @@ def test_build_node_registry_registers_builtin_nodes(test_settings) -> None:
         "tool.create_text_asset.v1",
         "tool.enrich_characters.v1",
         "tool.extract_panel_image_urls.v1",
+        "tool.runninghub_workflow_images.v1",
         "tool.storyboard_prompt_assembler.v1",
         "tool.storyboard_prompt_assembler.v2",
         "ai.assign_assets_to_segments.v1",

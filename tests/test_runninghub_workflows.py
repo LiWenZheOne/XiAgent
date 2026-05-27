@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
@@ -193,6 +193,26 @@ async def test_v3_node_rejects_missing_image_urls() -> None:
         assert exc.code == "runninghub_v3_image_urls_required"
 
 
+async def test_v3_node_rejects_missing_node_mapping() -> None:
+    router = FakeRunningHubRouter()
+    node = RunningHubImageToImageNodeV3(
+        model_router=router,
+        provider="runninghub_workflow",
+        model="runninghub-workflow-test-model",
+    )
+    try:
+        await node.run(
+            None,
+            {
+                "prompt": "a valid prompt",
+                "image_urls": ["https://example.com/image1.png"],
+            },
+        )
+        raise AssertionError("Expected ValidationError")
+    except ValidationError as exc:
+        assert exc.code == "runninghub_v3_node_mapping_required"
+
+
 async def test_v3_node_calls_workflow_provider() -> None:
     router = FakeRunningHubRouter()
     node = RunningHubImageToImageNodeV3(
@@ -204,8 +224,12 @@ async def test_v3_node_calls_workflow_provider() -> None:
         None,
         {
             "prompt": "generate an image with line art",
-            "image_urls": ["https://example.com/image1.png"],
-            "line_art_url": "https://example.com/lineart.png",
+            "image_urls": ["https://example.com/lineart.png", "https://example.com/image1.png"],
+            "node_mapping": {
+                "images": ["81", "141", "139", "140", "176", "182"],
+                "text": {"nodeId": "150", "fieldName": "text"},
+                "select": {"nodeIds": ["190", "191"], "fieldName": "select"},
+            },
         },
     )
     assert result.status == "succeeded"
@@ -271,7 +295,7 @@ def test_existing_workflows_still_load(test_settings) -> None:
 
 
 def test_storyboard_from_sketch_uses_v3(test_settings) -> None:
-    """Verify storyboard_from_sketch.workflow.yaml uses V3 node with line_art_url."""
+    """Verify storyboard_from_sketch.workflow.yaml uses V3 node with explicit node_mapping."""
     from xiagent.nodes import build_node_registry
     from xiagent.workflows.loader import load_workflow_file
     from xiagent.workflows.validator import validate_workflow_contract
@@ -289,4 +313,5 @@ def test_storyboard_from_sketch_uses_v3(test_settings) -> None:
         n for n in contract["nodes"] if n["id"] == "generate_storyboard_image"
     )
     assert gen_node["ref"] == "ai.runninghub_image_to_image.v3"
-    assert "line_art_url" in gen_node["inputs"]
+    assert gen_node["inputs"]["image_urls"]["from"] == "$nodes.prepare_runninghub_images.output.image_urls"
+    assert "node_mapping" in gen_node["inputs"]

@@ -9,7 +9,7 @@ import pytest
 from xiagent.core.ids import new_id
 from xiagent.infrastructure.database import connect_db
 from xiagent.core.errors import ValidationError
-from xiagent.core.schemas import ASSET_IMAGE_RESULT_SCHEMA, validate_json_value
+from xiagent.core.schemas import validate_json_value
 from xiagent.models import ChatModelRouter, ChatResponse
 from xiagent.nodes import build_node_registry
 from xiagent.nodes.ai.deepseek_structured_json import DeepSeekStructuredJsonNode
@@ -921,9 +921,11 @@ def test_review_storyboard_image_output_schema(test_settings) -> None:
     validate_workflow_contract(contract, build_node_registry(test_settings))
 
 
-def test_asset_image_result_schema() -> None:
-    """ASSET_IMAGE_RESULT_SCHEMA：ai_generated 和 manual_upload 两种 source 均通过。"""
-    schema = ASSET_IMAGE_RESULT_SCHEMA
+def test_asset_image_result_workflow_output_schema(test_settings) -> None:
+    """工作流中的 asset_images output schema：ai_generated 和 manual_upload 两种 source 均通过。"""
+    contract = load_workflow_file(ORCHESTRATION_WORKFLOW_PATH)
+    nodes_by_id = {node["id"]: node for node in contract["nodes"]}
+    schema = nodes_by_id["merge_asset_images"]["outputs"]["properties"]["asset_images"]["items"]
 
     assert schema["type"] == "object"
     assert schema["required"] == ["full_name", "image_url", "source"]
@@ -968,6 +970,8 @@ def test_asset_image_result_schema() -> None:
             schema,
             {"full_name": "林冲", "source": "ai_generated"},
         )
+
+    validate_workflow_contract(contract, build_node_registry(test_settings))
 
 
 def test_orchestration_storyboard_target_default(test_settings) -> None:

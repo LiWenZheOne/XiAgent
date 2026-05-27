@@ -30,31 +30,3 @@ def validate_json_value(schema: dict[str, Any], value: Any) -> None:
             details={"path": list(first.path), "error": first.message},
         )
 
-
-# ── Asset Image Result Schemas ──────────────────────────────────────────────
-
-ASSET_IMAGE_RESULT_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "required": ["full_name", "image_url", "source"],
-    "properties": {
-        "full_name": {"type": "string", "minLength": 1},
-        "image_url": {"type": "string", "minLength": 1},
-        "variant": {"type": "string"},
-        "asset_id": {"type": "string"},
-        "source": {"type": "string", "enum": ["ai_generated", "manual_upload"]},
-        "runninghub_task_id": {"type": "string"},
-    },
-    "additionalProperties": False,
-}
-
-ASSET_IMAGE_RESULT_LIST_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "required": ["asset_images"],
-    "properties": {
-        "asset_images": {
-            "type": "array",
-            "items": ASSET_IMAGE_RESULT_SCHEMA,
-        },
-    },
-    "additionalProperties": False,
-}

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from typing import Any
 from unittest.mock import AsyncMock
@@ -397,8 +397,15 @@ async def test_v3_integration_full_submit_poll_flow() -> None:
         None,
         {
             "prompt": "anime cat in V3 workflow style",
-            "image_urls": ["https://example.test/ref_v3.png"],
-            "line_art_url": "https://example.test/lineart_v3.png",
+            "image_urls": [
+                "https://example.test/lineart_v3.png",
+                "https://example.test/ref_v3.png",
+            ],
+            "node_mapping": {
+                "images": ["81", "141", "139", "140", "176", "182"],
+                "text": {"nodeId": "150", "fieldName": "text"},
+                "select": {"nodeIds": ["190", "191"], "fieldName": "select"},
+            },
             "poll_interval_seconds": 0,
             "poll_timeout_seconds": 1,
         },
@@ -423,7 +430,7 @@ async def test_v3_integration_full_submit_poll_flow() -> None:
     assert submit_url.endswith("/openapi/v2/run/ai-app/wf-v3-integration")
     assert "/openapi/v2/query" in poll_url
 
-    # Verify upload was called for both line_art_url and image_urls
+    # Verify upload was called for both prepared image URLs
     assert upload_mock.call_count == 2
 
     # Verify nodeInfoList payload
