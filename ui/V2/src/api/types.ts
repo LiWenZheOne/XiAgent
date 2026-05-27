@@ -32,20 +32,54 @@ export interface JsonSchema {
   format?: string;
 }
 
+export type NodeUiControlMode = "readonly" | "interactive" | "input";
+
+export interface NodeUiControlConfig {
+  control_id: string;
+  variant?: string;
+  mode?: NodeUiControlMode | string;
+  bindings?: Record<string, string>;
+  options?: Record<string, unknown>;
+}
+
+export interface NodeUiConfig {
+  mode?: string;
+  metadata_schema?: JsonSchema | Record<string, unknown>;
+  controls?: {
+    input?: NodeUiControlConfig;
+    output?: NodeUiControlConfig;
+    interaction?: NodeUiControlConfig;
+    detail?: NodeUiControlConfig;
+  };
+  sections?: Record<string, unknown>;
+  actions?: Record<string, unknown>;
+  bindings?: Record<string, unknown>;
+}
+
+export interface UiControlDescriptor {
+  control_id: string;
+  version: string;
+  name: string;
+  kind: string;
+  tags: string[];
+  variants: Array<{
+    name: string;
+    label: string;
+    tags: string[];
+    modes: string[];
+    required_bindings: unknown[];
+    submit_schema?: Record<string, unknown>;
+  }>;
+  description?: string | null;
+}
+
 export interface WorkflowNodeSpec {
   id: string;
   ref?: string;
   name?: string;
   inputs?: Record<string, unknown>;
   outputs?: JsonSchema | Record<string, unknown>;
-  ui?: {
-    block_ref?: string;
-    variant?: string;
-    mode?: string;
-    sections?: Record<string, unknown>;
-    actions?: Record<string, unknown>;
-    bindings?: Record<string, unknown>;
-  };
+  ui?: NodeUiConfig;
   [key: string]: unknown;
 }
 
@@ -87,6 +121,7 @@ export interface WorkflowSnapshot {
     name?: string;
     description?: string;
     input_schema?: JsonSchema;
+    ui?: NodeUiConfig;
   };
   nodes?: WorkflowNodeSpec[];
   edges?: unknown[];
@@ -101,6 +136,7 @@ export interface TaskNodeExecution {
   status: string;
   input_snapshot?: unknown;
   output_snapshot?: unknown;
+  metadata?: Record<string, unknown>;
   error?: string | Record<string, unknown> | null;
   asset_refs?: unknown;
   started_at?: string | null;

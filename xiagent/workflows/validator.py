@@ -6,7 +6,10 @@ from typing import Any
 
 from xiagent.core.errors import NotFoundError, ValidationError
 from xiagent.core.schemas import validate_json_schema
+from xiagent.nodes.base import NodeDescriptor
 from xiagent.nodes.registry import NodeRegistry
+from xiagent.ui_controls import UiControlCatalog, build_builtin_ui_control_catalog
+from xiagent.ui_controls.validation import merge_ui_configs, validate_ui_config
 
 _START = "START"
 _END = "END"
@@ -14,7 +17,11 @@ _REQUIRED_WORKFLOW_KEYS = {"id", "version", "scope", "name", "input_schema"}
 _NODE_ID_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
-def validate_workflow_contract(contract: dict[str, Any], registry: NodeRegistry) -> None:
+def validate_workflow_contract(
+    contract: dict[str, Any],
+    registry: NodeRegistry,
+    ui_controls: UiControlCatalog | None = None,
+) -> None:
     if not isinstance(contract, dict):
         _raise_contract_error("Workflow contract must be an object")
 
@@ -40,7 +47,7 @@ def validate_workflow_contract(contract: dict[str, Any], registry: NodeRegistry)
     if not isinstance(nodes, list) or not nodes:
         _raise_contract_error("Workflow nodes must be a non-empty list")
 
-    node_outputs = _validate_nodes(nodes, registry)
+    node_outputs, node_descriptors = _validate_nodes(nodes, registry)
     node_ids = set(node_outputs)
     input_properties = _schema_properties(input_schema)
 
@@ -72,9 +79,22 @@ def validate_workflow_contract(contract: dict[str, Any], registry: NodeRegistry)
                 available_node_refs=upstream_nodes[node["id"]],
             )
 
+    _validate_workflow_ui(
+        contract=contract,
+        workflow_input_schema=input_schema,
+        node_outputs=node_outputs,
+        node_descriptors=node_descriptors,
+        upstream_nodes=upstream_nodes,
+        ui_controls=ui_controls or build_builtin_ui_control_catalog(),
+    )
 
-def _validate_nodes(nodes: list[Any], registry: NodeRegistry) -> dict[str, dict[str, Any]]:
+
+def _validate_nodes(
+    nodes: list[Any],
+    registry: NodeRegistry,
+) -> tuple[dict[str, dict[str, Any]], dict[str, NodeDescriptor]]:
     node_outputs: dict[str, dict[str, Any]] = {}
+    node_descriptors: dict[str, NodeDescriptor] = {}
     for node in nodes:
         if not isinstance(node, dict):
             _raise_contract_error("Workflow node must be an object")
@@ -95,7 +115,7 @@ def _validate_nodes(nodes: list[Any], registry: NodeRegistry) -> dict[str, dict[
         if not isinstance(ref, str) or not ref:
             _raise_contract_error("Workflow node ref must be a non-empty string", node_id=node_id)
         try:
-            registry.get(ref)
+            descriptor = registry.get(ref).describe()
         except NotFoundError as exc:
             raise ValidationError(
                 code="unknown_workflow_node_ref",
@@ -106,8 +126,9 @@ def _validate_nodes(nodes: list[Any], registry: NodeRegistry) -> dict[str, dict[
         outputs = node.get("outputs")
         _validate_schema_object(outputs, f"nodes.{node_id}.outputs")
         node_outputs[node_id] = outputs
+        node_descriptors[node_id] = descriptor
 
-    return node_outputs
+    return node_outputs, node_descriptors
 
 
 def _validate_edges(
@@ -375,6 +396,86 @@ def _validate_input_spec(
             node_outputs=node_outputs,
             available_node_refs=available_node_refs,
         )
+
+
+def _validate_workflow_ui(
+    *,
+    contract: dict[str, Any],
+    workflow_input_schema: dict[str, Any],
+    node_outputs: dict[str, dict[str, Any]],
+    node_descriptors: dict[str, NodeDescriptor],
+    upstream_nodes: dict[str, set[str]],
+    ui_controls: UiControlCatalog,
+) -> None:
+    workflow = contract["workflow"]
+    workflow_ui = workflow.get("ui", {})
+    if workflow_ui in ({}, None):
+        workflow_ui = {}
+    if not isinstance(workflow_ui, Mapping):
+        raise ValidationError(
+            code="invalid_ui_config",
+            message="workflow.ui 必须是对象",
+            details={"location": "workflow.ui"},
+        )
+    workflow_defaults = workflow_ui.get("defaults", {})
+    if workflow_defaults in ({}, None):
+        workflow_defaults = {}
+    if not isinstance(workflow_defaults, Mapping):
+        raise ValidationError(
+            code="invalid_ui_config",
+            message="workflow.ui.defaults 必须是对象",
+            details={"location": "workflow.ui.defaults"},
+        )
+
+    for node in contract["nodes"]:
+        node_id = node["id"]
+        descriptor = node_descriptors[node_id]
+        node_ui = node.get("ui", {})
+        if node_ui in ({}, None):
+            node_ui = {}
+        if not isinstance(node_ui, Mapping):
+            raise ValidationError(
+                code="invalid_ui_config",
+                message="nodes[].ui 必须是对象",
+                details={"node_id": node_id, "location": f"nodes.{node_id}.ui"},
+            )
+        kind_default = _workflow_ui_default(workflow_defaults, descriptor.kind)
+        ref_default = _workflow_ui_default(workflow_defaults, descriptor.ref)
+        effective_ui = merge_ui_configs(
+            descriptor.ui_defaults,
+            kind_default,
+            ref_default,
+            node_ui,
+        )
+        if not effective_ui:
+            continue
+        metadata_schema = effective_ui.get("metadata_schema")
+        if metadata_schema is not None:
+            _validate_schema_object(metadata_schema, f"nodes.{node_id}.ui.metadata_schema")
+        validate_ui_config(
+            effective_ui,
+            catalog=ui_controls,
+            workflow_input_schema=workflow_input_schema,
+            current_input_schema=descriptor.input_schema,
+            current_output_schema=node_outputs[node_id],
+            current_metadata_schema=metadata_schema if isinstance(metadata_schema, dict) else None,
+            node_outputs=node_outputs,
+            upstream_node_ids=upstream_nodes[node_id],
+            location=f"nodes.{node_id}.ui",
+        )
+
+
+def _workflow_ui_default(defaults: Mapping[str, Any], key: str) -> Mapping[str, Any] | None:
+    value = defaults.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise ValidationError(
+            code="invalid_ui_config",
+            message="workflow.ui.defaults 条目必须是对象",
+            details={"key": key, "location": f"workflow.ui.defaults.{key}"},
+        )
+    return value
 
 
 def _detect_cycle(graph: dict[str, list[str]]) -> None:

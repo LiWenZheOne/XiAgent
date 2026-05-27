@@ -12,6 +12,7 @@ from xiagent.infrastructure.migrations import migrate
 from xiagent.nodes.base import AssetRef, BaseNode, NodeContext, NodeDescriptor, NodeResult
 from xiagent.nodes.registry import NodeRegistry
 from xiagent.nodes.system.human_approval import HumanApprovalNode
+from xiagent.nodes.system.user_choice import SystemUserChoiceNode
 from xiagent.nodes.tools.echo_tool import EchoToolNode
 from xiagent.runtime.input_resolver import resolve_node_inputs
 from xiagent.runtime.service import SqliteRuntimeService
@@ -82,6 +83,61 @@ def _approval_contract() -> dict:
                 "when": {"path": "$nodes.review.output.decision", "equals": "approve"},
             },
             {"from": "echo", "to": "END"},
+        ],
+    }
+
+
+def _user_choice_contract() -> dict:
+    return {
+        "workflow": {
+            "id": "user-choice",
+            "version": "1.0.0",
+            "scope": "global",
+            "name": "User Choice",
+            "input_schema": {"type": "object", "additionalProperties": False},
+        },
+        "nodes": [
+            {
+                "id": "choose_image",
+                "ref": "system.user_choice.v1",
+                "inputs": {
+                    "question": {"value": "选择一张图"},
+                    "candidates": {
+                        "value": [
+                            {
+                                "id": "image-a",
+                                "label": "A",
+                                "image_url": "https://example.test/a.png",
+                            },
+                            {
+                                "id": "image-b",
+                                "label": "B",
+                                "image_url": "https://example.test/b.png",
+                            },
+                            {
+                                "id": "image-c",
+                                "label": "C",
+                                "image_url": "https://example.test/c.png",
+                            },
+                        ]
+                    },
+                },
+                "outputs": {
+                    "type": "object",
+                    "required": ["selected_id", "selected_item"],
+                    "properties": {
+                        "selected_id": {"type": "string"},
+                        "selected_index": {"type": "integer", "minimum": 0},
+                        "selected_item": {"type": "object"},
+                        "selected_image_url": {"type": "string"},
+                    },
+                    "additionalProperties": True,
+                },
+            }
+        ],
+        "edges": [
+            {"from": "START", "to": "choose_image"},
+            {"from": "choose_image", "to": "END"},
         ],
     }
 
@@ -749,6 +805,56 @@ async def test_human_node_waits_and_resume_succeeds(test_settings) -> None:
         output={"decision": "approve"},
     )
     assert resumed.status == "succeeded"
+
+
+async def test_user_choice_node_waits_with_candidates_and_resume_succeeds(test_settings) -> None:
+    registry = NodeRegistry()
+    registry.register(SystemUserChoiceNode())
+    runtime, user_id, project_id = await _runtime(test_settings, registry)
+
+    task = await runtime.create_task_from_contract(
+        user_id=user_id,
+        project_id=project_id,
+        contract=_user_choice_contract(),
+        input_data={},
+    )
+    assert task.status == "waiting"
+    executions = await runtime.list_node_executions(
+        user_id=user_id,
+        project_id=project_id,
+        task_id=task.task_id,
+    )
+    assert executions[0].metadata["selection_mode"] == "single"
+    assert [item["id"] for item in executions[0].metadata["candidates"]] == [
+        "image-a",
+        "image-b",
+        "image-c",
+    ]
+
+    resumed = await runtime.resume_task(
+        user_id=user_id,
+        project_id=project_id,
+        task_id=task.task_id,
+        node_id="choose_image",
+        output={
+            "selected_id": "image-b",
+            "selected_index": 1,
+            "selected_item": {
+                "id": "image-b",
+                "label": "B",
+                "image_url": "https://example.test/b.png",
+            },
+            "selected_image_url": "https://example.test/b.png",
+        },
+    )
+
+    assert resumed.status == "succeeded"
+    resumed_executions = await runtime.list_node_executions(
+        user_id=user_id,
+        project_id=project_id,
+        task_id=task.task_id,
+    )
+    assert resumed_executions[0].output_snapshot["selected_id"] == "image-b"
 
 
 async def test_list_events_are_ordered_for_wait_and_resume(test_settings) -> None:

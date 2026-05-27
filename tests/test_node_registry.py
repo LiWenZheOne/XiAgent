@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from xiagent.core.errors import ConflictError
+from xiagent.core.errors import ConflictError, ValidationError
 from xiagent.nodes import build_node_registry
+from xiagent.nodes.base import BaseNode, NodeContext, NodeDescriptor, NodeResult
 from xiagent.nodes.registry import NodeRegistry
 from xiagent.nodes.system.human_approval import HumanApprovalNode
+from xiagent.nodes.system.user_choice import SystemUserChoiceNode
 from xiagent.nodes.tools.echo_tool import EchoToolNode
 
 
@@ -48,6 +50,7 @@ def test_build_node_registry_registers_builtin_nodes(test_settings) -> None:
 
     assert refs == {
         "system.human_approval.v1",
+        "system.user_choice.v1",
         "tool.echo.v1",
         "tool.script_split.v1",
         "tool.assemble_segment_context.v1",
@@ -60,6 +63,123 @@ def test_build_node_registry_registers_builtin_nodes(test_settings) -> None:
         "ai.parallel_deepseek_structured_json.v1",
         "ai.runninghub_image_to_image.v1",
         "ai.runninghub_text_to_image.v1",
+    }
+
+
+class UiDefaultProbeNode(BaseNode):
+    def __init__(self, *, ui_defaults: dict | None = None) -> None:
+        self._ui_defaults = ui_defaults or {}
+
+    def describe(self) -> NodeDescriptor:
+        return NodeDescriptor(
+            ref="test.ui_default_probe.v1",
+            name="UI Default Probe",
+            version="1.0.0",
+            kind="test",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "candidates": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "string"},
+                                "image_url": {"type": "string"},
+                            },
+                        },
+                    }
+                },
+            },
+            output_schema={"type": "object"},
+            ui_defaults=self._ui_defaults,
+        )
+
+    async def run(self, ctx: NodeContext | None, inputs: dict) -> NodeResult:
+        return NodeResult(status="succeeded", output={})
+
+
+def test_register_node_with_valid_ui_defaults() -> None:
+    registry = NodeRegistry()
+
+    registry.register(
+        UiDefaultProbeNode(
+            ui_defaults={
+                "controls": {
+                    "interaction": {
+                        "control_id": "ui.choice.image_three.v1",
+                        "variant": "equal_grid",
+                        "mode": "interactive",
+                        "bindings": {
+                            "items_path": "$node.input.candidates",
+                            "image_url_path": "image_url",
+                            "value_path": "id",
+                        },
+                    }
+                }
+            }
+        )
+    )
+
+    assert registry.get("test.ui_default_probe.v1").describe().ui_defaults
+
+
+def test_register_node_rejects_unknown_ui_default_control() -> None:
+    registry = NodeRegistry()
+
+    with pytest.raises(ValidationError) as exc_info:
+        registry.register(
+            UiDefaultProbeNode(
+                ui_defaults={
+                    "controls": {
+                        "interaction": {
+                            "control_id": "ui.missing.v1",
+                            "variant": "default",
+                            "mode": "interactive",
+                            "bindings": {},
+                        }
+                    }
+                }
+            )
+        )
+
+    assert exc_info.value.code == "unknown_ui_control"
+
+
+def test_register_node_rejects_ui_default_missing_binding() -> None:
+    registry = NodeRegistry()
+
+    with pytest.raises(ValidationError) as exc_info:
+        registry.register(
+            UiDefaultProbeNode(
+                ui_defaults={
+                    "controls": {
+                        "interaction": {
+                            "control_id": "ui.choice.image_three.v1",
+                            "variant": "equal_grid",
+                            "mode": "interactive",
+                            "bindings": {"items_path": "$node.input.candidates"},
+                        }
+                    }
+                }
+            )
+        )
+
+    assert exc_info.value.code == "missing_ui_binding"
+
+
+async def test_user_choice_node_waits_with_candidates_metadata() -> None:
+    node = SystemUserChoiceNode()
+    candidates = [{"id": "a", "image_url": "https://example.test/a.png"}]
+
+    result = await node.run(ctx=None, inputs={"question": "选择一张", "candidates": candidates})
+
+    assert result.status == "waiting"
+    assert result.output == {}
+    assert result.metadata == {
+        "question": "选择一张",
+        "candidates": candidates,
+        "selection_mode": "single",
     }
 
 

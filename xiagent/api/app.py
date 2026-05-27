@@ -7,7 +7,7 @@ from fastapi import FastAPI
 
 from xiagent.api.dependencies import build_services
 from xiagent.api.error_handlers import register_error_handlers
-from xiagent.api.routers import assets, auth, nodes, projects, tasks, workflows
+from xiagent.api.routers import assets, auth, nodes, projects, tasks, ui, workflows
 from xiagent.infrastructure.config import Settings, load_settings
 from xiagent.infrastructure.migrations import migrate
 
@@ -31,6 +31,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(assets.router)
     app.include_router(workflows.router)
     app.include_router(tasks.router)
+    app.include_router(ui.router)
 
     @app.get("/api/health")
     async def health() -> dict[str, str]:

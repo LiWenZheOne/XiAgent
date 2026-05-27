@@ -49,12 +49,17 @@
 - 节点控件选择遵循工作流优先、节点默认保底：`nodes[].ui` 高于 `workflow.ui.defaults`，`workflow.ui.defaults` 高于 `NodeDescriptor.ui_defaults`，最后才使用系统 fallback。
 - 工作流可以分别指定节点的输入、输出、交互和详情控件；工作流只覆盖某一区域时，不应清空其他区域的默认控件。
 - 后端 UI 控件 manifest 是控件兼容性的硬性检查来源，V2 React 控件实现必须使用相同 `control_id`、`variant`、`mode` 和 `bindings` 语义。
-- 后续新增可复用节点 UI 时，应建立 `ui/V2/src/node-ui/` 或等价注册库：
-  - 每个控件有稳定 `control_id` 或 `block_ref`。
+- 可复用节点 UI 已建立在 `ui/V2/src/node-ui/`：
+  - `registry.ts` 负责把后端 `control_id` 映射到 V2 React 控件。
+  - `resolve.ts` 负责解析任务节点的交互控件配置和 binding。
+  - `ControlLibraryPage.tsx` 负责顶部“控件库”页签。
+  - `controls/ImageChoiceThreeControl.tsx` 支持图片三选一的 `equal_grid`、`hero_list`、`hover_focus` 变体。
+  - 每个控件有稳定 `control_id`。
   - 工作流或节点配置只引用控件 ID、variant、mode、bindings。
   - 控件输入输出必须匹配工作流 schema、节点 descriptor 和运行时交互 payload。
   - 新控件必须补测试，并在本文件记录用途和 payload 约束。
-- 顶部导航应增加“控件库”页签，用于浏览可用控件、变体、能力标签、绑定要求和预览 fixture。
+- 顶部导航已有“控件库”页签，用于浏览可用控件、变体、能力标签、绑定要求和预览 fixture。
+- `system.user_choice.v1` 在没有工作流显式配置时使用 V2 默认三选一控件；工作流仍可通过 `nodes[].ui.controls.interaction` 改为首图大列表或 hover 放大变体。
 
 ## 交互状态
 

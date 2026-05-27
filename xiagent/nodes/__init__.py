@@ -24,6 +24,7 @@ from xiagent.nodes.ai.runninghub_image import (
 from xiagent.nodes.base import AssetRef, BaseNode, NodeContext, NodeDescriptor, NodeResult
 from xiagent.nodes.registry import NodeRegistry
 from xiagent.nodes.system.human_approval import HumanApprovalNode
+from xiagent.nodes.system.user_choice import SystemUserChoiceNode
 from xiagent.nodes.tools.assemble_segment_context import AssembleSegmentContextNode
 from xiagent.nodes.tools.asset_lookup import AssetLookupNode
 from xiagent.nodes.tools.create_text_asset import CreateTextAssetNode
@@ -71,6 +72,7 @@ def build_node_registry(settings: Settings) -> NodeRegistry:
 
     registry = NodeRegistry()
     registry.register(HumanApprovalNode())
+    registry.register(SystemUserChoiceNode())
     registry.register(EchoToolNode())
     registry.register(ScriptSplitNode())
     registry.register(AssembleSegmentContextNode())
@@ -123,5 +125,6 @@ __all__ = [
     "NodeDescriptor",
     "NodeRegistry",
     "NodeResult",
+    "SystemUserChoiceNode",
     "build_node_registry",
 ]

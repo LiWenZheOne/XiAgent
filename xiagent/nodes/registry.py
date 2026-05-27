@@ -3,6 +3,7 @@ from __future__ import annotations
 from xiagent.core.errors import ConflictError, NotFoundError
 from xiagent.core.schemas import validate_json_schema
 from xiagent.nodes.base import BaseNode
+from xiagent.ui_controls.validation import validate_node_ui_defaults
 
 
 class NodeRegistry:
@@ -23,6 +24,12 @@ class NodeRegistry:
         validate_json_schema(descriptor.output_schema)
         if descriptor.config_schema is not None:
             validate_json_schema(descriptor.config_schema)
+        validate_node_ui_defaults(
+            node_ref=descriptor.ref,
+            input_schema=descriptor.input_schema,
+            output_schema=descriptor.output_schema,
+            ui_defaults=descriptor.ui_defaults,
+        )
         self._nodes[descriptor.ref] = node
 
     def get(self, ref: str) -> BaseNode:

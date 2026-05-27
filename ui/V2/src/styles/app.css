@@ -231,6 +231,13 @@ small {
   background: var(--surface-soft);
 }
 
+.segmented-control.compact {
+  display: flex;
+  flex-wrap: wrap;
+  width: fit-content;
+  margin: 0;
+}
+
 .form-stack,
 .workflow-form,
 .asset-create-stack {
@@ -644,6 +651,76 @@ dd {
   background: var(--surface-strong);
 }
 
+.node-ui-choice {
+  overflow: visible;
+}
+
+.image-choice-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.image-choice-card {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  transition:
+    border-color 140ms ease,
+    transform 140ms ease,
+    opacity 140ms ease;
+}
+
+.image-choice-card img {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: 6px;
+  background: var(--surface-strong);
+}
+
+.image-choice-card span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.image-choice-card.active,
+.image-choice-card:hover {
+  border-color: #60a5fa;
+  background: #eff6ff;
+}
+
+.image-choice-grid.hero_list {
+  grid-template-columns: 1.5fr 1fr 1fr;
+}
+
+.image-choice-grid.hero_list .image-choice-card:first-child {
+  grid-row: span 2;
+}
+
+.image-choice-grid.hero_list .image-choice-card:first-child img {
+  aspect-ratio: 4 / 4.4;
+}
+
+.image-choice-grid.hover_focus:hover .image-choice-card {
+  opacity: 0.72;
+}
+
+.image-choice-grid.hover_focus .image-choice-card:hover {
+  z-index: 1;
+  opacity: 1;
+  transform: scale(1.05);
+}
+
 .interaction-panel {
   display: grid;
   gap: 12px;
@@ -670,7 +747,8 @@ dd {
 }
 
 .page-grid,
-.asset-page {
+.asset-page,
+.control-library-page {
   padding: 14px;
 }
 
@@ -685,6 +763,74 @@ dd {
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 12px;
   margin: 18px 0;
+}
+
+.control-library-page {
+  display: grid;
+  gap: 14px;
+}
+
+.control-library-header,
+.control-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.control-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: 14px;
+}
+
+.control-card {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+}
+
+.control-card code {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+}
+
+.tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tag-row span {
+  min-height: 24px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.variant-list {
+  display: grid;
+  gap: 8px;
+}
+
+.variant-list section {
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-soft);
+}
+
+.variant-list h3,
+.variant-list p {
+  margin: 0;
+}
+
+.control-preview-stack {
+  display: grid;
+  gap: 12px;
 }
 
 .asset-toolbar {
@@ -813,5 +959,18 @@ dd {
   .asset-toolbar {
     justify-content: flex-start;
     flex-wrap: wrap;
+  }
+
+  .image-choice-grid,
+  .image-choice-grid.hero_list {
+    grid-template-columns: 1fr;
+  }
+
+  .image-choice-grid.hero_list .image-choice-card:first-child {
+    grid-row: auto;
+  }
+
+  .image-choice-grid.hover_focus .image-choice-card:hover {
+    transform: none;
   }
 }

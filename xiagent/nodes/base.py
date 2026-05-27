@@ -18,6 +18,7 @@ class NodeDescriptor:
     output_schema: dict[str, Any]
     config_schema: dict[str, Any] | None = None
     description: str | None = None
+    ui_defaults: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)

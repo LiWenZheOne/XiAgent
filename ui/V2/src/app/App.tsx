@@ -21,6 +21,8 @@ import type {
   WorkflowSnapshot,
 } from "../api/types";
 import { listWorkflows } from "../api/workflows";
+import { ControlLibraryPage } from "../node-ui/ControlLibraryPage";
+import { getNodeUiControl, resolveNodeInteractionConfig } from "../node-ui/registry";
 import {
   buildSchemaFields,
   eventText,
@@ -38,7 +40,7 @@ import {
   type SchemaField,
 } from "../utils/display";
 
-type Route = "workbench" | "assets" | "projects";
+type Route = "workbench" | "assets" | "projects" | "controls";
 
 interface SessionState {
   username: string;
@@ -174,6 +176,9 @@ export function App() {
           <button className={route === "projects" ? "nav-button active" : "nav-button"} type="button" onClick={() => setRoute("projects")}>
             项目
           </button>
+          <button className={route === "controls" ? "nav-button active" : "nav-button"} type="button" onClick={() => setRoute("controls")}>
+            控件库
+          </button>
         </nav>
         <div className="topbar-meta">
           <span>{selectedProject?.name ?? "未选择项目"}</span>
@@ -247,6 +252,8 @@ export function App() {
           }}
         />
       ) : null}
+
+      {route === "controls" ? <ControlLibraryPage /> : null}
     </div>
   );
 }
@@ -785,6 +792,8 @@ function NodeExecutionCard({
   const displayTitle = nodeDisplayTitle(node, snapshot);
   const displayKind = nodeDisplayKind(node, snapshot);
   const canRerun = statusLabel(node.status) === "成功" && nodeSpec?.ui?.actions?.rerun !== false;
+  const interactionConfig = resolveNodeInteractionConfig(node, nodeSpec);
+  const InteractionControl = interactionConfig ? getNodeUiControl(interactionConfig.control_id) : null;
 
   async function withBusy(action: () => Promise<void>) {
     setBusy(true);
@@ -819,7 +828,18 @@ function NodeExecutionCard({
           <ValuePanel title={node.error ? "错误" : "输出"} value={node.error ?? node.output_snapshot} nodeId={displayTitle} imageAltPrefix={`${displayTitle} 输出图片`} />
         </div>
 
-        {isWaitingNode(node, snapshot) ? (
+        {isWaitingNode(node, snapshot) && interactionConfig && InteractionControl ? (
+          <InteractionControl
+            busy={busy}
+            config={interactionConfig}
+            node={node}
+            nodeSpec={nodeSpec}
+            snapshot={snapshot}
+            onSubmit={(output) => withBusy(() => onInteraction(node.node_id, output))}
+          />
+        ) : null}
+
+        {isWaitingNode(node, snapshot) && !interactionConfig ? (
           <WaitingInteraction busy={busy} node={node} nodeSpec={nodeSpec} onSubmit={(output) => withBusy(() => onInteraction(node.node_id, output))} />
         ) : null}
 

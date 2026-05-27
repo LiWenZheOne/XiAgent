@@ -21,9 +21,53 @@ const workflowContract = {
   },
   nodes: [
     { id: "prepare_prompt", ref: "tools.storyboard_prompt.v1" },
-    { id: "choose_image", ref: "system.human_approval.v1" },
+    {
+      id: "choose_image",
+      ref: "system.user_choice.v1",
+      outputs: {
+        type: "object",
+        required: ["selected_id", "selected_item"],
+        properties: {
+          selected_id: { type: "string" },
+          selected_item: { type: "object" },
+          selected_image_url: { type: "string" },
+        },
+      },
+      ui: {
+        controls: {
+          interaction: {
+            control_id: "ui.choice.image_three.v1",
+            variant: "hover_focus",
+            mode: "interactive",
+            bindings: {
+              items_path: "$node.input.candidates",
+              image_url_path: "image_url",
+              value_path: "id",
+            },
+          },
+        },
+      },
+    },
   ],
   edges: [],
+};
+
+const uiControlsResponse = {
+  items: [
+    {
+      control_id: "ui.choice.image_three.v1",
+      version: "1.0.0",
+      name: "Image Three Choice",
+      kind: "interaction",
+      tags: ["image", "choice", "select_one", "candidates_3"],
+      variants: [
+        { name: "equal_grid", label: "三图等宽", tags: [], modes: ["interactive"], required_bindings: [] },
+        { name: "hero_list", label: "首图大列表", tags: [], modes: ["interactive"], required_bindings: [] },
+        { name: "hover_focus", label: "悬停放大", tags: [], modes: ["interactive"], required_bindings: [] },
+      ],
+      description: "图片候选三选一控件",
+    },
+  ],
 };
 
 function jsonResponse(body: unknown, status = 200) {
@@ -129,6 +173,9 @@ function mockFetch() {
         ],
       });
     }
+    if (url === "/api/ui/node-controls") {
+      return jsonResponse(uiControlsResponse);
+    }
     if (url.startsWith("/api/assets/search")) {
       return jsonResponse({
         items: [
@@ -176,10 +223,25 @@ function mockFetch() {
           {
             node_execution_id: "exec-2",
             node_id: "choose_image",
-            node_ref: "system.human_approval.v1",
+            node_ref: "system.user_choice.v1",
             status: "waiting",
-            input_snapshot: { candidates: [{ public_url: "https://cdn.example.com/a.png" }] },
+            input_snapshot: {
+              question: "选择一张图",
+              candidates: [
+                { id: "a", label: "第一张", image_url: "https://cdn.example.com/a.png" },
+                { id: "b", label: "第二张", image_url: "https://cdn.example.com/b.png" },
+                { id: "c", label: "第三张", image_url: "https://cdn.example.com/c.png" },
+              ],
+            },
             output_snapshot: null,
+            metadata: {
+              question: "选择一张图",
+              candidates: [
+                { id: "a", label: "第一张", image_url: "https://cdn.example.com/a.png" },
+                { id: "b", label: "第二张", image_url: "https://cdn.example.com/b.png" },
+                { id: "c", label: "第三张", image_url: "https://cdn.example.com/c.png" },
+              ],
+            },
             attempt: 1,
           },
         ],
@@ -329,8 +391,7 @@ describe("XiAgent V2 app", () => {
     expect(screen.queryByText(/output_snapshot/)).not.toBeInTheDocument();
     expect(screen.queryByText(/public_url/)).not.toBeInTheDocument();
 
-    await userEvent.type(screen.getByLabelText("确认意见"), "使用第一张");
-    await userEvent.click(screen.getByRole("button", { name: "同意并继续" }));
+    await userEvent.click(screen.getByRole("button", { name: "选择 第二张" }));
 
     await waitFor(() => {
       const post = fetchMock.mock.calls.find(([url, init]) => url === "/api/tasks/task-1/interactions" && init?.method === "POST");
@@ -338,8 +399,23 @@ describe("XiAgent V2 app", () => {
       expect(JSON.parse(String(post?.[1]?.body))).toMatchObject({
         project_id: "global",
         node_id: "choose_image",
-        output: { approved: true, comment: "使用第一张" },
+        output: {
+          selected_id: "b",
+          selected_index: 1,
+          selected_image_url: "https://cdn.example.com/b.png",
+        },
       });
     });
+  });
+
+  it("opens the control library tab and lists registered node controls", async () => {
+    render(<App />);
+    await login();
+
+    await userEvent.click(screen.getByRole("button", { name: "控件库" }));
+
+    expect(await screen.findByRole("heading", { name: "控件库" })).toBeInTheDocument();
+    expect(screen.getByText("ui.choice.image_three.v1")).toBeInTheDocument();
+    expect(screen.getByText("悬停放大")).toBeInTheDocument();
   });
 });

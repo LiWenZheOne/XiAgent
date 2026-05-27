@@ -19,6 +19,7 @@ from xiagent.infrastructure.object_storage.qiniu import QiniuObjectStorageServic
 from xiagent.nodes import build_node_registry
 from xiagent.nodes.registry import NodeRegistry
 from xiagent.runtime.service import SqliteRuntimeService
+from xiagent.ui_controls import UiControlCatalog, build_builtin_ui_control_catalog
 from xiagent.users.models import UserRecord
 from xiagent.users.service import SqliteUserService
 from xiagent.workflows.service import WorkflowCatalog
@@ -31,6 +32,7 @@ class ApiServices:
     node_registry: NodeRegistry
     runtime: SqliteRuntimeService
     workflows: WorkflowCatalog
+    ui_controls: UiControlCatalog
     access_tokens: dict[str, str] = field(default_factory=dict)
 
     def issue_access_token(self, *, user_id: str) -> str:
@@ -57,6 +59,7 @@ def build_services(settings: Settings) -> ApiServices:
         object_storage=object_storage,
     )
     node_registry = build_node_registry(settings)
+    ui_controls = build_builtin_ui_control_catalog()
     runtime = SqliteRuntimeService(
         database_path=settings.database_path,
         user_service=users,
@@ -72,6 +75,7 @@ def build_services(settings: Settings) -> ApiServices:
         node_registry=node_registry,
         runtime=runtime,
         workflows=workflows,
+        ui_controls=ui_controls,
     )
 
 

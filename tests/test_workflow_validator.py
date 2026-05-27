@@ -6,8 +6,10 @@ import pytest
 
 from xiagent.core.errors import ConflictError, NotFoundError, ValidationError
 from xiagent.nodes.ai.deepseek_chat import DeepSeekChatNode
+from xiagent.nodes.base import BaseNode, NodeContext, NodeDescriptor, NodeResult
 from xiagent.nodes.registry import NodeRegistry
 from xiagent.nodes.system.human_approval import HumanApprovalNode
+from xiagent.nodes.system.user_choice import SystemUserChoiceNode
 from xiagent.nodes.tools.echo_tool import EchoToolNode
 from xiagent.workflows.loader import load_workflow_file
 from xiagent.workflows.service import WorkflowCatalog
@@ -463,6 +465,184 @@ def test_dotted_node_id_is_rejected() -> None:
     assert exc_info.value.code == "invalid_workflow_node_id"
 
 
+class MetadataChoiceProbeNode(BaseNode):
+    def describe(self) -> NodeDescriptor:
+        return NodeDescriptor(
+            ref="test.metadata_choice_probe.v1",
+            name="Metadata Choice Probe",
+            version="1.0.0",
+            kind="test",
+            input_schema={
+                "type": "object",
+                "properties": {"prompt": {"type": "string"}},
+                "additionalProperties": False,
+            },
+            output_schema={
+                "type": "object",
+                "properties": {
+                    "selected_id": {"type": "string"},
+                    "selected_item": {"type": "object"},
+                },
+                "required": ["selected_id", "selected_item"],
+                "additionalProperties": True,
+            },
+        )
+
+    async def run(self, ctx: NodeContext | None, inputs: dict) -> NodeResult:
+        return NodeResult(status="waiting", metadata={"candidates": []})
+
+
+class BadChoiceInputProbeNode(BaseNode):
+    def describe(self) -> NodeDescriptor:
+        return NodeDescriptor(
+            ref="test.bad_choice_input_probe.v1",
+            name="Bad Choice Input Probe",
+            version="1.0.0",
+            kind="test",
+            input_schema={
+                "type": "object",
+                "properties": {"candidates": {"type": "string"}},
+                "additionalProperties": False,
+            },
+            output_schema={"type": "object", "additionalProperties": True},
+        )
+
+    async def run(self, ctx: NodeContext | None, inputs: dict) -> NodeResult:
+        return NodeResult(status="waiting")
+
+
+class PlainChoiceProbeNode(BaseNode):
+    def describe(self) -> NodeDescriptor:
+        return NodeDescriptor(
+            ref="test.plain_choice_probe.v1",
+            name="Plain Choice Probe",
+            version="1.0.0",
+            kind="test",
+            input_schema=SystemUserChoiceNode().describe().input_schema,
+            output_schema=SystemUserChoiceNode().describe().output_schema,
+        )
+
+    async def run(self, ctx: NodeContext | None, inputs: dict) -> NodeResult:
+        return NodeResult(status="waiting")
+
+
+def test_workflow_node_ui_choice_control_is_accepted() -> None:
+    registry = NodeRegistry()
+    registry.register(EchoToolNode())
+    registry.register(SystemUserChoiceNode())
+    contract = _image_choice_contract()
+
+    validate_workflow_contract(contract, registry)
+
+
+def test_workflow_node_ui_unknown_control_is_rejected() -> None:
+    registry = NodeRegistry()
+    registry.register(EchoToolNode())
+    registry.register(SystemUserChoiceNode())
+    contract = _image_choice_contract()
+    choose_node = next(node for node in contract["nodes"] if node["id"] == "choose_image")
+    choose_node["ui"]["controls"]["interaction"]["control_id"] = "ui.missing.v1"
+
+    with pytest.raises(ValidationError) as exc_info:
+        validate_workflow_contract(contract, registry)
+
+    assert exc_info.value.code == "unknown_ui_control"
+
+
+def test_workflow_node_ui_missing_binding_is_rejected() -> None:
+    registry = NodeRegistry()
+    registry.register(EchoToolNode())
+    registry.register(PlainChoiceProbeNode())
+    contract = _image_choice_contract(choice_ref="test.plain_choice_probe.v1")
+    choose_node = next(node for node in contract["nodes"] if node["id"] == "choose_image")
+    choose_node["ui"]["controls"]["interaction"]["bindings"].pop("image_url_path")
+
+    with pytest.raises(ValidationError) as exc_info:
+        validate_workflow_contract(contract, registry)
+
+    assert exc_info.value.code == "missing_ui_binding"
+
+
+def test_workflow_node_ui_binding_to_non_array_candidates_is_rejected() -> None:
+    registry = NodeRegistry()
+    registry.register(EchoToolNode())
+    registry.register(BadChoiceInputProbeNode())
+    contract = _image_choice_contract(choice_ref="test.bad_choice_input_probe.v1")
+
+    with pytest.raises(ValidationError) as exc_info:
+        validate_workflow_contract(contract, registry)
+
+    assert exc_info.value.code == "ui_binding_schema_mismatch"
+
+
+def test_workflow_node_ui_binding_to_missing_image_field_is_rejected() -> None:
+    registry = NodeRegistry()
+    registry.register(EchoToolNode())
+    registry.register(SystemUserChoiceNode())
+    contract = _image_choice_contract()
+    choose_node = next(node for node in contract["nodes"] if node["id"] == "choose_image")
+    choose_node["ui"]["controls"]["interaction"]["bindings"]["image_url_path"] = "missing_url"
+
+    with pytest.raises(ValidationError) as exc_info:
+        validate_workflow_contract(contract, registry)
+
+    assert exc_info.value.code == "ui_binding_schema_mismatch"
+
+
+def test_workflow_node_ui_can_bind_waiting_metadata_for_compound_node() -> None:
+    registry = NodeRegistry()
+    registry.register(MetadataChoiceProbeNode())
+    contract = {
+        "workflow": {
+            "id": "compound-choice",
+            "version": "1.0.0",
+            "scope": "global",
+            "name": "Compound Choice",
+            "input_schema": {
+                "type": "object",
+                "properties": {"prompt": {"type": "string"}},
+            },
+        },
+        "nodes": [
+            {
+                "id": "generate_and_choose",
+                "ref": "test.metadata_choice_probe.v1",
+                "inputs": {"prompt": {"from": "$workflow.input.prompt"}},
+                "outputs": {
+                    "type": "object",
+                    "required": ["selected_id", "selected_item"],
+                    "properties": {
+                        "selected_id": {"type": "string"},
+                        "selected_item": {"type": "object"},
+                    },
+                    "additionalProperties": True,
+                },
+                "ui": {
+                    "metadata_schema": _image_candidates_schema(),
+                    "controls": {
+                        "interaction": {
+                            "control_id": "ui.choice.image_three.v1",
+                            "variant": "hover_focus",
+                            "mode": "interactive",
+                            "bindings": {
+                                "items_path": "$node.metadata.candidates",
+                                "image_url_path": "image_url",
+                                "value_path": "id",
+                            },
+                        }
+                    },
+                },
+            }
+        ],
+        "edges": [
+            {"from": "START", "to": "generate_and_choose"},
+            {"from": "generate_and_choose", "to": "END"},
+        ],
+    }
+
+    validate_workflow_contract(contract, registry)
+
+
 def test_workflow_catalog_rejects_duplicate_workflow_identity(tmp_path) -> None:
     registry = _registry()
     _write_workflow(tmp_path / "one.workflow.yaml", workflow_id="echo")
@@ -706,6 +886,105 @@ def _array_output_schema() -> dict:
 
 def _array_workflow_input_schema() -> dict:
     return _array_output_schema()
+
+
+def _image_candidates_schema() -> dict:
+    return {
+        "type": "object",
+        "properties": {
+            "candidates": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string"},
+                        "image_url": {"type": "string"},
+                    },
+                    "required": ["id", "image_url"],
+                    "additionalProperties": True,
+                },
+            }
+        },
+    }
+
+
+def _image_generation_output_schema() -> dict:
+    return {
+        "type": "object",
+        "required": ["results"],
+        "properties": {
+            "results": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string"},
+                        "image_url": {"type": "string"},
+                    },
+                    "required": ["id", "image_url"],
+                    "additionalProperties": True,
+                },
+            }
+        },
+        "additionalProperties": True,
+    }
+
+
+def _image_choice_contract(*, choice_ref: str = "system.user_choice.v1") -> dict:
+    return {
+        "workflow": {
+            "id": "image-choice",
+            "version": "1.0.0",
+            "scope": "global",
+            "name": "Image Choice",
+            "input_schema": {
+                "type": "object",
+                "properties": {"prompt": {"type": "string"}},
+            },
+        },
+        "nodes": [
+            {
+                "id": "generate_images",
+                "ref": "tool.echo.v1",
+                "inputs": {"prompt": {"from": "$workflow.input.prompt"}},
+                "outputs": _image_generation_output_schema(),
+            },
+            {
+                "id": "choose_image",
+                "ref": choice_ref,
+                "inputs": {"candidates": {"from": "$nodes.generate_images.output.results"}},
+                "outputs": {
+                    "type": "object",
+                    "required": ["selected_id", "selected_item"],
+                    "properties": {
+                        "selected_id": {"type": "string"},
+                        "selected_item": {"type": "object"},
+                        "selected_image_url": {"type": "string"},
+                    },
+                    "additionalProperties": True,
+                },
+                "ui": {
+                    "controls": {
+                        "interaction": {
+                            "control_id": "ui.choice.image_three.v1",
+                            "variant": "hover_focus",
+                            "mode": "interactive",
+                            "bindings": {
+                                "items_path": "$node.input.candidates",
+                                "image_url_path": "image_url",
+                                "value_path": "id",
+                            },
+                        }
+                    }
+                },
+            },
+        ],
+        "edges": [
+            {"from": "START", "to": "generate_images"},
+            {"from": "generate_images", "to": "choose_image"},
+            {"from": "choose_image", "to": "END"},
+        ],
+    }
 
 
 def _registry() -> NodeRegistry:
