@@ -44,13 +44,9 @@ class CreateTextAssetNode(BaseNode):
 
     async def run(self, ctx: NodeContext | None, inputs: Mapping[str, Any]) -> NodeResult:
         if ctx is None or ctx.asset_service is None:
-            return NodeResult(
-                status="failed",
-                output={},
-                error=ValidationError(
-                    code="create_text_asset_no_context",
-                    message="AssetService is not available in context",
-                ),
+            raise ValidationError(
+                code="create_text_asset_no_context",
+                message="AssetService is not available in context",
             )
 
         scope = inputs.get("scope")

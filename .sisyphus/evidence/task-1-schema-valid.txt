@@ -1,0 +1,38 @@
+Task 1 Evidence: Asset Image Result Schema Validation
+====================================================
+Date: 2026-05-25
+File: xiagent/core/schemas.py
+
+Test 1: Valid data passes
+  python -c "from xiagent.core.schemas import ASSET_IMAGE_RESULT_SCHEMA, validate_json_value; validate_json_value(ASSET_IMAGE_RESULT_SCHEMA, {'full_name':'林冲','image_url':'https://cdn.test/img.png','source':'ai_generated'})"
+  Result: PASS (no error)
+
+Test 2: Missing required fields raises ValidationError
+  python -c "... validate_json_value(ASSET_IMAGE_RESULT_SCHEMA, {'full_name':'林冲'})"
+  Result: PASS -> raised ValidationError: 数据不满足 JSON Schema
+
+Test 3: Invalid source enum raises ValidationError
+  python -c "... validate_json_value(ASSET_IMAGE_RESULT_SCHEMA, {'full_name':'林冲','image_url':'https://cdn.test/img.png','source':'invalid_source'})"
+  Result: PASS -> raised ValidationError: 数据不满足 JSON Schema
+
+Test 4: Empty full_name (minLength: 1) raises ValidationError
+  python -c "... validate_json_value(ASSET_IMAGE_RESULT_SCHEMA, {'full_name':'','image_url':'https://cdn.test/img.png','source':'ai_generated'})"
+  Result: PASS -> raised ValidationError: 数据不满足 JSON Schema
+
+Test 5: additionalProperties rejects extra fields
+  python -c "... validate_json_value(ASSET_IMAGE_RESULT_SCHEMA, {'full_name':'林冲','image_url':'https://cdn.test/img.png','source':'ai_generated','extra_field':'boom'})"
+  Result: PASS -> raised ValidationError: 数据不满足 JSON Schema
+
+Test 6: manual_upload source accepted
+  python -c "... validate_json_value(ASSET_IMAGE_RESULT_SCHEMA, {'full_name':'李逵','image_url':'https://cdn.test/manual.png','source':'manual_upload'})"
+  Result: PASS (no error)
+
+Test 7: ASSET_IMAGE_RESULT_LIST_SCHEMA accepts valid array
+  python -c "from xiagent.core.schemas import ASSET_IMAGE_RESULT_LIST_SCHEMA, validate_json_value; validate_json_value(ASSET_IMAGE_RESULT_LIST_SCHEMA, {'asset_images': [{'full_name':'林冲','image_url':'https://cdn.test/img.png','source':'ai_generated'}]})"
+  Result: PASS (no error)
+
+Test 8: No syntax errors
+  python -c "import ast; ast.parse(open('xiagent/core/schemas.py').read())"
+  Result: PASS
+
+Conclusion: All schema definitions and validation work correctly.

@@ -1,11 +1,13 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
 
+from xiagent.core.errors import ValidationError
 from xiagent.models import ChatModelRouter, ChatResponse
 from xiagent.nodes.ai.runninghub_image import (
     RunningHubImageToImageNode,
+    RunningHubImageToImageNodeV3,
     RunningHubTextToImageNode,
 )
 from xiagent.nodes.registry import NodeRegistry
@@ -148,3 +150,168 @@ async def _session(tmp_path: Path):
         .with_run_output_dir(tmp_path / "runs")
         .build()
     )
+
+
+# ── V3 Node Tests ──────────────────────────────────────────────
+
+
+def test_v3_node_describe_has_correct_ref() -> None:
+    node = RunningHubImageToImageNodeV3(
+        model_router=FakeRunningHubRouter(),
+        provider="runninghub_workflow",
+        model="runninghub-workflow-test-model",
+    )
+    descriptor = node.describe()
+    assert descriptor.ref == "ai.runninghub_image_to_image.v3"
+
+
+async def test_v3_node_rejects_missing_prompt() -> None:
+    router = FakeRunningHubRouter()
+    node = RunningHubImageToImageNodeV3(
+        model_router=router,
+        provider="runninghub_workflow",
+        model="runninghub-workflow-test-model",
+    )
+    try:
+        await node.run(None, {"prompt": ""})
+        raise AssertionError("Expected ValidationError")
+    except ValidationError as exc:
+        assert exc.code == "runninghub_v3_prompt_required"
+
+
+async def test_v3_node_rejects_missing_image_urls() -> None:
+    router = FakeRunningHubRouter()
+    node = RunningHubImageToImageNodeV3(
+        model_router=router,
+        provider="runninghub_workflow",
+        model="runninghub-workflow-test-model",
+    )
+    try:
+        await node.run(None, {"prompt": "a valid prompt", "image_urls": []})
+        raise AssertionError("Expected ValidationError")
+    except ValidationError as exc:
+        assert exc.code == "runninghub_v3_image_urls_required"
+
+
+async def test_v3_node_rejects_missing_node_mapping() -> None:
+    router = FakeRunningHubRouter()
+    node = RunningHubImageToImageNodeV3(
+        model_router=router,
+        provider="runninghub_workflow",
+        model="runninghub-workflow-test-model",
+    )
+    try:
+        await node.run(
+            None,
+            {
+                "prompt": "a valid prompt",
+                "image_urls": ["https://example.com/image1.png"],
+            },
+        )
+        raise AssertionError("Expected ValidationError")
+    except ValidationError as exc:
+        assert exc.code == "runninghub_v3_node_mapping_required"
+
+
+async def test_v3_node_calls_workflow_provider() -> None:
+    router = FakeRunningHubRouter()
+    node = RunningHubImageToImageNodeV3(
+        model_router=router,
+        provider="runninghub_workflow",
+        model="runninghub-workflow-test-model",
+    )
+    result = await node.run(
+        None,
+        {
+            "prompt": "generate an image with line art",
+            "image_urls": ["https://example.com/lineart.png", "https://example.com/image1.png"],
+            "node_mapping": {
+                "images": ["81", "141", "139", "140", "176", "182"],
+                "text": {"nodeId": "150", "fieldName": "text"},
+                "select": {"nodeIds": ["190", "191"], "fieldName": "select"},
+            },
+        },
+    )
+    assert result.status == "succeeded"
+    assert result.output["image_url"] == "https://cdn.runninghub.test/generated.png"
+    assert router.requests[0].provider == "runninghub_workflow"
+
+
+# ── Regression Tests ────────────────────────────────────────────────
+
+
+async def test_v1_node_still_works() -> None:
+    """Verify V1 RunningHubImageToImageNode still functions with provider='runninghub_image'."""
+    router = FakeRunningHubRouter()
+    node = RunningHubImageToImageNode(
+        model_router=router,
+        provider="runninghub_image",
+        model="runninghub-image-model",
+    )
+
+    result = await node.run(
+        None,
+        {
+            "prompt": "Transform this sketch into Ming Dynasty ink-wash Wuxia.",
+            "image_urls": ["https://runninghub.test/input.png"],
+            "aspect_ratio": "9:16",
+            "resolution": "1k",
+        },
+    )
+
+    assert result.status == "succeeded"
+    assert result.output["image_url"] == "https://cdn.runninghub.test/generated.png"
+    assert result.output["model"] == "runninghub-image-model"
+    assert result.output["results"] == [
+        {"url": "https://cdn.runninghub.test/generated.png"}
+    ]
+    assert router.requests[0].provider == "runninghub_image"
+    # V1 input/output schema unchanged
+    assert router.requests[0].metadata == {
+        "image_urls": ["https://runninghub.test/input.png"],
+        "aspect_ratio": "9:16",
+        "resolution": "1k",
+    }
+
+
+def test_existing_workflows_still_load(test_settings) -> None:
+    """Validate asset_storyboard_generation workflow contracts — V1/V2 refs still recognized."""
+    from xiagent.nodes import build_node_registry
+    from xiagent.workflows.loader import load_workflow_file
+    from xiagent.workflows.validator import validate_workflow_contract
+
+    contract = load_workflow_file(
+        Path("workflows/global/asset_storyboard_generation.workflow.yaml")
+    )
+    registry = build_node_registry(test_settings)
+
+    # Must not raise — all V1/V2 refs recognized
+    validate_workflow_contract(contract, registry)
+
+    # Spot-check: V1 and V2 refs are present
+    node_refs = {n["ref"] for n in contract["nodes"]}
+    assert "ai.runninghub_image_to_image.v1" in node_refs
+    assert "ai.runninghub_image_to_image.v2" in node_refs
+
+
+def test_storyboard_from_sketch_uses_v3(test_settings) -> None:
+    """Verify storyboard_from_sketch.workflow.yaml uses V3 node with explicit node_mapping."""
+    from xiagent.nodes import build_node_registry
+    from xiagent.workflows.loader import load_workflow_file
+    from xiagent.workflows.validator import validate_workflow_contract
+
+    contract = load_workflow_file(
+        Path("workflows/global/storyboard_from_sketch.workflow.yaml")
+    )
+    registry = build_node_registry(test_settings)
+
+    # Full contract validation must pass
+    validate_workflow_contract(contract, registry)
+
+    # Locate generate_storyboard_image node
+    gen_node = next(
+        n for n in contract["nodes"] if n["id"] == "generate_storyboard_image"
+    )
+    assert gen_node["ref"] == "ai.runninghub_image_to_image.v3"
+    assert gen_node["inputs"]["image_urls"]["from"] == "$nodes.prepare_runninghub_images.output.image_urls"
+    assert "node_mapping" in gen_node["inputs"]

@@ -4,7 +4,9 @@ from pathlib import Path
 from typing import Any
 
 import aiosqlite
+import pytest
 
+from xiagent.core.errors import ValidationError
 from xiagent.core.schemas import validate_json_value
 from xiagent.models import ChatModelRouter, ChatResponse
 from xiagent.nodes import build_node_registry
@@ -25,6 +27,23 @@ from xiagent.workflows.testing.runner import WorkflowTestRunner
 from xiagent.workflows.validator import validate_workflow_contract
 
 ASSET_CATALOG_WORKFLOW_PATH = Path("workflows/global/asset_catalog.workflow.yaml")
+
+
+async def test_create_text_asset_requires_asset_service_context() -> None:
+    node = CreateTextAssetNode()
+
+    with pytest.raises(ValidationError) as exc_info:
+        await node.run(
+            None,
+            {
+                "scope": "project",
+                "project_id": "project_1",
+                "name": "story seed",
+                "text": "content",
+            },
+        )
+
+    assert exc_info.value.code == "create_text_asset_no_context"
 
 
 def test_asset_catalog_workflow_contract_structure(test_settings) -> None:

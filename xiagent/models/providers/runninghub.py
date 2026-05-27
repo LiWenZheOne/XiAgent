@@ -13,6 +13,7 @@ from xiagent.models.types import (
     ChatResponse,
     RunningHubImageModelConfig,
     RunningHubTextToImageModelConfig,
+    RunningHubWorkflowModelConfig,
 )
 
 IMAGE_PROVIDER_NAME = "runninghub_image"
@@ -20,6 +21,9 @@ TEXT_TO_IMAGE_PROVIDER_NAME = "runninghub_text_to_image"
 
 
 class _UrllibJsonClient:
+    def __init__(self, timeout: float = 60.0) -> None:
+        self._timeout = timeout
+
     async def post_json(
         self,
         url: str,
@@ -47,7 +51,7 @@ class _UrllibJsonClient:
             headers=headers,
             method="POST",
         )
-        with urlopen(request, timeout=60) as response:
+        with urlopen(request, timeout=self._timeout) as response:
             raw = response.read()
         decoded = json.loads(raw.decode("utf-8"))
         if not isinstance(decoded, dict):
@@ -69,7 +73,8 @@ class RunningHubImageProvider(ChatModelProvider):
         http_client: Any | None = None,
     ) -> None:
         self._config = config
-        self._http_client = http_client or _UrllibJsonClient()
+        timeout = getattr(config, "http_timeout_seconds", 60.0)
+        self._http_client = http_client or _UrllibJsonClient(timeout=timeout)
 
     async def chat(self, request: ChatRequest) -> ChatResponse:
         self._validate_config()
@@ -102,9 +107,14 @@ class RunningHubImageProvider(ChatModelProvider):
         image_urls = self._image_urls(request.metadata)
         aspect_ratio = self._metadata_text(request.metadata, "aspect_ratio")
         aspect_ratio = (
-            aspect_ratio or self._metadata_text(request.metadata, "aspectRatio") or "9:16"
+            aspect_ratio
+            or self._metadata_text(request.metadata, "aspectRatio")
+            or getattr(self._config, "default_aspect_ratio", "9:16")
         )
-        resolution = self._metadata_text(request.metadata, "resolution") or "1k"
+        resolution = (
+            self._metadata_text(request.metadata, "resolution")
+            or getattr(self._config, "default_resolution", "1k")
+        )
         return {
             "imageUrls": image_urls,
             "prompt": prompt,
@@ -311,16 +321,296 @@ class RunningHubTextToImageProvider(RunningHubImageProvider):
         http_client: Any | None = None,
     ) -> None:
         self._config = config
-        self._http_client = http_client or _UrllibJsonClient()
+        timeout = getattr(config, "http_timeout_seconds", 60.0)
+        self._http_client = http_client or _UrllibJsonClient(timeout=timeout)
 
     def _request_payload(self, request: ChatRequest) -> dict[str, Any]:
         aspect_ratio = self._metadata_text(request.metadata, "aspect_ratio")
         aspect_ratio = (
-            aspect_ratio or self._metadata_text(request.metadata, "aspectRatio") or "9:16"
+            aspect_ratio
+            or self._metadata_text(request.metadata, "aspectRatio")
+            or getattr(self._config, "default_aspect_ratio", "9:16")
         )
-        resolution = self._metadata_text(request.metadata, "resolution") or "1k"
+        resolution = (
+            self._metadata_text(request.metadata, "resolution")
+            or getattr(self._config, "default_resolution", "1k")
+        )
         return {
             "prompt": self._prompt(request),
             "aspectRatio": aspect_ratio,
             "resolution": resolution,
         }
+
+
+class RunningHubWorkflowProvider(ChatModelProvider):
+    _provider_name = "runninghub_workflow"
+    _request_failed_code = "runninghub_workflow_request_failed"
+    _result_missing_code = "runninghub_workflow_result_missing"
+    _timeout_code = "runninghub_workflow_timeout"
+
+    def __init__(
+        self,
+        *,
+        config: RunningHubWorkflowModelConfig,
+        http_client: Any | None = None,
+    ) -> None:
+        self._config = config
+        self._http_client = http_client or _UrllibJsonClient(timeout=config.http_timeout_seconds)
+
+    async def chat(self, request: ChatRequest) -> ChatResponse:
+        self._validate_config()
+        try:
+            payload = await self._build_payload(request)
+            submission = await self._post_json(self._task_url(), payload)
+            result = await self._poll_until_complete(submission, request.metadata)
+        except XiAgentError:
+            raise
+        except Exception as exc:
+            raise ExternalServiceError(
+                code=self._request_failed_code,
+                message="RunningHub workflow request failed",
+                details={"provider": self._provider_name},
+            ) from exc
+
+        return self._chat_response(request=request, result=result)
+
+    async def _build_payload(self, request: ChatRequest) -> dict[str, Any]:
+        mapping = request.metadata.get("node_mapping", {})
+        image_ids = mapping.get("images", [])
+        text_config = mapping.get("text", {})
+        select_config = mapping.get("select", {})
+
+        prompt = request.messages[0].content if request.messages else ""
+        if not isinstance(prompt, str):
+            prompt = ""
+
+        all_urls = request.metadata.get("image_urls", [])
+        if isinstance(all_urls, str):
+            all_urls = [all_urls] if all_urls else []
+
+        node_info_list: list[dict[str, Any]] = []
+
+        # Images
+        for i, url in enumerate(all_urls):
+            if i >= len(image_ids):
+                break
+            if url:
+                filename = await self._upload_image(url)
+                node_info_list.append({
+                    "nodeId": image_ids[i],
+                    "fieldName": "image",
+                    "fieldValue": filename,
+                    "description": "image",
+                })
+
+        # Text
+        if text_config:
+            node_info_list.append({
+                "nodeId": text_config.get("nodeId", ""),
+                "fieldName": text_config.get("fieldName", "text"),
+                "fieldValue": prompt,
+                "description": "text",
+            })
+
+        # Select
+        if select_config:
+            count = str(len([u for u in all_urls if u]))
+            for nid in select_config.get("nodeIds", []):
+                node_info_list.append({
+                    "nodeId": nid,
+                    "fieldName": select_config.get("fieldName", "select"),
+                    "fieldValue": count,
+                    "description": "select",
+                })
+
+        return {
+            "nodeInfoList": node_info_list,
+            "instanceType": self._config.instance_type,
+            "usePersonalQueue": "true" if self._config.use_personal_queue else "false",
+        }
+
+    async def _upload_image(self, file_url: str) -> str:
+        """Upload image to RunningHub and return filename for fieldValue."""
+        import httpx
+
+        async with httpx.AsyncClient(timeout=self._config.upload_timeout_seconds) as client:
+            # Download image
+            resp = await client.get(file_url)
+            resp.raise_for_status()
+            image_data = resp.content
+
+            # Upload to RunningHub
+            upload_url = f"{self._base_url()}{self._config.api_prefix}/media/upload/binary"
+            headers: dict[str, str] = {}
+            if self._config.api_key:
+                headers["Authorization"] = f"Bearer {self._config.api_key}"
+            files = {"file": ("image.png", image_data, "image/png")}
+            resp = await client.post(upload_url, headers=headers, files=files)
+            resp.raise_for_status()
+            result: dict[str, Any] = resp.json()
+
+        download_url = result.get("data", {}).get("download_url", "")
+        if not download_url:
+            raise ExternalServiceError(
+                code="runninghub_workflow_upload_failed",
+                message="Failed to upload image to RunningHub",
+            )
+
+        return download_url.split("/")[-1] if "/" in download_url else download_url
+
+    def _validate_config(self) -> None:
+        if not self._config.api_key:
+            raise ValidationError(
+                code="runninghub_workflow_api_key_missing",
+                message="RunningHub workflow API key missing",
+                details={"provider": self._provider_name},
+            )
+        if not self._config.workflow_id:
+            raise ValidationError(
+                code="runninghub_workflow_id_missing",
+                message="RunningHub workflow ID is not configured",
+                details={"provider": self._provider_name},
+            )
+
+    def _task_url(self) -> str:
+        return f"{self._base_url()}{self._config.api_prefix}/run/ai-app/{self._config.workflow_id}"
+
+    def _query_url(self) -> str:
+        return f"{self._base_url()}{self._config.api_prefix}/query"
+
+    def _base_url(self) -> str:
+        return self._config.base_url.rstrip("/")
+
+    def _chat_response(
+        self, *, request: ChatRequest, result: dict[str, Any]
+    ) -> ChatResponse:
+        results = result.get("results")
+        first_result: dict[str, Any] = (
+            results[0] if isinstance(results, list) and results else {}  # type: ignore[index]
+        )
+        text = ""
+        for key in ("url", "text"):
+            value = first_result.get(key)
+            if isinstance(value, str) and value.strip():
+                text = value
+                break
+        if not text:
+            raise ExternalServiceError(
+                code=self._result_missing_code,
+                message="RunningHub workflow response result did not include a usable url or text",
+                details={"provider": self._provider_name, "task_id": result.get("taskId")},
+            )
+        usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
+        return ChatResponse(
+            text=text,
+            model=request.model or self._config.workflow_id,
+            usage=usage,
+            metadata={
+                "provider": self._provider_name,
+                "task_id": self._task_id(result),
+                "status": self._status(result),
+                "results": results,
+            },
+        )
+
+    # --- helpers reused from RunningHubImageProvider ---
+
+    async def _post_json(self, url: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return await self._http_client.post_json(
+            url,
+            headers={
+                "Authorization": f"Bearer {self._config.api_key}",
+                "Content-Type": "application/json",
+            },
+            payload=payload,
+        )
+
+    async def _poll_until_complete(
+        self,
+        response: dict[str, Any],
+        metadata: dict[str, Any],
+    ) -> dict[str, Any]:
+        task_id = self._task_id(response)
+        poll_timeout_seconds = self._metadata_float(
+            metadata,
+            "poll_timeout_seconds",
+            self._config.poll_timeout_seconds,
+        )
+        poll_interval_seconds = self._metadata_float(
+            metadata,
+            "poll_interval_seconds",
+            self._config.poll_interval_seconds,
+        )
+        deadline = time.monotonic() + max(0.0, poll_timeout_seconds)
+        current = response
+        while True:
+            status = self._status(current)
+            if status == "SUCCESS":
+                return current
+            if status == "FAILED":
+                self._raise_failed(current)
+            if current.get("results"):
+                return current
+            if not task_id:
+                raise ExternalServiceError(
+                    code="runninghub_workflow_invalid_response",
+                    message="RunningHub workflow response did not include a task id",
+                    details={"provider": self._provider_name},
+                )
+            if time.monotonic() >= deadline:
+                raise ExternalServiceError(
+                    code=self._timeout_code,
+                    message="RunningHub workflow request timed out",
+                    details={
+                        "provider": self._provider_name,
+                        "task_id": task_id,
+                        "poll_timeout_seconds": poll_timeout_seconds,
+                        "last_status": status,
+                    },
+                )
+            await asyncio.sleep(max(0.0, poll_interval_seconds))
+            current = await self._post_json(self._query_url(), {"taskId": task_id})
+
+    def _metadata_float(
+        self,
+        metadata: dict[str, Any],
+        key: str,
+        default: float,
+    ) -> float:
+        value = metadata.get(key)
+        if isinstance(value, bool) or value is None:
+            return default
+        if isinstance(value, int | float):
+            return float(value)
+        if isinstance(value, str) and value:
+            try:
+                return float(value)
+            except ValueError:
+                return default
+        return default
+
+    def _raise_failed(self, response: dict[str, Any]) -> None:
+        details: dict[str, Any] = {
+            "provider": self._provider_name,
+            "status": "FAILED",
+        }
+        error_code = response.get("errorCode")
+        if isinstance(error_code, str) and error_code:
+            details["error_code"] = error_code
+        raise ExternalServiceError(
+            code=self._request_failed_code,
+            message="RunningHub workflow request failed",
+            details=details,
+        )
+
+    def _task_id(self, response: dict[str, Any]) -> str | None:
+        task_id = response.get("taskId")
+        return task_id if isinstance(task_id, str) and task_id else None
+
+    def _status(self, response: dict[str, Any]) -> str:
+        status = response.get("status")
+        return status.upper() if isinstance(status, str) else ""
+
+    def _metadata_text(self, metadata: dict[str, Any], key: str) -> str | None:
+        value = metadata.get(key)
+        return value if isinstance(value, str) and value else None

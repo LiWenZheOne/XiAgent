@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 from typing import Any
@@ -103,6 +103,8 @@ async def test_storyboard_prompt_assembler_builds_prompt_and_defaults(test_setti
             "description": "主角在雨夜码头回头，远处灯火映在水面。",
             "style": "电影感国风动画",
             "constraints": "保持角色服装和发型一致，不要添加文字。",
+            "generation_rules": "风格指令\n参考《罗小黑战记》。\n角色一致性约束\n- 达摩/不倒翁体型。",
+            "negative_prompt": "low quality",
             "image_urls": image_urls,
         },
     )
@@ -137,6 +139,7 @@ async def test_storyboard_prompt_assembler_allows_render_options(test_settings) 
             "description": "近景，角色握紧信物。",
             "style": "写实厚涂",
             "constraints": "低饱和度",
+            "negative_prompt": "low quality",
             "image_urls": ["https://assets.test/reference.png"],
             "aspect_ratio": "9:16",
             "resolution": "1K",

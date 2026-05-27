@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import pytest
 
@@ -54,15 +54,24 @@ def test_build_node_registry_registers_builtin_nodes(test_settings) -> None:
         "tool.echo.v1",
         "tool.script_split.v1",
         "tool.assemble_segment_context.v1",
+        "tool.assemble_storyboard_context.v1",
         "tool.asset_lookup.v1",
         "tool.create_text_asset.v1",
         "tool.enrich_characters.v1",
+        "tool.extract_panel_image_urls.v1",
+        "tool.runninghub_workflow_images.v1",
         "tool.storyboard_prompt_assembler.v1",
+        "tool.storyboard_prompt_assembler.v2",
+        "ai.assign_assets_to_segments.v1",
         "ai.deepseek_chat.v1",
         "ai.deepseek_structured_json.v1",
         "ai.parallel_deepseek_structured_json.v1",
         "ai.runninghub_image_to_image.v1",
+        "ai.runninghub_image_to_image.v2",
+        "ai.runninghub_image_to_image.v3",
         "ai.runninghub_text_to_image.v1",
+        "ai.gemini_vision.v1",
+        "tool.merge_asset_images.v1",
     }
 
 
@@ -210,12 +219,16 @@ def test_build_node_registry_uses_settings_runninghub_models(test_settings) -> N
             runninghub_image_base_url="https://settings.runninghub.test",
             runninghub_image_model="settings-image-model",
             runninghub_image_endpoint="/settings/image-to-image",
+            runninghub_image_default_aspect_ratio="4:3",
+            runninghub_image_default_resolution="2K",
             runninghub_image_poll_interval_seconds=0.1,
             runninghub_image_poll_timeout_seconds=1.0,
             runninghub_text_to_image_api_key="settings-runninghub-key",
             runninghub_text_to_image_base_url="https://settings.runninghub.test",
             runninghub_text_to_image_model="settings-text-model",
             runninghub_text_to_image_endpoint="/settings/text-to-image",
+            runninghub_text_to_image_default_aspect_ratio="1:1",
+            runninghub_text_to_image_default_resolution="4K",
             runninghub_text_to_image_poll_interval_seconds=0.1,
             runninghub_text_to_image_poll_timeout_seconds=1.0,
         )
@@ -228,6 +241,13 @@ def test_build_node_registry_uses_settings_runninghub_models(test_settings) -> N
     assert image_node._model == "settings-image-model"  # noqa: SLF001
     assert text_node._provider == "runninghub_text_to_image"  # noqa: SLF001
     assert text_node._model == "settings-text-model"  # noqa: SLF001
+
+    image_provider = image_node._model_router._providers["runninghub_image"]  # noqa: SLF001
+    text_provider = text_node._model_router._providers["runninghub_text_to_image"]  # noqa: SLF001
+    assert image_provider._config.default_aspect_ratio == "4:3"  # noqa: SLF001
+    assert image_provider._config.default_resolution == "2K"  # noqa: SLF001
+    assert text_provider._config.default_aspect_ratio == "1:1"  # noqa: SLF001
+    assert text_provider._config.default_resolution == "4K"  # noqa: SLF001
 
 
 def test_node_context_asset_service_is_core_service_interface() -> None:

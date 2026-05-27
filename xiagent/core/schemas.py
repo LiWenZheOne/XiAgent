@@ -29,3 +29,4 @@ def validate_json_value(schema: dict[str, Any], value: Any) -> None:
             message="数据不满足 JSON Schema",
             details={"path": list(first.path), "error": first.message},
         )
+

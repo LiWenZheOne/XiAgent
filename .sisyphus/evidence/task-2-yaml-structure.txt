@@ -1,0 +1,71 @@
+=== Task 2: Asset Storyboard Generation Workflow YAML ===
+Date: 2026-05-25
+File: workflows/global/asset_storyboard_generation.workflow.yaml
+Status: VALIDATED - YAML syntax and contract both pass
+
+=== Workflow Structure ===
+
+workflow:
+  id: asset_storyboard_generation
+  version: "1.0.0"
+  scope: global
+  name: Asset Storyboard Generation
+
+Total nodes: 18
+Total edges: 19
+
+=== Input Schema ===
+required: ["script", "background"]
+optional: generate_assets (enum: "手动上传"/"自动生成"), template_image_url (string), storyboard_target (object with segment_index/panel_index)
+
+=== Phase 1: Asset Extraction (7 nodes, from asset_catalog.workflow.yaml) ===
+1. extract_characters              → ai.deepseek_structured_json.v1
+2. lookup_existing_assets          → tool.asset_lookup.v1
+3. match_by_name                   → tool.asset_lookup.v1
+4. semantic_match_characters       → ai.deepseek_structured_json.v1
+5. enrich_characters               → tool.enrich_characters.v1
+6. match_variants                  → ai.parallel_deepseek_structured_json.v1
+7. check_accessories               → ai.parallel_deepseek_structured_json.v1
+
+=== Phase 1.5: Review & Upload ===
+8. review_assets                   → system.human_approval.v1
+9. upload_images                   → system.human_approval.v1 (output: asset_images array per ASSET_IMAGE_RESULT_LIST_SCHEMA)
+
+=== Phase 2: Script Split & Asset Assignment ===
+10. split_script                   → tool.script_split.v1
+11. assign_assets_to_segments      → ai.deepseek_structured_json.v1 (planned ref: ai.assign_assets_to_segments.v1)
+12. assemble_storyboard_context    → tool.assemble_segment_context.v1 (planned ref: tool.assemble_storyboard_context.v1)
+
+=== Phase 3: Panel Description & Review ===
+13. describe_panels                → ai.deepseek_structured_json.v1
+14. review_storyboard_prompt       → system.human_approval.v1
+
+=== Phase 4: Image Generation ===
+15. extract_panel_image_urls       → ai.deepseek_structured_json.v1 (planned ref: tool.extract_panel_image_urls.v1)
+16. assemble_prompt_v2             → tool.storyboard_prompt_assembler.v1 (planned ref: tool.storyboard_prompt_assembler.v2)
+17. generate_image_v2              → ai.runninghub_image_to_image.v1 (planned ref: ai.runninghub_image_to_image.v2)
+18. review_storyboard_image        → system.human_approval.v1
+
+=== Edge Chain (Manual Upload Path) ===
+START → extract_characters → lookup_existing_assets → match_by_name → semantic_match_characters → enrich_characters → match_variants → check_accessories → review_assets → upload_images → split_script → assign_assets_to_segments → assemble_storyboard_context → describe_panels → review_storyboard_prompt → extract_panel_image_urls → assemble_prompt_v2 → generate_image_v2 → review_storyboard_image → END
+
+=== Ref Mapping Notes ===
+Planned refs not yet registered → used existing v1 equivalents for validation:
+- ai.assign_assets_to_segments.v1 → ai.deepseek_structured_json.v1 (AI call, same family)
+- tool.assemble_storyboard_context.v1 → tool.assemble_segment_context.v1 (similar tool)
+- tool.extract_panel_image_urls.v1 → ai.deepseek_structured_json.v1 (AI extraction, same family)
+- tool.storyboard_prompt_assembler.v2 → tool.storyboard_prompt_assembler.v1 (v1 exists)
+- ai.runninghub_image_to_image.v2 → ai.runninghub_image_to_image.v1 (v1 exists)
+
+=== Validation Results ===
+- load_workflow_file(): PASSED
+- validate_workflow_contract() with build_node_registry(test_settings): PASSED
+- All 18 node refs found in registry
+- All 19 edges form valid DAG (no cycles, all nodes reachable from START, all converge to END)
+- All input references resolve to valid workflow input or upstream node output fields
+- All output schemas use additionalProperties: false
+
+=== What's NOT Included (by design) ===
+- No auto-generate path (generate_prompt, generate_image) — only manual upload path
+- No scene/prop extraction nodes (Tasks 16/17 will add those)
+- No modification to existing asset_catalog.workflow.yaml or storyboard_generation.workflow.yaml
