@@ -12,6 +12,15 @@
 - `docs/design/`：模块级设计文档。每个核心模块单独成文，避免单个大文档难以维护。
 - `docs/development/`：开发约束、编码规范、测试策略、后续实现计划。
 
+## 目录级规则
+
+部分目录包含更细的 `AGENTS.md`，修改对应目录内容前必须同时遵守：
+
+- `workflows/AGENTS.md`：工作流契约、UI 控件配置、工作流验证规则。
+- `xiagent/nodes/AGENTS.md`：节点接口、节点实现、`NodeDescriptor.ui_defaults` 和节点 UI 默认规则。
+
+根目录规则优先描述全局边界；目录级规则用于补充该目录的具体落地约束。
+
 文档命名规则：
 
 ```text

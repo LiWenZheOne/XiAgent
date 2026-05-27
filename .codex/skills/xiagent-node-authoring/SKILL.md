@@ -11,10 +11,10 @@ description: Use when creating or modifying XiAgent BaseNode implementations, no
 
 ## Core Workflow
 
-1. 明确节点规格：`ref`、职责、输入 schema、输出 schema、错误语义、资产访问、外部服务或凭据、是否需要人工交互。
+1. 明确节点规格：`ref`、职责、输入 schema、输出 schema、错误语义、资产访问、外部服务或凭据、是否需要人工交互、是否需要通用 `ui_defaults`。
 2. 检查现有节点是否满足需求：读取 `build_node_registry(settings)`、现有节点 `NodeDescriptor`、相近节点实现和测试，按职责、输入输出 schema、错误语义和依赖能力判断可复用性。
 3. 如果找到一个或多个候选节点，暂停开发新节点，向用户列出候选 `ref`、匹配点、差距和复用影响，并等待用户确认“复用现有节点”还是“继续开发新节点”。用户未确认前不要写新节点代码或测试。
-4. 只有确认需要新建或修改节点后，先读现有模式：`xiagent/nodes/base.py`、`xiagent/nodes/registry.py`、`xiagent/nodes/__init__.py`、相近节点实现和测试。
+4. 只有确认需要新建或修改节点后，先读现有模式：`AGENTS.md`、`xiagent/nodes/AGENTS.md`、`xiagent/nodes/base.py`、`xiagent/nodes/registry.py`、`xiagent/nodes/__init__.py`、相近节点实现和测试。
 5. RED：先写失败测试。节点行为测试通常放在 `tests/test_node_registry.py`、现有节点测试文件，或新建聚焦测试文件。测试应直接执行节点或验证注册表行为。
 6. 运行目标测试，确认失败原因是节点能力缺失，而不是测试拼写、导入错误或夹具错误。
 7. GREEN：实现最小节点代码。正式节点必须继承 `BaseNode`，实现 `describe()` 和 `execute()`，返回 `NodeResult`。
@@ -39,6 +39,17 @@ description: Use when creating or modifying XiAgent BaseNode implementations, no
 - 不要为了让节点拿到结构而在 `inputs` 或 `config` 里重复一份输出 schema；除非是兼容旧工作流的过渡方案，否则以工作流 `outputs` 为唯一数据契约来源。
 - UI `layout`、表格列名、审批展示文案只负责展示，不得替代 `outputs` 数据契约；下游节点必须依赖 `$nodes.<id>.output...` 中由 schema 声明的字段。
 
+## UI Defaults Boundary
+
+- 节点 UI 规则以 `docs/design/2026-05-27-01-ui-control-manifest-design.md` 为准。
+- 节点可以在 `NodeDescriptor.ui_defaults` 中提供通用默认展示建议，但不得把某个工作流的具体体验写死到节点里。
+- 控件选择优先级是 `nodes[].ui` > `workflow.ui.defaults` > `NodeDescriptor.ui_defaults` > 系统 fallback；节点默认只负责保底。
+- `ui_defaults` 只能引用后端 UI 控件 manifest 中存在的 `control_id`、`variant`、`mode` 和 `bindings`。不要引用 V2 React 组件路径或前端内部实现。
+- 节点输出 schema 必须先稳定描述业务数据，再让 UI 控件绑定它；不要为了某个控件临时暴露内部字段。
+- 图片、资产、候选列表、三选一等 UI 需求应通过稳定字段表达，例如图片候选数组、图片 URL 字段、选择结果字段。字段是否足够应由工作流 validator 和 UI manifest 校验。
+- 如果需要新的展示方式，优先新增或扩展 UI 控件 manifest 和 V2 控件库；不要在节点实现中加入前端布局逻辑。
+- 当节点提供 `ui_defaults` 时，节点测试至少覆盖 `NodeDescriptor` 中 schema 与默认 bindings 指向字段的一致性。
+
 ## Framework Change Gate
 
 - 如果节点开发需要修改 `BaseNode`、`NodeContext`、`NodeRegistry`、运行时服务、工作流校验器、输入解析器或其它基础框架代码，先暂停实现，向用户说明修改原因、影响范围、兼容性和测试计划，等待用户确认后再改。
@@ -53,6 +64,7 @@ description: Use when creating or modifying XiAgent BaseNode implementations, no
 | GREEN | 最小节点实现后目标测试通过。 |
 | Registry | 注册表能列出并获取新节点 ref。 |
 | Contract | 工作流校验能识别节点 schema。 |
+| UI Defaults | 如果提供 `ui_defaults`，默认控件和 bindings 与节点 schema 一致。 |
 | Runtime | 目标工作流可用构建器或 CLI 走通。 |
 
 不能展示 RED 失败证据时，不要声称完成 TDD。

@@ -11,16 +11,17 @@ description: Use when creating or modifying XiAgent workflow YAML/JSON contracts
 
 ## Core Workflow
 
-1. 先读项目约束：`AGENTS.md`、现有 `workflows/global/*.workflow.yaml`、`xiagent/nodes/**`、`tests/test_workflow_validator.py`、`tests/test_workflow_testing_*.py`。
+1. 先读项目约束：`AGENTS.md`、`workflows/AGENTS.md`、现有 `workflows/global/*.workflow.yaml`、`xiagent/nodes/**`、`tests/test_workflow_validator.py`、`tests/test_workflow_testing_*.py`。
 2. 从用户描述提炼工作流输入、目标输出、节点顺序、条件分支、人工交互、资产或图片输入输出。
 3. 写或改工作流前，先明确：需要新增哪些节点、可以复用哪些已有节点、使用哪些模型或模型节点、是否需要外部模型 API 或模型配置。
 4. 查找可用节点：优先看 `xiagent.nodes.build_node_registry()` 注册了什么，再读各节点的 `NodeDescriptor`、输入输出 schema 和测试。不要凭空写不存在的 `ref`。
 5. 如果现有节点不足，立即暂停工作流落盘，列出缺失节点规格：建议 `ref`、职责、输入 schema、输出 schema、错误语义、是否访问资产、是否需要外部凭据、建议测试。然后建议使用 `$xiagent-node-authoring` 先补节点。
 6. 如果缺少模型 API、模型密钥或模型配置，必须暂停并让用户提供配置；不得用 mock、跳过或“假通过”替代真实验证。
 7. 节点能力满足后再创建或修改工作流。默认路径是 `workflows/global/<workflow-id>.workflow.yaml`，默认 `scope: global`，除非用户明确要求其他位置或 scope。
-8. 用现有加载与校验逻辑验证契约，不绕过运行时或注册表。至少覆盖 schema、节点 ref、边、条件分支、输入路径引用。
-9. 用工作流测试构建器验证执行：优先 `WorkflowTestBuilder`；CLI 场景用 `python -m xiagent.workflows.testing_cli <workflow>`。需要交互输入时使用 CLI 交互能力；有图片输出时使用 preview 或图片路径输出。
-10. 汇报时给出工作流文件、用到的节点、测试命令和结果；如果暂停在节点缺口或模型配置缺口，汇报缺口而不是提交半成品工作流。
+8. 如果工作流需要定制 UI 展示，优先在工作流契约中声明 `workflow.ui` 和 `nodes[].ui`；不要把工作流特定展示塞进节点实现或节点默认 UI。
+9. 用现有加载与校验逻辑验证契约，不绕过运行时或注册表。至少覆盖 schema、节点 ref、边、条件分支、输入路径引用和 UI 控件绑定。
+10. 用工作流测试构建器验证执行：优先 `WorkflowTestBuilder`；CLI 场景用 `python -m xiagent.workflows.testing_cli <workflow>`。需要交互输入时使用 CLI 交互能力；有图片输出时使用 preview 或图片路径输出。
+11. 汇报时给出工作流文件、用到的节点、UI 控件配置、测试命令和结果；如果暂停在节点缺口、控件缺口或模型配置缺口，汇报缺口而不是提交半成品工作流。
 
 ## Project Constraints
 
@@ -38,6 +39,17 @@ description: Use when creating or modifying XiAgent workflow YAML/JSON contracts
 - UI `layout` 只描述展示形态，例如 table、tabs、grid、confirm；不要把展示列、页签或文案当作数据结构来源。
 - 通用结构化抽取、结构化生成、JSON 解析、schema 校验和失败重试属于节点能力；工作流只选择节点、提供输入、声明输出契约和连接 DAG。
 - 需要角色表、分镜表、镜头表等不同结构时，优先复用同一个通用结构化节点并在各自工作流 `outputs` 中声明不同 schema；只有领域逻辑稳定且值得复用时才新增专用节点。
+
+## UI Control Manifest Boundary
+
+- UI 控件规则以 `docs/design/2026-05-27-01-ui-control-manifest-design.md` 为准。
+- 控件选择遵循工作流优先、节点默认保底：`nodes[].ui` 高于 `workflow.ui.defaults`，`workflow.ui.defaults` 高于 `NodeDescriptor.ui_defaults`，最后才使用系统 fallback。
+- 工作流可以分别指定 `controls.input`、`controls.output`、`controls.interaction`、`controls.detail`、`actions`、`sections` 和 `bindings`。只覆盖某一区域时，不应清空其他区域默认配置。
+- 新工作流需要定制展示时，优先在 `nodes[].ui` 指定 `control_id`、`variant`、`mode` 和 `bindings`；工作流级通用默认放在 `workflow.ui.defaults`。
+- 不得凭空发明控件 ID、variant、mode 或 binding 名称。必须对照 UI 控件 manifest、后端 `/api/ui/node-controls`（实现后）或 V2 控件注册表。
+- 三选一图片等控件必须让节点 `outputs` schema 和绑定路径满足控件 manifest：候选图数组数量、元素图片地址字段、选择结果字段都要可校验。
+- 如果现有节点输出无法满足目标控件，不要用 UI 配置掩盖数据契约问题；应先调整工作流输出 schema、补节点能力或选择兼容控件。
+- 节点级 `ui_defaults` 只能当保底建议，不应用来表达某个工作流的具体体验，例如首图大列表、hover 放大三选一等。
 
 ## Framework Change Gate
 
