@@ -46,6 +46,60 @@ workflow:
         type: string
         minLength: 1
     additionalProperties: false
+  ui:
+    layout:
+      node_io: vertical_stack
+      default_collapsed_sections: ["input", "events"]
+      default_expanded_sections: ["output"]
+    defaults:
+      ai:
+        controls:
+          input:
+            control_id: ui.display.value.v1
+            variant: default
+            mode: readonly
+          output:
+            control_id: ui.display.value.v1
+            variant: default
+            mode: readonly
+      tool:
+        controls:
+          input:
+            control_id: ui.display.value.v1
+            variant: default
+            mode: readonly
+          output:
+            control_id: ui.display.value.v1
+            variant: default
+            mode: readonly
+      system:
+        controls:
+          input:
+            control_id: ui.display.value.v1
+            variant: default
+            mode: readonly
+          output:
+            control_id: ui.display.value.v1
+            variant: default
+            mode: readonly
+      ai.runninghub_image_to_image.v1:
+        controls:
+          output:
+            control_id: ui.display.image_candidates.v1
+            variant: grid
+            mode: readonly
+            bindings:
+              items_path: "$node.output.results"
+              image_url_path: url
+      ai.runninghub_image_to_image.v2:
+        controls:
+          output:
+            control_id: ui.display.image_candidates.v1
+            variant: grid
+            mode: readonly
+            bindings:
+              items_path: "$node.output.asset_images"
+              image_url_path: image_url
 
 nodes:
   # ===== P1: 角色资产提取与匹配 =====

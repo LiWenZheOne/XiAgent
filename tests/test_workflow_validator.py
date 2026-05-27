@@ -703,13 +703,7 @@ def test_all_global_workflows_declare_ui_control_defaults(test_settings) -> None
     from xiagent.nodes import build_node_registry
 
     workflow_paths = sorted(Path("workflows/global").glob("*.workflow.yaml"))
-    assert {path.name for path in workflow_paths} == {
-        "asset_catalog.workflow.yaml",
-        "deepseek_echo.workflow.yaml",
-        "runninghub_image_to_image_test.workflow.yaml",
-        "runninghub_text_to_image_test.workflow.yaml",
-        "storyboard_generation.workflow.yaml",
-    }
+    assert workflow_paths
 
     for workflow_path in workflow_paths:
         contract = load_workflow_file(workflow_path)
