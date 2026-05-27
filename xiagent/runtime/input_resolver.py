@@ -110,7 +110,11 @@ def resolve_path(
             _raise_invalid_reference(reference)
         node_id = parts[1]
         if node_id not in node_outputs:
-            return []
+            raise ValidationError(
+                code="workflow_reference_missing_node_output",
+                message="Node output is not available",
+                details={"reference": reference, "node_id": node_id},
+            )
         return _resolve_segments(node_outputs[node_id], parts[3:], reference)
 
     _raise_invalid_reference(reference)

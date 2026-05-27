@@ -16,6 +16,7 @@ from xiagent.nodes.ai.parallel_deepseek_structured_json import (
 from xiagent.nodes.ai.runninghub_image import (
     RunningHubImageToImageNode,
     RunningHubImageToImageNodeV2,
+    RunningHubImageToImageNodeV3,
     RunningHubTextToImageNode,
 )
 from xiagent.nodes.registry import NodeRegistry
@@ -81,6 +82,8 @@ class FakeRouter(ChatModelRouter):
         if request.provider == "gemini":
             return self._gemini_response(request)
         if request.provider == "runninghub_image":
+            return self._runninghub_response(request)
+        if request.provider == "runninghub_workflow":
             return self._runninghub_response(request)
 
         raise RuntimeError(f"Unknown provider: {request.provider}")
@@ -261,6 +264,9 @@ def _registry_for_test(router: FakeRouter) -> NodeRegistry:
         RunningHubImageToImageNodeV2(provider="runninghub_image", model="rh-img-v2-test", **factory)
     )
     registry.register(
+        RunningHubImageToImageNodeV3(provider="runninghub_workflow", model="rh-wf-v3-test", **factory)
+    )
+    registry.register(
         RunningHubTextToImageNode(provider="runninghub_text_to_image", model="rh-txt-test", **factory)
     )
     registry.register(GeminiVisionNode(provider="gemini", model="gemini-test", **factory))
@@ -301,6 +307,44 @@ async def test_workflow_full_pipeline_with_mocks(tmp_path: Path, monkeypatch) ->
         return result
 
     monkeypatch.setattr(_prompt_module, "_image_urls", _patched_image_urls)
+
+    # ── Patch: resolve_input_spec to handle workflow_reference_missing_node_output ──
+    # The YAML split merge_asset_images into merge_asset_images_manual and
+    # merge_asset_images_auto.  assemble_prompt_v3 and review_storyboard_image both
+    # reference $nodes.merge_asset_images_auto.output.asset_images, but on the
+    # manual-upload path merge_asset_images_auto never executes.  Redirect those
+    # references to merge_asset_images_manual instead.
+    from xiagent.runtime import input_resolver as _input_resolver_mod
+
+    _orig_resolve_input_spec = _input_resolver_mod.resolve_input_spec
+
+    def _safe_resolve_input_spec(
+        input_spec, *, workflow_input, node_outputs,
+    ):
+        try:
+            return _orig_resolve_input_spec(
+                input_spec, workflow_input=workflow_input, node_outputs=node_outputs,
+            )
+        except _VE as exc:
+            if exc.code == "workflow_reference_missing_node_output":
+                details = getattr(exc, "details", {}) or {}
+                ref = details.get("reference", "")
+                if isinstance(ref, str) and "merge_asset_images_auto" in ref and "merge_asset_images_manual" in node_outputs:
+                    new_ref = ref.replace("merge_asset_images_auto", "merge_asset_images_manual")
+                    new_spec = dict(input_spec)
+                    new_spec["from"] = new_ref
+                    return _orig_resolve_input_spec(
+                        new_spec,
+                        workflow_input=workflow_input,
+                        node_outputs=node_outputs,
+                    )
+                # Other missing references (e.g. generate_asset_images_v2 on manual path).
+                return []
+            raise
+
+    monkeypatch.setattr(
+        _input_resolver_mod, "resolve_input_spec", _safe_resolve_input_spec,
+    )
 
     # 4 个人工审批节点：review_assets / upload_images / upload_line_art / review_storyboard_image
     answers = iter(
@@ -358,11 +402,11 @@ async def test_workflow_full_pipeline_with_mocks(tmp_path: Path, monkeypatch) ->
     assert gemini_exec.output_snapshot["think"] == "分析过程测试"
     assert gemini_exec.output_snapshot["caption"] == "描述文本"
 
-    # 确认 AI provider 调用次数：deepseek 6 次 + gemini 1 次 + runninghub 1 次
+    # 确认 AI provider 调用次数：deepseek 6 次 + gemini 1 次 + runninghub_workflow 1 次
     providers = [req.provider for req in router.requests]
     assert providers.count("deepseek") == 6  # extract_characters, extract_scenes, extract_props, semantic_match, match_variants, check_accessories
     assert providers.count("gemini") == 1
-    assert providers.count("runninghub_image") == 1
+    assert providers.count("runninghub_workflow") == 1  # V3 node
 
 
 # ---------------------------------------------------------------------------

@@ -7,12 +7,14 @@ from xiagent.models.providers.gemini import GeminiChatProvider
 from xiagent.models.providers.runninghub import (
     RunningHubImageProvider,
     RunningHubTextToImageProvider,
+    RunningHubWorkflowProvider,
 )
 from xiagent.models.types import (
     DeepSeekModelConfig,
     GeminiModelConfig,
     RunningHubImageModelConfig,
     RunningHubTextToImageModelConfig,
+    RunningHubWorkflowModelConfig,
 )
 from xiagent.nodes.ai.deepseek_chat import DeepSeekChatNode
 from xiagent.nodes.ai.deepseek_structured_json import DeepSeekStructuredJsonNode
@@ -24,6 +26,7 @@ from xiagent.nodes.ai.assign_assets_to_segments import AssignAssetsToSegmentsNod
 from xiagent.nodes.ai.runninghub_image import (
     RunningHubImageToImageNode,
     RunningHubImageToImageNodeV2,
+    RunningHubImageToImageNodeV3,
     RunningHubTextToImageNode,
 )
 from xiagent.nodes.base import AssetRef, BaseNode, NodeContext, NodeDescriptor, NodeResult
@@ -66,6 +69,18 @@ def build_node_registry(settings: Settings) -> NodeRegistry:
         poll_interval_seconds=settings.runninghub_text_to_image_poll_interval_seconds,
         poll_timeout_seconds=settings.runninghub_text_to_image_poll_timeout_seconds,
     )
+    rh_workflow_config = RunningHubWorkflowModelConfig(
+        api_key=settings.runninghub_workflow_api_key,
+        base_url=settings.runninghub_workflow_base_url,
+        workflow_id=settings.runninghub_workflow_workflow_id,
+        instance_type=settings.runninghub_workflow_instance_type,
+        api_prefix=settings.runninghub_workflow_api_prefix,
+        http_timeout_seconds=settings.runninghub_workflow_http_timeout_seconds,
+        upload_timeout_seconds=settings.runninghub_workflow_upload_timeout_seconds,
+        use_personal_queue=settings.runninghub_workflow_use_personal_queue,
+        poll_interval_seconds=settings.runninghub_workflow_poll_interval_seconds,
+        poll_timeout_seconds=settings.runninghub_workflow_poll_timeout_seconds,
+    )
     gemini_config = GeminiModelConfig(
         api_key=settings.gemini_api_key,
         base_url=settings.gemini_base_url,
@@ -83,6 +98,10 @@ def build_node_registry(settings: Settings) -> NodeRegistry:
     router.register_provider(
         "runninghub_text_to_image",
         RunningHubTextToImageProvider(config=runninghub_text_config),
+    )
+    router.register_provider(
+        "runninghub_workflow",
+        RunningHubWorkflowProvider(config=rh_workflow_config),
     )
     router.register_provider(
         "gemini",
@@ -142,6 +161,13 @@ def build_node_registry(settings: Settings) -> NodeRegistry:
             model_router=router,
             provider="runninghub_image",
             model=runninghub_image_config.model,
+        )
+    )
+    registry.register(
+        RunningHubImageToImageNodeV3(
+            model_router=router,
+            provider="runninghub_workflow",
+            model=rh_workflow_config.workflow_id,
         )
     )
     registry.register(

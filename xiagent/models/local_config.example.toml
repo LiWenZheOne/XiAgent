@@ -8,6 +8,8 @@ api_key = ""
 base_url = "https://www.runninghub.ai"
 model = "nano-banana2-gemini31flash/image-to-image-channel-low-price"
 endpoint = "/rhart-image-n-g31-flash/image-to-image"
+default_aspect_ratio = "9:16"
+default_resolution = "1k"
 poll_interval_seconds = 2.0
 poll_timeout_seconds = 180.0
 
@@ -16,6 +18,8 @@ api_key = ""
 base_url = "https://www.runninghub.ai"
 model = "nano-banana-pro/text-to-image-channel-low-price"
 endpoint = "/rhart-image-n-pro/text-to-image"
+default_aspect_ratio = "9:16"
+default_resolution = "1k"
 poll_interval_seconds = 2.0
 poll_timeout_seconds = 180.0
 
@@ -23,3 +27,12 @@ poll_timeout_seconds = 180.0
 api_key = ""
 base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
 model = "gemini-3-flash-preview"
+
+[runninghub_workflow]
+api_key = ""
+base_url = "https://www.runninghub.ai"
+workflow_id = ""
+api_prefix = "/openapi/v2"
+http_timeout_seconds = 60.0
+upload_timeout_seconds = 30.0
+instance_type = "default"

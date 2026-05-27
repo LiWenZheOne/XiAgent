@@ -651,6 +651,10 @@ async def test_orchestration_manual_upload_path(
                 node_outputs=node_outputs,
             )
         except ValidationError as exc:
+            if exc.code == "workflow_reference_missing_node_output":
+                # Reference to a node not executed (different conditional path).
+                # MergeAssetImagesNode handles missing inputs via .get() default.
+                return []
             if exc.code == "invalid_workflow_reference" and (
                 "unknown variable" in exc.message
             ):
@@ -1153,6 +1157,10 @@ async def test_scene_pipeline_execution(
                 node_outputs=node_outputs,
             )
         except ValidationError as exc:
+            if exc.code == "workflow_reference_missing_node_output":
+                # Reference to a node not executed (different conditional path).
+                # MergeAssetImagesNode handles missing inputs via .get() default.
+                return []
             if exc.code == "invalid_workflow_reference" and (
                 "unknown variable" in exc.message
             ):

@@ -64,6 +64,7 @@ def test_build_node_registry_registers_builtin_nodes(test_settings) -> None:
         "ai.parallel_deepseek_structured_json.v1",
         "ai.runninghub_image_to_image.v1",
         "ai.runninghub_image_to_image.v2",
+        "ai.runninghub_image_to_image.v3",
         "ai.runninghub_text_to_image.v1",
         "ai.gemini_vision.v1",
         "tool.merge_asset_images.v1",

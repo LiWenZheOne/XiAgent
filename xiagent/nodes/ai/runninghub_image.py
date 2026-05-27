@@ -362,3 +362,94 @@ def _required_prompt_results(inputs: Mapping[str, Any]) -> list[Mapping[str, Any
             message="prompt_results must be a non-empty array",
         )
     return value
+
+
+class RunningHubImageToImageNodeV3(BaseNode):
+    _ref = "ai.runninghub_image_to_image.v3"
+    _name = "RunningHub Image To Image V3 (Workflow)"
+    _description = "Call RunningHub ComfyUI workflow API via nodeInfoList format."
+    _input_schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {
+            "prompt": {"type": "string", "minLength": 1},
+            "image_urls": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1},
+            "line_art_url": {"type": "string", "minLength": 1},
+            "node_mapping": {
+                "type": "object",
+                "properties": {
+                    "images": {"type": "array", "items": {"type": "string"}},
+                    "text": {"type": "object", "properties": {"nodeId": {"type": "string"}, "fieldName": {"type": "string"}}},
+                    "select": {"type": "object", "properties": {"nodeIds": {"type": "array", "items": {"type": "string"}}, "fieldName": {"type": "string"}}},
+                },
+            },
+            "poll_interval_seconds": {"type": "number", "minimum": 0},
+            "poll_timeout_seconds": {"type": "number", "minimum": 0},
+        },
+        "required": ["prompt", "image_urls"],
+        "additionalProperties": False,
+    }
+
+    def __init__(
+        self,
+        *,
+        model_router: ChatModelRouter,
+        provider: str,
+        model: str,
+    ) -> None:
+        if not isinstance(model_router, ChatModelRouter):
+            raise TypeError("model_router must be ChatModelRouter")
+        self._model_router = model_router
+        self._provider = provider
+        self._model = model
+
+    def describe(self) -> NodeDescriptor:
+        return NodeDescriptor(
+            ref=self._ref,
+            name=self._name,
+            version="1.0.0",
+            kind="ai",
+            input_schema=self._input_schema,
+            output_schema=_OUTPUT_SCHEMA,
+            description=self._description,
+        )
+
+    async def run(self, ctx: NodeContext | None, inputs: Mapping[str, Any]) -> NodeResult:
+        prompt = _required_text(inputs, "prompt", "runninghub_v3_prompt_required")
+        image_urls = list(inputs.get("image_urls", []))
+        if not image_urls:
+            raise ValidationError(
+                code="runninghub_v3_image_urls_required",
+                message="V3 image_urls required",
+            )
+        line_art_url = inputs.get("line_art_url", "")
+        if isinstance(line_art_url, str) and line_art_url.strip():
+            image_urls.insert(0, line_art_url)  # line art first
+
+        node_mapping = inputs.get("node_mapping") or {
+            "images": ["81", "141", "139", "140", "176", "182"],
+            "text": {"nodeId": "150", "fieldName": "text"},
+            "select": {"nodeIds": ["190", "191"], "fieldName": "select"},
+        }
+
+        metadata = {"image_urls": image_urls, "node_mapping": node_mapping}
+        # Copy polling overrides
+        for key in (
+            "poll_interval_seconds",
+            "poll_timeout_seconds",
+        ):
+            val = inputs.get(key)
+            if val is not None:
+                metadata[key] = val
+        response = await self._model_router.chat(
+            ChatRequest(
+                provider=self._provider,
+                model=self._model,
+                messages=[ChatMessage(role="user", content=prompt)],
+                metadata=metadata,
+            )
+        )
+        return NodeResult(
+            status="succeeded",
+            output=_response_output(response),
+            metadata=response.metadata,
+        )

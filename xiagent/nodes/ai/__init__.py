@@ -7,6 +7,8 @@ from xiagent.nodes.ai.deepseek_chat import DeepSeekChatNode
 from xiagent.nodes.ai.deepseek_structured_json import DeepSeekStructuredJsonNode
 from xiagent.nodes.ai.runninghub_image import (
     RunningHubImageToImageNode,
+    RunningHubImageToImageNodeV2,
+    RunningHubImageToImageNodeV3,
     RunningHubTextToImageNode,
 )
 
@@ -16,5 +18,7 @@ __all__ = [
     "DeepSeekStructuredJsonNode",
     "GeminiVisionNode",
     "RunningHubImageToImageNode",
+    "RunningHubImageToImageNodeV2",
+    "RunningHubImageToImageNodeV3",
     "RunningHubTextToImageNode",
 ]
