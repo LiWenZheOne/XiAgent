@@ -699,6 +699,34 @@ def test_deepseek_echo_workflow_contract_declares_node_outputs() -> None:
     validate_workflow_contract(contract, registry)
 
 
+def test_all_global_workflows_declare_ui_control_defaults(test_settings) -> None:
+    from xiagent.nodes import build_node_registry
+
+    workflow_paths = sorted(Path("workflows/global").glob("*.workflow.yaml"))
+    assert {path.name for path in workflow_paths} == {
+        "asset_catalog.workflow.yaml",
+        "deepseek_echo.workflow.yaml",
+        "runninghub_image_to_image_test.workflow.yaml",
+        "runninghub_text_to_image_test.workflow.yaml",
+        "storyboard_generation.workflow.yaml",
+    }
+
+    for workflow_path in workflow_paths:
+        contract = load_workflow_file(workflow_path)
+        workflow_ui = contract["workflow"].get("ui")
+
+        assert isinstance(workflow_ui, dict), workflow_path
+        assert workflow_ui.get("layout", {}).get("node_io") == "vertical_stack"
+        assert workflow_ui.get("layout", {}).get("default_collapsed_sections") == [
+            "input",
+            "events",
+        ]
+        assert workflow_ui.get("layout", {}).get("default_expanded_sections") == ["output"]
+        assert isinstance(workflow_ui.get("defaults"), dict), workflow_path
+
+        validate_workflow_contract(contract, build_node_registry(test_settings))
+
+
 @pytest.mark.parametrize(
     ("workflow_path", "workflow_id", "node_id", "node_ref", "required_inputs"),
     [

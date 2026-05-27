@@ -44,6 +44,12 @@ export interface NodeUiControlConfig {
 
 export interface NodeUiConfig {
   mode?: string;
+  layout?: {
+    node_io?: string;
+    default_collapsed_sections?: string[];
+    default_expanded_sections?: string[];
+  };
+  defaults?: Record<string, NodeUiConfig>;
   metadata_schema?: JsonSchema | Record<string, unknown>;
   controls?: {
     input?: NodeUiControlConfig;

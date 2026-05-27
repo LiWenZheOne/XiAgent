@@ -3,10 +3,11 @@ import { FallbackValueControl } from "./controls/FallbackValueControl";
 import { ImageCandidatesControl } from "./controls/ImageCandidatesControl";
 import { ImageChoiceThreeControl } from "./controls/ImageChoiceThreeControl";
 import { SchemaFormControl } from "./controls/SchemaFormControl";
+import { ValueDisplayControl } from "./controls/ValueDisplayControl";
 import type { NodeUiComponent } from "./types";
 
 export const nodeUiRegistry: Record<string, NodeUiComponent> = {
-  "ui.display.value.v1": FallbackValueControl,
+  "ui.display.value.v1": ValueDisplayControl,
   "ui.display.image_candidates.v1": ImageCandidatesControl,
   "ui.choice.image_three.v1": ImageChoiceThreeControl,
   "ui.interaction.approval.v1": ApprovalControl,
@@ -17,4 +18,4 @@ export function getNodeUiControl(controlId: string): NodeUiComponent {
   return nodeUiRegistry[controlId] ?? FallbackValueControl;
 }
 
-export { resolveNodeInteractionConfig } from "./resolve";
+export { resolveNodeControlConfig, resolveNodeInteractionConfig } from "./resolve";

@@ -602,9 +602,8 @@ dd {
   gap: 8px;
 }
 
-.node-data-grid {
+.node-data-stack {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   margin-top: 14px;
 }
@@ -616,11 +615,23 @@ dd {
   background: var(--surface-soft);
 }
 
-.value-panel h3,
-.event-strip h3,
+.value-panel summary,
+.event-strip summary,
 .interaction-panel h3 {
   margin: 0 0 10px;
   font-size: 14px;
+}
+
+.value-panel summary,
+.event-strip summary {
+  cursor: pointer;
+  color: var(--text);
+  font-weight: 800;
+}
+
+.node-data-section:not([open]),
+.event-strip:not([open]) {
+  padding-bottom: 10px;
 }
 
 .value-stack {

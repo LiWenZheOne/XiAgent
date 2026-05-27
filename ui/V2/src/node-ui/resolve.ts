@@ -1,4 +1,4 @@
-import type { NodeUiControlConfig, TaskNodeExecution, WorkflowNodeSpec } from "../api/types";
+import type { NodeUiControlConfig, NodeUiConfig, TaskNodeExecution, WorkflowNodeSpec, WorkflowSnapshot } from "../api/types";
 import type { ImageChoiceItem } from "./types";
 
 const defaultUserChoiceInteraction: NodeUiControlConfig = {
@@ -12,8 +12,39 @@ const defaultUserChoiceInteraction: NodeUiControlConfig = {
   },
 };
 
-export function resolveNodeInteractionConfig(node: TaskNodeExecution, nodeSpec?: WorkflowNodeSpec): NodeUiControlConfig | null {
-  if (nodeSpec?.ui?.controls?.interaction) return nodeSpec.ui.controls.interaction;
+type NodeControlSlot = "input" | "output" | "interaction" | "detail";
+
+const defaultValueDisplay: NodeUiControlConfig = {
+  control_id: "ui.display.value.v1",
+  variant: "default",
+  mode: "readonly",
+};
+
+export function resolveNodeControlConfig(
+  node: TaskNodeExecution,
+  nodeSpec: WorkflowNodeSpec | undefined,
+  snapshot: WorkflowSnapshot | null | undefined,
+  slot: NodeControlSlot,
+): NodeUiControlConfig | null {
+  if (nodeSpec?.ui?.controls?.[slot]) return nodeSpec.ui.controls[slot] ?? null;
+
+  const workflowDefault = resolveWorkflowDefault(node, nodeSpec, snapshot, slot);
+  if (workflowDefault) return workflowDefault;
+
+  if (slot === "interaction" && (node.node_ref ?? node.ref ?? nodeSpec?.ref) === "system.user_choice.v1") {
+    return defaultUserChoiceInteraction;
+  }
+  if (slot === "input" || slot === "output") return defaultValueDisplay;
+  return null;
+}
+
+export function resolveNodeInteractionConfig(
+  node: TaskNodeExecution,
+  nodeSpec?: WorkflowNodeSpec,
+  snapshot?: WorkflowSnapshot | null,
+): NodeUiControlConfig | null {
+  const resolved = resolveNodeControlConfig(node, nodeSpec, snapshot, "interaction");
+  if (resolved) return resolved;
   if ((node.node_ref ?? node.ref) === "system.user_choice.v1") return defaultUserChoiceInteraction;
   return null;
 }
@@ -65,4 +96,25 @@ function readObjectPath(value: unknown, path: string): unknown {
     }
   }
   return current;
+}
+
+function resolveWorkflowDefault(
+  node: TaskNodeExecution,
+  nodeSpec: WorkflowNodeSpec | undefined,
+  snapshot: WorkflowSnapshot | null | undefined,
+  slot: NodeControlSlot,
+): NodeUiControlConfig | null {
+  const defaults = snapshot?.workflow?.ui?.defaults;
+  if (!defaults) return null;
+  const nodeRef = node.node_ref ?? node.ref ?? nodeSpec?.ref ?? "";
+  const kind = nodeRef.split(".", 1)[0];
+  return (
+    controlFromDefault(defaults[nodeRef], slot) ??
+    controlFromDefault(defaults[kind], slot) ??
+    null
+  );
+}
+
+function controlFromDefault(config: NodeUiConfig | undefined, slot: NodeControlSlot): NodeUiControlConfig | null {
+  return config?.controls?.[slot] ?? null;
 }

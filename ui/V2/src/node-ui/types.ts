@@ -6,6 +6,10 @@ export interface NodeUiControlProps {
   node: TaskNodeExecution;
   nodeSpec?: WorkflowNodeSpec;
   snapshot?: WorkflowSnapshot | null;
+  slot?: "input" | "output" | "interaction" | "detail";
+  value?: unknown;
+  title?: string;
+  imageAltPrefix?: string;
   busy?: boolean;
   preview?: boolean;
   onSubmit?: (output: Record<string, unknown>) => void;
