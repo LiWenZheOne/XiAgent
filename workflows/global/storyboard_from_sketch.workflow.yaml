@@ -1301,58 +1301,58 @@ nodes:
           type: object
       additionalProperties: false
 
-  # ===== 提示词组装 v3 =====
+  # ===== 提示词组装 v3（已禁用 —— 跳过 assemble_prompt_v3，直接用 Gemini caption 作为最终提示词）=====
 
-  - id: assemble_prompt_v3
-    ref: tool.storyboard_prompt_assembler.v2
-    inputs:
-      description:
-        from: "$nodes.gemini_vision_analysis.output.caption"
-      style:
-        value: |
-          参考《罗小黑战记》的线条、色彩逻辑和视觉质感。
-          - 线条：典型的矢量图风格，干净且流畅，轮廓线利落。
-          - 色彩：无复杂渐变，纯色块填充为主，阴影较浅，边缘锐利，阴影偏冷色调，软 cel shading。
-          - 角色体型：所有角色都是胶囊形设计（达摩式 / 蛋形），下半身是个球，没有腿。
-          - 透视：strict perspective with foreshortening，近大远小，强纵深（depth of field），layered foreground-midground-background composition。
-      constraints:
-        value: |
-          角色为达摩/不倒翁体型：上半身正常比例，下半身为圆润饱满的半球形底部。完全没有腿部、没有膝盖、没有脚踝、没有足部。
-          时代背景在中国古代，以水浒传为背景。
-          保持人物武器和参考完全一致，人物比例不变。
-      generation_rules:
-        value: |
-          风格标签：digital illustration, chibi style, children's book art style, manhwa style, clean lineart, soft cel shading, vibrant colors, dynamic action atmosphere, masterpiece, best quality, 8k。
-          透视与空间约束
-          - 严格遵守近大远小的透视关系。
-          - 透视线体现强烈的空间纵深感。
-          - 前景遮挡感强烈。
-          - 每个分格的消失点必须统一。
-          - 多分格页面：采用不规则的梯形与矩形组合排版，打破平庸的视觉节奏。
-          场景比例约束
-          - 场景建筑比例符合 chibi style（不追求写实建筑比例）。
-      image_urls:
-        from: "$nodes.merge_asset_images_auto.output.asset_images"
-    outputs:
-      type: object
-      required: ["prompt", "image_urls", "aspect_ratio", "resolution"]
-      properties:
-        prompt:
-          type: string
-          minLength: 1
-        image_urls:
-          type: array
-          minItems: 1
-          items:
-            type: string
-            minLength: 1
-        aspect_ratio:
-          type: string
-          minLength: 1
-        resolution:
-          type: string
-          minLength: 1
-      additionalProperties: false
+  # - id: assemble_prompt_v3
+  #   ref: tool.storyboard_prompt_assembler.v2
+  #   inputs:
+  #     description:
+  #       from: "$nodes.gemini_vision_analysis.output.caption"
+  #     style:
+  #       value: |
+  #         参考《罗小黑战记》的线条、色彩逻辑和视觉质感。
+  #         - 线条：典型的矢量图风格，干净且流畅，轮廓线利落。
+  #         - 色彩：无复杂渐变，纯色块填充为主，阴影较浅，边缘锐利，阴影偏冷色调，软 cel shading。
+  #         - 角色体型：所有角色都是胶囊形设计（达摩式 / 蛋形），下半身是个球，没有腿。
+  #         - 透视：strict perspective with foreshortening，近大远小，强纵深（depth of field），layered foreground-midground-background composition。
+  #     constraints:
+  #       value: |
+  #         角色为达摩/不倒翁体型：上半身正常比例，下半身为圆润饱满的半球形底部。完全没有腿部、没有膝盖、没有脚踝、没有足部。
+  #         时代背景在中国古代，以水浒传为背景。
+  #         保持人物武器和参考完全一致，人物比例不变。
+  #     generation_rules:
+  #       value: |
+  #         风格标签：digital illustration, chibi style, children's book art style, manhwa style, clean lineart, soft cel shading, vibrant colors, dynamic action atmosphere, masterpiece, best quality, 8k。
+  #         透视与空间约束
+  #         - 严格遵守近大远小的透视关系。
+  #         - 透视线体现强烈的空间纵深感。
+  #         - 前景遮挡感强烈。
+  #         - 每个分格的消失点必须统一。
+  #         - 多分格页面：采用不规则的梯形与矩形组合排版，打破平庸的视觉节奏。
+  #         场景比例约束
+  #         - 场景建筑比例符合 chibi style（不追求写实建筑比例）。
+  #     image_urls:
+  #       from: "$nodes.merge_asset_images_auto.output.asset_images"
+  #   outputs:
+  #     type: object
+  #     required: ["prompt", "image_urls", "aspect_ratio", "resolution"]
+  #     properties:
+  #       prompt:
+  #         type: string
+  #         minLength: 1
+  #       image_urls:
+  #         type: array
+  #         minItems: 1
+  #         items:
+  #           type: string
+  #           minLength: 1
+  #       aspect_ratio:
+  #         type: string
+  #         minLength: 1
+  #       resolution:
+  #         type: string
+  #         minLength: 1
+  #     additionalProperties: false
 
   # ===== 分镜图像生成 =====
 
@@ -1362,7 +1362,7 @@ nodes:
       line_art_url:
         from: "$nodes.upload_line_art.output.segment_images.0.image_url"
       image_urls:
-        from: "$nodes.assemble_prompt_v3.output.image_urls"
+        from: "$nodes.merge_asset_images_auto.output.asset_images"
     outputs:
       type: object
       required: ["image_urls"]
@@ -1379,7 +1379,7 @@ nodes:
     ref: ai.runninghub_image_to_image.v3
     inputs:
       prompt:
-        from: "$nodes.assemble_prompt_v3.output.prompt"
+        from: "$nodes.gemini_vision_analysis.output.caption"
       image_urls:
         from: "$nodes.prepare_runninghub_images.output.image_urls"
       node_mapping:
@@ -1455,7 +1455,7 @@ nodes:
           image_url:
             from: "$nodes.generate_storyboard_image.output.image_url"
           prompt:
-            from: "$nodes.assemble_prompt_v3.output.prompt"
+            from: "$nodes.gemini_vision_analysis.output.caption"
           caption:
             from: "$nodes.gemini_vision_analysis.output.caption"
           reference_images:
@@ -1526,9 +1526,9 @@ edges:
     to: upload_line_art
   - from: upload_line_art
     to: gemini_vision_analysis
+  # 原: gemini_vision_analysis → assemble_prompt_v3 → prepare_runninghub_images
+  # 跳过 assemble_prompt_v3，直接用 Gemini caption 作为最终提示词
   - from: gemini_vision_analysis
-    to: assemble_prompt_v3
-  - from: assemble_prompt_v3
     to: prepare_runninghub_images
   - from: upload_line_art
     to: prepare_runninghub_images
