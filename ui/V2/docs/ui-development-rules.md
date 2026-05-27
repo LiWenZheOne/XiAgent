@@ -58,6 +58,8 @@
   - 工作流或节点配置只引用控件 ID、variant、mode、bindings。
   - 控件输入输出必须匹配工作流 schema、节点 descriptor 和运行时交互 payload。
   - 新控件必须补测试，并在本文件记录用途和 payload 约束。
+- 任务详情页的节点输入、输出通过 `ui/V2/src/node-ui/` 控件注册表解析；等待交互优先使用控件注册表，未声明交互控件时按节点输出 schema 使用页面级 fallback。
+- 节点输入和输出采用上下堆叠布局，不使用左右双栏；默认折叠输入和节点事件，只展开输出或错误区域，避免大输入、大输出节点横向溢出。
 - 顶部导航已有“控件库”页签，用于浏览可用控件、变体、能力标签、绑定要求和预览 fixture。
 - `system.user_choice.v1` 在没有工作流显式配置时使用 V2 默认三选一控件；工作流仍可通过 `nodes[].ui.controls.interaction` 改为首图大列表或 hover 放大变体。
 

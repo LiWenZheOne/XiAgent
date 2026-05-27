@@ -8,6 +8,32 @@ workflow:
     type: object
     additionalProperties: false
     properties: {}
+  ui:
+    layout:
+      node_io: vertical_stack
+      default_collapsed_sections: ["input", "events"]
+      default_expanded_sections: ["output"]
+    defaults:
+      ai:
+        controls:
+          input:
+            control_id: ui.display.value.v1
+            variant: default
+            mode: readonly
+          output:
+            control_id: ui.display.value.v1
+            variant: default
+            mode: readonly
+      system:
+        controls:
+          input:
+            control_id: ui.display.value.v1
+            variant: default
+            mode: readonly
+          output:
+            control_id: ui.display.value.v1
+            variant: default
+            mode: readonly
 
 nodes:
   - id: ask_color

@@ -22,14 +22,12 @@ import type {
 } from "../api/types";
 import { listWorkflows } from "../api/workflows";
 import { ControlLibraryPage } from "../node-ui/ControlLibraryPage";
-import { getNodeUiControl, resolveNodeInteractionConfig } from "../node-ui/registry";
+import { getNodeUiControl, resolveNodeControlConfig, resolveNodeInteractionConfig } from "../node-ui/registry";
 import {
   buildSchemaFields,
   eventText,
-  extractImageUrls,
   formatDate,
   formatFieldLabel,
-  humanizeValue,
   isWaitingNode,
   nodeDisplayKind,
   nodeDisplayTitle,
@@ -792,8 +790,15 @@ function NodeExecutionCard({
   const displayTitle = nodeDisplayTitle(node, snapshot);
   const displayKind = nodeDisplayKind(node, snapshot);
   const canRerun = statusLabel(node.status) === "成功" && nodeSpec?.ui?.actions?.rerun !== false;
-  const interactionConfig = resolveNodeInteractionConfig(node, nodeSpec);
+  const inputConfig = resolveNodeControlConfig(node, nodeSpec, snapshot, "input");
+  const outputConfig = node.error
+    ? { control_id: "ui.display.value.v1", variant: "default", mode: "readonly" }
+    : resolveNodeControlConfig(node, nodeSpec, snapshot, "output");
+  const interactionConfig = resolveNodeInteractionConfig(node, nodeSpec, snapshot);
   const InteractionControl = interactionConfig ? getNodeUiControl(interactionConfig.control_id) : null;
+  const inputDefaultOpen = nodeSectionDefaultOpen(snapshot, "input", false);
+  const outputDefaultOpen = node.error ? true : nodeSectionDefaultOpen(snapshot, "output", true);
+  const eventsDefaultOpen = nodeSectionDefaultOpen(snapshot, "events", false);
 
   async function withBusy(action: () => Promise<void>) {
     setBusy(true);
@@ -823,9 +828,29 @@ function NodeExecutionCard({
           </div>
         </header>
 
-        <div className="node-data-grid">
-          <ValuePanel title="输入" value={node.input_snapshot} nodeId={displayTitle} imageAltPrefix={`${displayTitle} 输入图片`} />
-          <ValuePanel title={node.error ? "错误" : "输出"} value={node.error ?? node.output_snapshot} nodeId={displayTitle} imageAltPrefix={`${displayTitle} 输出图片`} />
+        <div className="node-data-stack">
+          <NodeDataSection
+            config={inputConfig}
+            defaultOpen={inputDefaultOpen}
+            imageAltPrefix={`${displayTitle} 输入图片`}
+            node={node}
+            nodeSpec={nodeSpec}
+            slot="input"
+            snapshot={snapshot}
+            title="输入"
+            value={node.input_snapshot}
+          />
+          <NodeDataSection
+            config={outputConfig}
+            defaultOpen={outputDefaultOpen}
+            imageAltPrefix={`${displayTitle} 输出图片`}
+            node={node}
+            nodeSpec={nodeSpec}
+            slot="output"
+            snapshot={snapshot}
+            title={node.error ? "错误" : "输出"}
+            value={node.error ?? node.output_snapshot}
+          />
         </div>
 
         {isWaitingNode(node, snapshot) && interactionConfig && InteractionControl ? (
@@ -843,8 +868,8 @@ function NodeExecutionCard({
           <WaitingInteraction busy={busy} node={node} nodeSpec={nodeSpec} onSubmit={(output) => withBusy(() => onInteraction(node.node_id, output))} />
         ) : null}
 
-        <section className="event-strip">
-          <h3>节点事件</h3>
+        <details className="event-strip" open={eventsDefaultOpen}>
+          <summary>节点事件</summary>
           {events.length ? (
             <ul>
               {events.map((event, eventIndex) => (
@@ -854,9 +879,50 @@ function NodeExecutionCard({
           ) : (
             <p className="muted">暂无事件。</p>
           )}
-        </section>
+        </details>
       </div>
     </article>
+  );
+}
+
+function NodeDataSection({
+  title,
+  value,
+  node,
+  nodeSpec,
+  snapshot,
+  config,
+  slot,
+  imageAltPrefix,
+  defaultOpen,
+}: {
+  title: string;
+  value: unknown;
+  node: TaskNodeExecution;
+  nodeSpec?: WorkflowNodeSpec;
+  snapshot?: WorkflowSnapshot | null;
+  config: ReturnType<typeof resolveNodeControlConfig>;
+  slot: "input" | "output";
+  imageAltPrefix: string;
+  defaultOpen: boolean;
+}) {
+  const controlConfig = config ?? { control_id: "ui.display.value.v1", variant: "default", mode: "readonly" };
+  const Control = getNodeUiControl(controlConfig.control_id);
+
+  return (
+    <details className="value-panel node-data-section" open={defaultOpen}>
+      <summary>{title}</summary>
+      <Control
+        config={controlConfig}
+        imageAltPrefix={imageAltPrefix}
+        node={node}
+        nodeSpec={nodeSpec}
+        slot={slot}
+        snapshot={snapshot}
+        title={title}
+        value={value}
+      />
+    </details>
   );
 }
 
@@ -959,62 +1025,6 @@ function LegacyWaitingInteraction({ nodeId, busy, onSubmit }: { nodeId: string; 
         </button>
       </div>
     </section>
-  );
-}
-
-function ValuePanel({ title, value, nodeId, imageAltPrefix }: { title: string; value: unknown; nodeId: string; imageAltPrefix: string }) {
-  const summary = humanizeValue(value);
-  return (
-    <section className="value-panel">
-      <h3>{title}</h3>
-      <ValueView value={value} nodeId={nodeId} imageAltPrefix={imageAltPrefix} />
-      {summary.kind === "empty" ? <p className="muted">暂无内容</p> : null}
-    </section>
-  );
-}
-
-function ValueView({ value, nodeId, imageAltPrefix }: { value: unknown; nodeId: string; imageAltPrefix: string }) {
-  const summary = humanizeValue(value);
-  if (summary.kind === "empty") return null;
-  if (summary.kind === "text" || summary.kind === "number" || summary.kind === "boolean") {
-    return <p className="value-text">{summary.text}</p>;
-  }
-
-  const images = extractImageUrls(value);
-  const entries = summary.entries.filter(([key, child]) => !isTransportUrlKey(key) && !isImageOnly(child));
-
-  return (
-    <div className="value-stack">
-      {images.length ? <ImageGallery urls={images} altPrefix={imageAltPrefix || `${nodeId} 图片`} /> : null}
-      {entries.length ? (
-        <dl className="field-list">
-          {entries.map(([key, child]) => (
-            <div key={key}>
-              <dt>{formatFieldLabel(key)}</dt>
-              <dd>
-                {extractImageUrls(child).length ? (
-                  <ImageGallery urls={extractImageUrls(child)} altPrefix={`${nodeId} ${formatFieldLabel(key)}图片`} />
-                ) : (
-                  <ValueView value={child} nodeId={nodeId} imageAltPrefix={`${nodeId} ${formatFieldLabel(key)}图片`} />
-                )}
-              </dd>
-            </div>
-          ))}
-        </dl>
-      ) : !images.length ? (
-        <p className="value-text">{summary.text}</p>
-      ) : null}
-    </div>
-  );
-}
-
-function ImageGallery({ urls, altPrefix }: { urls: string[]; altPrefix: string }) {
-  return (
-    <div className="image-gallery">
-      {urls.map((url, index) => (
-        <img alt={`${altPrefix} ${index + 1}`} key={url} src={url} />
-      ))}
-    </div>
   );
 }
 
@@ -1427,6 +1437,13 @@ function orderNodes(detail: TaskDetailResponse | null): TaskNodeExecution[] {
   return [...ordered, ...extras];
 }
 
+function nodeSectionDefaultOpen(snapshot: WorkflowSnapshot | null | undefined, section: "input" | "output" | "events", fallback: boolean): boolean {
+  const layout = snapshot?.workflow?.ui?.layout;
+  if (layout?.default_expanded_sections?.includes(section)) return true;
+  if (layout?.default_collapsed_sections?.includes(section)) return false;
+  return fallback;
+}
+
 function splitLines(value: string): string[] {
   return value
     .split(/\r?\n|,/)
@@ -1455,17 +1472,6 @@ function interactionMode(outputKeys: string[], requiredKeys: string[], nodeSpec?
   if (requiredKeys.includes("answer") || outputKeys.includes("answer")) return "text";
   if (requiredKeys.includes("image_urls") || outputKeys.includes("image_urls")) return "image_urls";
   return "approval";
-}
-
-function isTransportUrlKey(key: string): boolean {
-  return ["public_url", "url", "thumbnail_url", "storage_uri"].includes(key);
-}
-
-function isImageOnly(value: unknown): boolean {
-  if (!extractImageUrls(value).length) return false;
-  const summary = humanizeValue(value);
-  if (!summary.entries.length) return true;
-  return summary.entries.every(([key, child]) => isTransportUrlKey(key) || isImageOnly(child));
 }
 
 function formatBytes(size: number | null): string {

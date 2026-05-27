@@ -388,6 +388,11 @@ describe("XiAgent V2 app", () => {
     expect(within(detail).getByText("准备提示词")).toBeInTheDocument();
     expect(within(detail).getByText("雨夜城市电影感")).toBeInTheDocument();
     expect(within(detail).getByRole("img", { name: "准备提示词 输出图片 1" })).toHaveAttribute("src", "https://cdn.example.com/a.png");
+    expect(within(detail).getAllByText("输入")[0].closest("details")).not.toHaveAttribute("open");
+    expect(within(detail).getAllByText("输出")[0].closest("details")).toHaveAttribute("open");
+    for (const eventSummary of within(detail).getAllByText("节点事件")) {
+      expect(eventSummary.closest("details")).not.toHaveAttribute("open");
+    }
     expect(screen.queryByText(/output_snapshot/)).not.toBeInTheDocument();
     expect(screen.queryByText(/public_url/)).not.toBeInTheDocument();
 
