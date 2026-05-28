@@ -302,6 +302,19 @@ class SqliteRuntimeService:
         await self._authorize_task_read(user_id=user_id, project_id=project_id, task_id=task_id)
         return await self._get_task_by_id(task_id)
 
+    async def delete_task(self, *, user_id: str, project_id: str, task_id: str) -> None:
+        await self._user_service.ensure_project_access(
+            user_id=user_id,
+            project_id=project_id,
+            action="task:delete",
+        )
+        task = await self._get_task_by_id(task_id)
+        _ensure_task_belongs_to_project(task, user_id=user_id, project_id=project_id)
+        async with connect_db(self._database_path) as db:
+            await db.execute("delete from task_events where task_id = ?", (task_id,))
+            await db.execute("delete from node_executions where task_id = ?", (task_id,))
+            await db.execute("delete from tasks where task_id = ?", (task_id,))
+
     async def get_task_workflow_snapshot(
         self,
         *,
@@ -1019,9 +1032,10 @@ async def _find_or_create_workflow_template(
     template_project_id = None
     if workflow["scope"] == "project":
         template_project_id = project_id
+    contract_json = dump_json(contract)
     cursor = await db.execute(
         """
-        select template_id
+        select template_id, contract_json
         from workflow_templates
         where workflow_id = ?
           and version = ?
@@ -1030,8 +1044,7 @@ async def _find_or_create_workflow_template(
             (? is null and project_id is null)
             or project_id = ?
           )
-        order by created_at asc
-        limit 1
+        order by created_at desc, rowid desc
         """,
         (
             workflow["id"],
@@ -1041,10 +1054,11 @@ async def _find_or_create_workflow_template(
             template_project_id,
         ),
     )
-    row = await cursor.fetchone()
+    rows = await cursor.fetchall()
     await cursor.close()
-    if row is not None:
-        return str(row["template_id"])
+    for row in rows:
+        if row["contract_json"] == contract_json:
+            return str(row["template_id"])
 
     template_id = new_id("workflow_template")
     await db.execute(
@@ -1062,7 +1076,7 @@ async def _find_or_create_workflow_template(
             template_project_id,
             workflow["name"],
             workflow.get("description"),
-            dump_json(contract),
+            contract_json,
             "active",
             now,
             now,

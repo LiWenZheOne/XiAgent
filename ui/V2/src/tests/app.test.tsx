@@ -132,6 +132,7 @@ function mockFetch() {
     current_node_id?: string | null;
     created_at: string;
   }> = [];
+  const deletedTaskIds = new Set<string>();
 
   return vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -163,7 +164,7 @@ function mockFetch() {
             created_at: "2026-05-27T08:10:00Z",
           },
           ...createdTasks.filter((task) => task.project_id === "global"),
-        ],
+        ].filter((task) => !deletedTaskIds.has(task.task_id)),
       });
     }
     if (url === "/api/tasks?project_id=project-1") {
@@ -180,7 +181,7 @@ function mockFetch() {
             created_at: "2026-05-27T08:10:00Z",
           },
           ...createdTasks.filter((task) => task.project_id === "project-1"),
-        ],
+        ].filter((task) => !deletedTaskIds.has(task.task_id)),
       });
     }
     if (url === "/api/tasks?project_id=project-2") {
@@ -311,6 +312,10 @@ function mockFetch() {
         workflow_version: task.workflow_version,
       });
     }
+    if (url === "/api/tasks/task-1?project_id=global" && method === "DELETE") {
+      deletedTaskIds.add("task-1");
+      return jsonResponse({ deleted: true, task_id: "task-1" });
+    }
     if (url === "/api/tasks/task-1/interactions" && method === "POST") {
       return jsonResponse({ task_id: "task-1", project_id: "global", status: "running" });
     }
@@ -419,6 +424,25 @@ describe("XiAgent V2 app", () => {
     });
   });
 
+  it("asks for confirmation before deleting a task from the list", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    render(<App />);
+    await login();
+
+    await userEvent.click(await screen.findByRole("button", { name: /task-1/ }));
+
+    const dialog = await screen.findByRole("dialog", { name: "确认删除任务" });
+    expect(within(dialog).getByText(/删除后/)).toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole("button", { name: "确认删除" }));
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(([url, init]) => url === "/api/tasks/task-1?project_id=global" && init?.method === "DELETE"),
+      ).toBe(true);
+      expect(screen.queryByRole("button", { name: "删除任务 task-1" })).not.toBeInTheDocument();
+    });
+  });
+
   it("shows node input and output as user-facing cards and supports waiting interaction", async () => {
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
     render(<App />);
@@ -453,6 +477,31 @@ describe("XiAgent V2 app", () => {
         },
       });
     });
+  });
+
+  it("shows backend validation errors when waiting interaction submit fails", async () => {
+    const baseFetch = mockFetch();
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/tasks/task-1/interactions" && init?.method === "POST") {
+        return jsonResponse({
+          error: {
+            code: "json_value_validation_failed",
+            message: "数据不满足 JSON Schema",
+            details: { path: ["aspect_ratio"], error: "'' is too short" },
+          },
+        }, 400);
+      }
+      return baseFetch(input, init);
+    }));
+
+    render(<App />);
+    await login();
+    await userEvent.click(await screen.findByRole("button", { name: "打开 故事板生成" }));
+    await userEvent.click(screen.getByRole("button", { name: "选择 第二张" }));
+
+    expect(await screen.findByText(/数据不满足 JSON Schema/)).toBeInTheDocument();
+    expect(screen.getByText(/字段 aspect_ratio/)).toBeInTheDocument();
   });
 
   it("opens the control library tab and lists registered node controls", async () => {

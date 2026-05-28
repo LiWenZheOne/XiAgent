@@ -521,6 +521,51 @@ def test_task_list_detail_and_stream_return_project_scoped_runtime_data(test_set
     assert "event: task_succeeded\n" in stream_response.text
 
 
+def test_delete_task_removes_project_scoped_runtime_data(test_settings) -> None:
+    app = create_app(settings=test_settings)
+    with TestClient(app) as client:
+        client.post(
+            "/api/auth/register",
+            json={"username": "task-delete-owner", "password": "secret-123"},
+        )
+        headers = _auth_headers(client, username="task-delete-owner")
+        project = client.post(
+            "/api/projects",
+            json={"name": "Delete Task Project"},
+            headers=headers,
+        ).json()
+        task = _create_task_with_workflow_input(
+            client,
+            headers=headers,
+            project_id=project["project_id"],
+            contract=_echo_contract(),
+            input_data={"topic": "delete me"},
+        )
+
+        delete_response = client.delete(
+            f"/api/tasks/{task['task_id']}",
+            params={"project_id": project["project_id"]},
+            headers=headers,
+        )
+        list_response = client.get(
+            "/api/tasks",
+            params={"project_id": project["project_id"]},
+            headers=headers,
+        )
+        detail_response = client.get(
+            f"/api/tasks/{task['task_id']}",
+            params={"project_id": project["project_id"]},
+            headers=headers,
+        )
+
+    assert delete_response.status_code == 200
+    assert delete_response.json() == {"deleted": True, "task_id": task["task_id"]}
+    assert list_response.status_code == 200
+    assert list_response.json()["items"] == []
+    assert detail_response.status_code == 404
+    assert detail_response.json()["error"]["code"] == "task_not_found"
+
+
 def test_task_interactions_endpoint_resumes_waiting_task(test_settings) -> None:
     app = create_app(settings=test_settings)
     with TestClient(app) as client:

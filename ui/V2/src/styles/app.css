@@ -90,6 +90,10 @@ a {
   align-items: center;
 }
 
+.button-row.end {
+  justify-content: flex-end;
+}
+
 .brand-lockup {
   gap: 12px;
 }
@@ -162,6 +166,11 @@ small {
   border-color: var(--accent);
   color: #ffffff;
   font-weight: 700;
+}
+
+.primary-button.danger {
+  background: var(--danger);
+  border-color: var(--danger);
 }
 
 .secondary-button {
@@ -255,6 +264,7 @@ small {
 .form-stack span,
 .form-field span,
 .compact-field span,
+.choice-field legend,
 .asset-choice-field legend {
   color: #344054;
   font-size: 13px;
@@ -367,11 +377,15 @@ textarea {
   gap: 8px;
 }
 
+.task-row-shell {
+  position: relative;
+}
+
 .task-row {
   display: grid;
   gap: 5px;
   width: 100%;
-  padding: 12px;
+  padding: 12px 42px 12px 12px;
   text-align: left;
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -389,6 +403,30 @@ textarea {
 
 .task-row.create {
   margin-bottom: 12px;
+  padding-right: 12px;
+}
+
+.task-delete-button {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--danger);
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.task-delete-button:hover,
+.task-delete-button:focus-visible {
+  border-color: #fda29b;
+  background: var(--danger-soft);
 }
 
 .status-badge {
@@ -555,9 +593,42 @@ dd {
 }
 
 .check-field input,
+.choice-option input,
 .asset-check-card input {
   width: auto;
   height: auto;
+}
+
+.choice-field {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.choice-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.choice-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.choice-option.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
 }
 
 .workflow-field-summary {
@@ -618,6 +689,36 @@ dd {
   display: grid;
   place-items: center;
   padding: 24px;
+}
+
+.confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgb(15 23 42 / 0.46);
+}
+
+.confirm-dialog {
+  display: grid;
+  width: min(420px, 100%);
+  gap: 12px;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: 0 24px 60px rgb(15 23 42 / 0.24);
+}
+
+.confirm-dialog h2,
+.confirm-dialog p {
+  margin: 0;
+}
+
+.confirm-dialog p {
+  color: var(--muted);
 }
 
 .modal-scrim {

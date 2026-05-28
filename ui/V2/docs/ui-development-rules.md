@@ -56,7 +56,8 @@
   - `resolve.ts` 负责解析任务节点的交互控件配置和 binding。
   - `ControlLibraryPage.tsx` 负责顶部“控件库”页签。
   - `controls/ImageChoiceThreeControl.tsx` 支持图片三选一的 `equal_grid`、`hero_list`、`hover_focus` 变体。
-  - `controls/SchemaFormControl.tsx` 支持 `ui.input.schema_form.v1`，用于任务详情里的起始输入节点和普通等待输入节点。
+  - `controls/SchemaFormControl.tsx` 支持 `ui.input.schema_form.v1`，用于任务详情里的起始输入节点、普通等待输入节点，以及提交成功后的 readonly 参数快照展示。
+  - `controls/SchemaFormControl.tsx` 会根据 JSON Schema 字段生成可读标签、placeholder 和 hover 提示；固定枚举字段三个及以内渲染为单选选项组，超过三个渲染为下拉框，不得退回普通文本输入。
   - `ui.input.asset_image_picker.v1` 是 schema 表单内的字段级资产图片控件，负责资产库选择、本地上传到资产库后取 URL，并按字段 schema 写入字符串或 URL 数组。
   - 每个控件有稳定 `control_id`。
   - 工作流或节点配置只引用控件 ID、variant、mode、bindings。

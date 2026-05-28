@@ -4,7 +4,7 @@ import { createTextAsset, deleteAsset, downloadAssetContent, listAssetCollection
 import { getCurrentUser, login, register } from "../api/auth";
 import { ApiError, clearAccessToken, getAccessToken } from "../api/client";
 import { createProject, listProjects } from "../api/projects";
-import { createTask, getTask, listTasks, rerunNode, streamTaskEvents, submitInteraction } from "../api/tasks";
+import { createTask, deleteTask, getTask, listTasks, rerunNode, streamTaskEvents, submitInteraction } from "../api/tasks";
 import type {
   AssetRecord,
   AssetCollection,
@@ -264,6 +264,12 @@ export function App() {
             setSelectedTaskId(task.task_id);
             setCreatingTask(false);
           }}
+          onDeleteTask={async (task) => {
+            if (!selectedProjectId) return;
+            await deleteTask(selectedProjectId, task.task_id);
+            setTasks((current) => current.filter((item) => item.task_id !== task.task_id));
+            if (selectedTaskId === task.task_id) setSelectedTaskId("");
+          }}
           onRefreshTasks={() => setReloadTasksKey((current) => current + 1)}
         />
       ) : null}
@@ -372,6 +378,7 @@ function WorkbenchPage({
   onCreateTask,
   onSelectTask,
   onTaskCreated,
+  onDeleteTask,
   onRefreshTasks,
 }: {
   projects: ProjectRecord[];
@@ -388,10 +395,14 @@ function WorkbenchPage({
   onCreateTask: () => void;
   onSelectTask: (taskId: string) => void;
   onTaskCreated: (task: TaskRecord) => void;
+  onDeleteTask: (task: TaskRecord) => Promise<void>;
   onRefreshTasks: () => void;
 }) {
   const selectedTask = tasks.find((task) => task.task_id === selectedTaskId) ?? null;
   const [runtimeContext, setRuntimeContext] = useState<TaskRuntimeContext | null>(null);
+  const [deleteCandidate, setDeleteCandidate] = useState<TaskRecord | null>(null);
+  const [deletingTaskId, setDeletingTaskId] = useState("");
+  const [deleteError, setDeleteError] = useState("");
 
   useEffect(() => {
     setRuntimeContext(null);
@@ -400,6 +411,20 @@ function WorkbenchPage({
   const contextStatus = runtimeContext?.status ?? selectedTask?.status ?? "";
   const contextCurrentNode = runtimeContext?.currentNodeLabel
     ?? (selectedTask?.current_node_id ? formatFieldLabel(selectedTask.current_node_id) : "未记录");
+
+  async function handleConfirmDelete() {
+    if (!deleteCandidate) return;
+    setDeletingTaskId(deleteCandidate.task_id);
+    setDeleteError("");
+    try {
+      await onDeleteTask(deleteCandidate);
+      setDeleteCandidate(null);
+    } catch (nextError) {
+      setDeleteError(readableError(nextError, "任务删除失败，请刷新后重试。"));
+    } finally {
+      setDeletingTaskId("");
+    }
+  }
 
   return (
     <main className="workspace-grid">
@@ -455,20 +480,50 @@ function WorkbenchPage({
           {taskError ? <p className="form-error">{taskError}</p> : null}
           <div className="task-list">
             {tasks.map((task) => (
-              <button
-                aria-label={`打开 ${taskTitle(task)}`}
-                className={selectedTaskId === task.task_id ? "task-row active" : "task-row"}
-                key={task.task_id}
-                type="button"
-                onClick={() => onSelectTask(task.task_id)}
-              >
-                <span className={`status-badge ${statusTone(task.status)}`}>{statusLabel(task.status)}</span>
-                <strong>{taskTitle(task)}</strong>
-                <span>{task.workflow_version ? `版本 ${task.workflow_version}` : statusLabel(task.status)}</span>
-                <small>{taskTime(task)}</small>
-              </button>
+              <div className="task-row-shell" key={task.task_id}>
+                <button
+                  aria-label={`打开 ${taskTitle(task)}`}
+                  className={selectedTaskId === task.task_id ? "task-row active" : "task-row"}
+                  type="button"
+                  onClick={() => onSelectTask(task.task_id)}
+                >
+                  <span className={`status-badge ${statusTone(task.status)}`}>{statusLabel(task.status)}</span>
+                  <strong>{taskTitle(task)}</strong>
+                  <span>{task.workflow_version ? `版本 ${task.workflow_version}` : statusLabel(task.status)}</span>
+                  <small>{taskTime(task)}</small>
+                </button>
+                <button
+                  aria-label={`删除任务 ${task.task_id}`}
+                  className="task-delete-button"
+                  type="button"
+                  onClick={() => {
+                    setDeleteError("");
+                    setDeleteCandidate(task);
+                  }}
+                >
+                  ×
+                </button>
+              </div>
             ))}
           </div>
+          {deleteCandidate ? (
+            <div className="confirm-backdrop" role="presentation">
+              <section className="confirm-dialog" role="dialog" aria-modal="true" aria-label="确认删除任务">
+                <h2>确认删除任务</h2>
+                <p>删除后，这个任务实例、节点执行记录和事件记录将从当前项目中移除。</p>
+                <strong>{taskTitle(deleteCandidate)}</strong>
+                {deleteError ? <p className="form-error">{deleteError}</p> : null}
+                <div className="button-row end">
+                  <button className="secondary-button" type="button" onClick={() => setDeleteCandidate(null)} disabled={Boolean(deletingTaskId)}>
+                    取消
+                  </button>
+                  <button className="primary-button danger" type="button" onClick={handleConfirmDelete} disabled={Boolean(deletingTaskId)}>
+                    {deletingTaskId ? "删除中" : "确认删除"}
+                  </button>
+                </div>
+              </section>
+            </div>
+          ) : null}
         </section>
       </aside>
 
@@ -750,6 +805,7 @@ function NodeExecutionCard({
   onRerun: (nodeId: string) => Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState("");
   const nodeSpec = snapshot?.nodes?.find((item) => item.id === node.node_id);
   const displayTitle = nodeDisplayTitle(node, snapshot);
   const displayKind = nodeDisplayKind(node, snapshot);
@@ -766,8 +822,11 @@ function NodeExecutionCard({
 
   async function withBusy(action: () => Promise<void>) {
     setBusy(true);
+    setActionError("");
     try {
       await action();
+    } catch (nextError) {
+      setActionError(nodeActionError(nextError));
     } finally {
       setBusy(false);
     }
@@ -830,6 +889,8 @@ function NodeExecutionCard({
             onSubmit={(output) => withBusy(() => onInteraction(node.node_id, output))}
           />
         ) : null}
+
+        {actionError ? <p className="form-error">{actionError}</p> : null}
 
         {isWaitingNode(node, snapshot) && !interactionConfig ? (
           <WaitingInteraction busy={busy} node={node} nodeSpec={nodeSpec} onSubmit={(output) => withBusy(() => onInteraction(node.node_id, output))} />
@@ -1440,4 +1501,20 @@ function readableError(error: unknown, fallback: string): string {
   if (error instanceof ApiError) return error.message;
   if (error instanceof Error && error.message) return error.message;
   return fallback;
+}
+
+function nodeActionError(error: unknown): string {
+  const message = readableError(error, "节点操作失败，请检查输入后重试。");
+  const schemaDetails = error instanceof ApiError ? schemaValidationDetails(error.body) : "";
+  return schemaDetails ? `${message}：${schemaDetails}` : message;
+}
+
+function schemaValidationDetails(body: unknown): string {
+  if (typeof body !== "object" || body === null) return "";
+  const details = (body as { error?: { details?: unknown } }).error?.details;
+  if (typeof details !== "object" || details === null) return "";
+  const record = details as { path?: unknown; error?: unknown };
+  const path = Array.isArray(record.path) && record.path.length ? `字段 ${record.path.join(".")}` : "";
+  const error = typeof record.error === "string" ? record.error : "";
+  return [path, error].filter(Boolean).join("，");
 }

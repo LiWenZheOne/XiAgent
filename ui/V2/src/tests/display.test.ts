@@ -26,6 +26,50 @@ describe("display helpers", () => {
     expect(JSON.stringify(fields)).not.toContain("input_schema");
   });
 
+  it("uses schema enum values for fixed-value controls and does not infer business options by field name", () => {
+    const fields = buildSchemaFields({
+      type: "object",
+      required: ["resolution"],
+      properties: {
+        aspectRatio: {
+          type: "string",
+          enum: ["1:1", "16:9", "9:16", "4:3"],
+        },
+        resolution: {
+          type: "string",
+          enum: ["1k", "2k", "4k"],
+        },
+        prompt: {
+          type: "string",
+        },
+      },
+    });
+
+    expect(fields.find((field) => field.key === "aspectRatio")).toMatchObject({
+      label: "画面比例",
+      control: "select",
+      placeholder: "请选择画面比例",
+    });
+    expect(fields.find((field) => field.key === "resolution")).toMatchObject({
+      label: "清晰度",
+      required: true,
+      control: "choice_group",
+      placeholder: "请选择清晰度",
+    });
+    expect(fields.find((field) => field.key === "resolution")?.helpText).toContain("可选值：1k、2k、4k");
+    expect(fields.find((field) => field.key === "prompt")?.placeholder).toBe("请输入提示词");
+
+    const fieldsWithoutEnum = buildSchemaFields({
+      type: "object",
+      properties: {
+        aspectRatio: { type: "string" },
+        resolution: { type: "string" },
+      },
+    });
+    expect(fieldsWithoutEnum.find((field) => field.key === "aspectRatio")?.control).toBe("text");
+    expect(fieldsWithoutEnum.find((field) => field.key === "resolution")?.control).toBe("text");
+  });
+
   it("summarizes nested outputs as readable field groups instead of raw JSON", () => {
     const summary = humanizeValue({
       selected_image: "https://cdn.example.com/final.png",
@@ -44,11 +88,12 @@ describe("display helpers", () => {
       results: [
         { public_url: "https://cdn.example.com/a.png" },
         { url: "https://cdn.example.com/b.jpg" },
+        { url: "https://cdn.example.com/c.svg" },
       ],
       ignored: "not-an-image",
     });
 
-    expect(urls).toEqual(["https://cdn.example.com/a.png", "https://cdn.example.com/b.jpg"]);
+    expect(urls).toEqual(["https://cdn.example.com/a.png", "https://cdn.example.com/b.jpg", "https://cdn.example.com/c.svg"]);
   });
 
   it("uses Chinese status labels and readable snake case labels", () => {

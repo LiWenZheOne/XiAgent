@@ -28,6 +28,11 @@ export function resolveNodeControlConfig(
 ): NodeUiControlConfig | null {
   if (nodeSpec?.ui?.controls?.[slot]) return nodeSpec.ui.controls[slot] ?? null;
 
+  if (slot === "output") {
+    const completedInteraction = resolveCompletedInteractionOutput(node, nodeSpec, snapshot);
+    if (completedInteraction) return completedInteraction;
+  }
+
   const workflowDefault = resolveWorkflowDefault(node, nodeSpec, snapshot, slot);
   if (workflowDefault) return workflowDefault;
 
@@ -117,4 +122,28 @@ function resolveWorkflowDefault(
 
 function controlFromDefault(config: NodeUiConfig | undefined, slot: NodeControlSlot): NodeUiControlConfig | null {
   return config?.controls?.[slot] ?? null;
+}
+
+function resolveCompletedInteractionOutput(
+  node: TaskNodeExecution,
+  nodeSpec: WorkflowNodeSpec | undefined,
+  snapshot: WorkflowSnapshot | null | undefined,
+): NodeUiControlConfig | null {
+  if (!hasCompletedOutput(node)) return null;
+  const interaction =
+    nodeSpec?.ui?.controls?.interaction ??
+    resolveWorkflowDefault(node, nodeSpec, snapshot, "interaction") ??
+    defaultInteractionForNode(node, nodeSpec);
+  return interaction ? { ...interaction, mode: "readonly" } : null;
+}
+
+function defaultInteractionForNode(node: TaskNodeExecution, nodeSpec: WorkflowNodeSpec | undefined): NodeUiControlConfig | null {
+  if ((node.node_ref ?? node.ref ?? nodeSpec?.ref) === "system.user_choice.v1") return defaultUserChoiceInteraction;
+  return null;
+}
+
+function hasCompletedOutput(node: TaskNodeExecution): boolean {
+  if (node.error || node.output_snapshot === undefined || node.output_snapshot === null) return false;
+  const status = node.status.toLowerCase();
+  return ["succeeded", "success", "completed", "done", "node_succeeded"].some((item) => status.includes(item));
 }

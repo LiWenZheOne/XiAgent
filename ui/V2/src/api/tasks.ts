@@ -31,6 +31,13 @@ export async function getTask(projectId: string, taskId: string): Promise<TaskDe
   return apiRequest<TaskDetailResponse>(`/api/tasks/${encodeURIComponent(taskId)}?${params.toString()}`);
 }
 
+export async function deleteTask(projectId: string, taskId: string): Promise<void> {
+  const params = new URLSearchParams({ project_id: projectId });
+  await apiRequest<{ deleted: boolean; task_id: string }>(`/api/tasks/${encodeURIComponent(taskId)}?${params.toString()}`, {
+    method: "DELETE",
+  });
+}
+
 export function streamTaskEvents(
   projectId: string,
   taskId: string,

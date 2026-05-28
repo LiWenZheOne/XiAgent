@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { setAccessToken } from "../api/client";
-import { streamTaskEvents } from "../api/tasks";
+import { deleteTask, streamTaskEvents } from "../api/tasks";
 
 describe("task event stream", () => {
   afterEach(() => {
@@ -45,5 +45,38 @@ describe("task event stream", () => {
     expect(headers.get("Authorization")).toBe("Bearer task-token");
 
     stop();
+  });
+});
+
+describe("task deletion api", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    setAccessToken(null);
+  });
+
+  it("deletes a task with the current project and access token", async () => {
+    setAccessToken("task-token");
+    const fetchMock = vi.fn((_: RequestInfo | URL, __?: RequestInit): Promise<Response> =>
+      Promise.resolve(
+        new Response(JSON.stringify({ deleted: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await deleteTask("project-1", "task-1");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/tasks/task-1?project_id=project-1",
+      expect.objectContaining({
+        method: "DELETE",
+        headers: expect.any(Headers),
+      }),
+    );
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
+    const headers = init?.headers as Headers;
+    expect(headers.get("Authorization")).toBe("Bearer task-token");
   });
 });

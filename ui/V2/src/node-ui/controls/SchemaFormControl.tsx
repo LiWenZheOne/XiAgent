@@ -7,11 +7,13 @@ import type { NodeUiControlProps } from "../types";
 
 type FormValue = string | boolean | string[];
 
-export function SchemaFormControl({ busy, config, node, nodeSpec, projectId, snapshot, onSubmit }: NodeUiControlProps) {
+export function SchemaFormControl({ busy, config, node, nodeSpec, projectId, snapshot, slot, value, onSubmit }: NodeUiControlProps) {
   const inputSchema = resolveInputSchema(node, nodeSpec, snapshot);
   const fields = useMemo(() => buildSchemaFields(inputSchema), [inputSchema]);
   const [values, setValues] = useState<Record<string, FormValue>>(() => initialValues(fields));
   const [error, setError] = useState("");
+  const readonly = config.mode === "readonly" || !onSubmit;
+  const renderedValues = readonly ? valuesFromPayload(fields, value ?? readonlySnapshotValue(node, slot)) : values;
   const fieldConfigs = fieldControlConfigs(config);
   const nodeConfig = recordValue(nodeSpec?.config);
   const title = readText(node.metadata?.title) || readText(nodeConfig?.title) || "填写运行输入";
@@ -35,7 +37,7 @@ export function SchemaFormControl({ busy, config, node, nodeSpec, projectId, sna
   return (
     <section className="interaction-panel schema-form-control">
       <div>
-        <p className="eyebrow">等待输入</p>
+        <p className="eyebrow">{readonly ? "参数快照" : "等待输入"}</p>
         <h3>{title}</h3>
         {description ? <p className="muted">{description}</p> : null}
       </div>
@@ -50,7 +52,8 @@ export function SchemaFormControl({ busy, config, node, nodeSpec, projectId, sna
                 field={field}
                 key={field.key}
                 projectId={projectId}
-                value={values[field.key]}
+                readonly={readonly}
+                value={renderedValues[field.key]}
                 onChange={(value) => setValues((current) => ({ ...current, [field.key]: value }))}
               />
             );
@@ -59,7 +62,8 @@ export function SchemaFormControl({ busy, config, node, nodeSpec, projectId, sna
             <SchemaValueField
               field={field}
               key={field.key}
-              value={values[field.key]}
+              readonly={readonly}
+              value={renderedValues[field.key]}
               onChange={(value) => setValues((current) => ({ ...current, [field.key]: value }))}
             />
           );
@@ -67,43 +71,90 @@ export function SchemaFormControl({ busy, config, node, nodeSpec, projectId, sna
       </div>
 
       {error ? <p className="form-error">{error}</p> : null}
-      <button className="primary-button" disabled={busy || fields.length === 0} type="button" onClick={submit}>
-        提交并继续
-      </button>
+      {!readonly ? (
+        <button className="primary-button" disabled={busy || fields.length === 0} type="button" onClick={submit}>
+          提交并继续
+        </button>
+      ) : null}
     </section>
   );
 }
 
-function SchemaValueField({ field, value, onChange }: { field: SchemaField; value: FormValue | undefined; onChange: (value: FormValue) => void }) {
+function SchemaValueField({
+  field,
+  value,
+  readonly,
+  onChange,
+}: {
+  field: SchemaField;
+  value: FormValue | undefined;
+  readonly: boolean;
+  onChange: (value: FormValue) => void;
+}) {
+  const label = fieldLabelText(field);
+
   if (field.control === "select") {
     return (
-      <label className="form-field">
-        <span>{field.label}{field.required ? " *" : ""}</span>
-        <select value={String(value ?? "")} onChange={(event) => onChange(event.target.value)} aria-label={field.label}>
-          <option value="">请选择</option>
+      <label className="form-field" title={field.helpText}>
+        <span>{label}</span>
+        <select disabled={readonly} value={String(value ?? "")} onChange={(event) => onChange(event.target.value)} aria-label={field.label}>
+          <option value="">{field.placeholder || "请选择"}</option>
           {field.enumValues?.map((item) => <option key={item} value={item}>{item}</option>)}
         </select>
+        {field.description ? <small>{field.description}</small> : null}
       </label>
+    );
+  }
+
+  if (field.control === "choice_group") {
+    return (
+      <fieldset className="choice-field" title={field.helpText}>
+        <legend>{label}</legend>
+        <div className="choice-options">
+          {field.enumValues?.map((item) => (
+            <label className={String(value ?? "") === item ? "choice-option active" : "choice-option"} key={item}>
+              <input
+                checked={String(value ?? "") === item}
+                disabled={readonly}
+                name={field.key}
+                type="radio"
+                value={item}
+                onChange={() => onChange(item)}
+              />
+              <span>{item}</span>
+            </label>
+          ))}
+        </div>
+        {field.description ? <small>{field.description}</small> : null}
+      </fieldset>
     );
   }
 
   if (field.control === "checkbox") {
     return (
-      <label className="check-field">
-        <input checked={Boolean(value)} type="checkbox" onChange={(event) => onChange(event.target.checked)} />
-        <span>{field.label}{field.required ? " *" : ""}</span>
+      <label className="check-field" title={field.helpText}>
+        <input checked={Boolean(value)} disabled={readonly} type="checkbox" onChange={(event) => onChange(event.target.checked)} />
+        <span>{label}</span>
       </label>
     );
   }
 
   return (
-    <label className="form-field">
-      <span>{field.label}{field.required ? " *" : ""}</span>
+    <label className="form-field" title={field.helpText}>
+      <span>{label}</span>
       {field.control === "textarea" ? (
-        <textarea aria-label={field.label} value={String(value ?? "")} onChange={(event) => onChange(event.target.value)} />
+        <textarea
+          aria-label={field.label}
+          placeholder={field.placeholder}
+          readOnly={readonly}
+          value={String(value ?? "")}
+          onChange={(event) => onChange(event.target.value)}
+        />
       ) : (
         <input
           aria-label={field.label}
+          placeholder={field.placeholder}
+          readOnly={readonly}
           type={field.control === "number" ? "number" : "text"}
           value={String(value ?? "")}
           onChange={(event) => onChange(event.target.value)}
@@ -114,16 +165,22 @@ function SchemaValueField({ field, value, onChange }: { field: SchemaField; valu
   );
 }
 
+function fieldLabelText(field: SchemaField): string {
+  return `${field.label}${field.required ? " *" : ""}`;
+}
+
 function AssetImagePickerField({
   config,
   field,
   projectId,
+  readonly,
   value,
   onChange,
 }: {
   config?: NodeUiControlConfig;
   field: SchemaField;
   projectId?: string;
+  readonly: boolean;
   value: FormValue | undefined;
   onChange: (value: FormValue) => void;
 }) {
@@ -139,7 +196,7 @@ function AssetImagePickerField({
   }
 
   return (
-    <fieldset className="asset-choice-field asset-picker-field">
+    <fieldset className="asset-choice-field asset-picker-field" title={field.helpText}>
       <legend>{field.label}{field.required ? " *" : ""}</legend>
       {field.description ? <p>{field.description}</p> : null}
       <div className={expanded ? "selected-thumbnails expanded" : "selected-thumbnails"}>
@@ -150,7 +207,7 @@ function AssetImagePickerField({
         )) : <span className="muted">尚未选择图片</span>}
       </div>
       <div className="button-row">
-        <button className="secondary-button" type="button" onClick={() => setOpen(true)}>选择图片</button>
+        {!readonly ? <button className="secondary-button" type="button" onClick={() => setOpen(true)}>选择图片</button> : null}
         {selected.length > 1 ? (
           <button className="ghost-button" type="button" onClick={() => setExpanded((current) => !current)}>
             {expanded ? "收起" : "展开全部"}
@@ -388,6 +445,33 @@ function buildInputData(fields: SchemaField[], values: Record<string, FormValue>
     else data[field.key] = Array.isArray(value) ? value[0] ?? "" : value ?? "";
   }
   return data;
+}
+
+function valuesFromPayload(fields: SchemaField[], payload: unknown): Record<string, FormValue> {
+  const source = recordValue(payload);
+  const values = initialValues(fields);
+  if (!source) return values;
+
+  for (const field of fields) {
+    const value = source[field.key];
+    if (value === undefined || value === null) continue;
+    values[field.key] = formValueFromPayload(field, value);
+  }
+  return values;
+}
+
+function formValueFromPayload(field: SchemaField, value: unknown): FormValue {
+  if (field.control === "checkbox" || field.type === "boolean") return Boolean(value);
+  if (field.control === "asset_images" || field.type === "array") {
+    if (Array.isArray(value)) return value.map((item) => String(item)).filter(Boolean);
+    return value === "" ? [] : [String(value)];
+  }
+  return String(value);
+}
+
+function readonlySnapshotValue(node: NodeUiControlProps["node"], slot: NodeUiControlProps["slot"]): unknown {
+  if (slot === "input") return node.input_snapshot;
+  return node.output_snapshot ?? node.input_snapshot;
 }
 
 function splitLines(value: string): string[] {

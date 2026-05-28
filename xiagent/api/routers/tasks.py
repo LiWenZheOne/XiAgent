@@ -100,6 +100,21 @@ async def get_task(
     }
 
 
+@router.delete("/{task_id}")
+async def delete_task(
+    task_id: str,
+    project_id: str,
+    services: Annotated[ApiServices, Depends(get_services)],
+    current_user: Annotated[UserRecord, Depends(get_current_user)],
+) -> dict:
+    await services.runtime.delete_task(
+        user_id=current_user.user_id,
+        project_id=project_id,
+        task_id=task_id,
+    )
+    return {"deleted": True, "task_id": task_id}
+
+
 @router.get("/{task_id}/stream")
 async def stream_task_events(
     task_id: str,

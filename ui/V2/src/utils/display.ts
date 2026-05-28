@@ -1,6 +1,6 @@
 import type { JsonSchema, TaskEvent, TaskNodeExecution, TaskRecord, WorkflowNodeSpec, WorkflowSnapshot } from "../api/types";
 
-export type FieldControl = "text" | "textarea" | "number" | "checkbox" | "select" | "asset_images";
+export type FieldControl = "text" | "textarea" | "number" | "checkbox" | "select" | "choice_group" | "asset_images";
 
 export interface SchemaField {
   key: string;
@@ -11,6 +11,8 @@ export interface SchemaField {
   description?: string;
   defaultValue?: unknown;
   enumValues?: string[];
+  placeholder?: string;
+  helpText?: string;
 }
 
 export interface HumanValue {
@@ -30,6 +32,8 @@ const fieldLabels: Record<string, string> = {
   current_node_id: "当前节点",
   draft_count: "草稿数量",
   aspect_ratio: "画面比例",
+  aspectRatio: "画面比例",
+  resolution: "清晰度",
   approved: "审批结果",
   comment: "意见",
   notes: "说明",
@@ -98,21 +102,29 @@ const statusLabels: Record<string, string> = {
 export function buildSchemaFields(schema?: JsonSchema): SchemaField[] {
   const properties = schema?.properties ?? {};
   const required = new Set(schema?.required ?? []);
-  return Object.entries(properties).map(([key, property]) => ({
-    key,
-    label: schemaFieldLabel(key, property.title),
-    required: required.has(key),
-    control: controlForField(key, property),
-    type: property.type,
-    description: property.description,
-    defaultValue: property.default,
-    enumValues: property.enum,
-  }));
+  return Object.entries(properties).map(([key, property]) => {
+    const label = schemaFieldLabel(key, property.title);
+    const enumValues = property.enum;
+    const control = controlForField(key, property, enumValues);
+    const isRequired = required.has(key);
+    return {
+      key,
+      label,
+      required: isRequired,
+      control,
+      type: property.type,
+      description: property.description,
+      defaultValue: property.default,
+      enumValues,
+      placeholder: placeholderForField(label, control, property),
+      helpText: helpTextForField(label, property, enumValues, isRequired),
+    };
+  });
 }
 
 export function formatFieldLabel(key: string): string {
   if (fieldLabels[key]) return fieldLabels[key];
-  const normalized = key.replace(/_id$/, "").replace(/_/g, " ");
+  const normalized = key.replace(/_id$/, "").replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/_/g, " ");
   return normalized.replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
@@ -240,9 +252,9 @@ function isHumanInteractionRef(ref: string): boolean {
   return ref.includes("human_approval") || ref.includes("user_approval") || ref.includes("user_choice");
 }
 
-function controlForField(key: string, property: JsonSchema): FieldControl {
+function controlForField(key: string, property: JsonSchema, enumValues?: string[]): FieldControl {
   const normalized = key.toLowerCase();
-  if (property.enum?.length) return "select";
+  if (enumValues?.length) return enumValues.length <= 3 ? "choice_group" : "select";
   if (normalized.includes("image_url") || normalized === "images" || property.format === "uri") return "asset_images";
   if (property.type === "number" || property.type === "integer") return "number";
   if (property.type === "boolean") return "checkbox";
@@ -250,6 +262,21 @@ function controlForField(key: string, property: JsonSchema): FieldControl {
   if (property.type === "array") return "textarea";
   if (normalized.includes("prompt") || normalized.includes("description") || normalized.includes("text") || normalized.includes("script")) return "textarea";
   return "text";
+}
+
+function placeholderForField(label: string, control: FieldControl, property: JsonSchema): string {
+  if (control === "select" || control === "choice_group" || control === "asset_images") return `请选择${label}`;
+  if (control === "textarea" && property.type === "array") return `每行一个${label}`;
+  if (control === "checkbox") return "";
+  return `请输入${label}`;
+}
+
+function helpTextForField(label: string, property: JsonSchema, enumValues: string[] | undefined, required: boolean): string {
+  const details = [];
+  if (property.description) details.push(property.description);
+  if (enumValues?.length) details.push(`可选值：${enumValues.join("、")}`);
+  if (!details.length) details.push(`${label}字段`);
+  return `${required ? "必填" : "可选"}。${details.join("；")}`;
 }
 
 function collectImageUrls(value: unknown, urls: Set<string>) {
@@ -279,5 +306,5 @@ function schemaKeys(schema: WorkflowNodeSpec["outputs"]): string[] {
 }
 
 function isImageUrl(value: string): boolean {
-  return /^https?:\/\/.+\.(png|jpe?g|webp|gif)(\?.*)?$/i.test(value);
+  return /^https?:\/\/.+\.(png|jpe?g|webp|gif|svg)(\?.*)?$/i.test(value);
 }

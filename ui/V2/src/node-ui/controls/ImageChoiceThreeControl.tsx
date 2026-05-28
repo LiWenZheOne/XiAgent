@@ -7,8 +7,12 @@ export function ImageChoiceThreeControl({ config, node, busy = false, preview = 
   const [selectedId, setSelectedId] = useState("");
   const items = useMemo(() => readImageChoiceItems(config, node), [config, node]);
   const variant = config.variant ?? "equal_grid";
+  const readonly = config.mode === "readonly";
+  const submittedId = useMemo(() => readSubmittedChoiceId(node, items), [items, node]);
+  const activeSelectedId = readonly ? submittedId : selectedId;
 
   function handleSelect(item: ImageChoiceItem) {
+    if (readonly) return;
     setSelectedId(item.id);
     if (!preview) {
       onSubmit?.({
@@ -31,15 +35,15 @@ export function ImageChoiceThreeControl({ config, node, busy = false, preview = 
   return (
     <section className="interaction-panel node-ui-choice" aria-label="图片三选一">
       <div>
-        <p className="eyebrow">等待用户选择</p>
+        <p className="eyebrow">{readonly ? "已提交选择" : "等待用户选择"}</p>
         <h3>{readQuestion(node) || "请选择一张图片继续运行"}</h3>
       </div>
       <div className={`image-choice-grid ${variant}`}>
         {items.map((item) => (
           <button
             aria-label={`选择 ${item.label}`}
-            className={selectedId === item.id ? "image-choice-card active" : "image-choice-card"}
-            disabled={busy}
+            className={activeSelectedId === item.id ? "image-choice-card active" : "image-choice-card"}
+            disabled={busy || readonly}
             key={`${item.id}-${item.index}`}
             type="button"
             onClick={() => handleSelect(item)}
@@ -61,5 +65,18 @@ function readQuestion(node: NodeUiControlProps["node"]): string {
     const question = (input as Record<string, unknown>).question;
     if (typeof question === "string") return question;
   }
+  return "";
+}
+
+function readSubmittedChoiceId(node: NodeUiControlProps["node"], items: ImageChoiceItem[]): string {
+  const output = node.output_snapshot;
+  if (typeof output !== "object" || output === null) return "";
+  const record = output as Record<string, unknown>;
+  if (typeof record.selected_id === "string") return record.selected_id;
+  if (typeof record.selected_image_url === "string") {
+    const matched = items.find((item) => item.imageUrl === record.selected_image_url);
+    if (matched) return matched.id;
+  }
+  if (typeof record.selected_index === "number") return items[record.selected_index]?.id ?? "";
   return "";
 }

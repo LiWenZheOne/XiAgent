@@ -19,9 +19,15 @@ workflow:
           minLength: 1
       aspect_ratio:
         type: string
+        title: 画面比例
+        description: RunningHub 图片画面比例，必须从固定比例中选择。
+        enum: ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "21:9"]
         minLength: 1
       resolution:
         type: string
+        title: 清晰度
+        description: RunningHub 图片输出清晰度，必须从固定档位中选择。
+        enum: ["1k", "2k", "4k"]
         minLength: 1
     additionalProperties: false
   ui:

@@ -141,7 +141,7 @@ def build_builtin_ui_control_catalog() -> UiControlCatalog:
                     UiControlVariant(
                         name="default",
                         label="默认审批",
-                        modes=("interactive",),
+                        modes=("interactive", "readonly"),
                     ),
                 ),
                 description="人工审批交互控件。",
@@ -156,7 +156,7 @@ def build_builtin_ui_control_catalog() -> UiControlCatalog:
                     UiControlVariant(
                         name="default",
                         label="通用 schema 输入表单",
-                        modes=("input",),
+                        modes=("input", "readonly"),
                         submit_schema={"type": "object", "additionalProperties": True},
                     ),
                 ),

@@ -1356,6 +1356,46 @@ async def test_workflow_template_project_id_uses_call_context(test_settings) -> 
     ]
 
 
+async def test_changed_workflow_contract_creates_new_template_snapshot(test_settings) -> None:
+    registry = NodeRegistry()
+    registry.register(EchoToolNode())
+    runtime, user_id, project_id = await _runtime(test_settings, registry)
+    first_contract = _echo_contract()
+    second_contract = _echo_contract()
+    second_contract["workflow"]["name"] = "Echo Updated"
+    second_contract["nodes"][0]["config"] = {"title": "Updated Echo"}
+
+    first_task = await _create_task_with_workflow_input(
+        runtime,
+        user_id=user_id,
+        project_id=project_id,
+        contract=first_contract,
+        input_data={"topic": "first"},
+    )
+    second_task = await _create_task_with_workflow_input(
+        runtime,
+        user_id=user_id,
+        project_id=project_id,
+        contract=second_contract,
+        input_data={"topic": "second"},
+    )
+
+    first_snapshot = await runtime.get_task_workflow_snapshot(
+        user_id=user_id,
+        project_id=project_id,
+        task_id=first_task.task_id,
+    )
+    second_snapshot = await runtime.get_task_workflow_snapshot(
+        user_id=user_id,
+        project_id=project_id,
+        task_id=second_task.task_id,
+    )
+
+    assert first_snapshot["workflow"]["name"] == "Echo"
+    assert second_snapshot["workflow"]["name"] == "Echo Updated"
+    assert await _workflow_template_count(test_settings) == 2
+
+
 async def test_repeated_resume_does_not_duplicate_downstream_work(test_settings) -> None:
     registry = NodeRegistry()
     registry.register(HumanApprovalNode())

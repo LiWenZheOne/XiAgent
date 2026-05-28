@@ -28,6 +28,16 @@ def test_image_three_choice_control_declares_expected_variants() -> None:
         "hero_list",
         "hover_focus",
     }
+    assert all("readonly" in variant.modes for variant in control.variants)
+
+
+def test_approval_control_declares_readonly_mode() -> None:
+    catalog = build_builtin_ui_control_catalog()
+    control = catalog.get("ui.interaction.approval.v1")
+
+    assert control.kind == "interaction"
+    assert "interactive" in control.variants[0].modes
+    assert "readonly" in control.variants[0].modes
 
 
 def test_unknown_ui_control_raises_key_error() -> None:
@@ -44,6 +54,7 @@ def test_schema_form_and_asset_image_picker_controls_are_registered() -> None:
     assert schema_form.kind == "input"
     assert schema_form.variants[0].name == "default"
     assert "input" in schema_form.variants[0].modes
+    assert "readonly" in schema_form.variants[0].modes
 
     asset_picker = catalog.get("ui.input.asset_image_picker.v1")
     assert asset_picker.kind == "input"

@@ -154,6 +154,25 @@ async def _session(tmp_path: Path):
     )
 
 
+def test_runninghub_workflow_image_parameters_expose_fixed_options() -> None:
+    from xiagent.workflows.loader import load_workflow_file
+
+    expected_aspect_ratios = ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "21:9"]
+    expected_resolutions = ["1k", "2k", "4k"]
+    workflow_paths = [
+        Path("workflows/global/runninghub_text_to_image_test.workflow.yaml"),
+        Path("workflows/global/runninghub_image_to_image_test.workflow.yaml"),
+    ]
+
+    for workflow_path in workflow_paths:
+        contract = load_workflow_file(workflow_path)
+        properties = contract["workflow"]["input_schema"]["properties"]
+        assert properties["aspect_ratio"]["enum"] == expected_aspect_ratios
+        assert properties["resolution"]["enum"] == expected_resolutions
+        assert properties["aspect_ratio"]["description"]
+        assert properties["resolution"]["description"]
+
+
 # ── V3 Node Tests ──────────────────────────────────────────────
 
 
