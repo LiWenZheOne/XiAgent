@@ -10,6 +10,9 @@
 - 第一版只支持 DAG 和条件分支，不支持通用循环。
 - 节点 `ref` 必须来自已注册节点；不得凭空写不存在的节点。
 - 节点输入必须使用长路径引用，例如 `$workflow.input.topic`、`$nodes.planner.output.plan`。
+- `workflow.input_schema` 只描述最终 `$workflow.input` 的数据契约，不代表任务创建页可以渲染业务参数表单。
+- 带业务入参的工作流必须在任务创建后通过首个输入节点收集参数，并显式声明 `collect_workflow_input`，节点 `ref` 使用平台起始输入节点，例如 `system.workflow_input.v1`。
+- 工作流业务节点不得承担“顺手收集初始参数”的职责；创建页也不得提交业务 `input_data`。标准流程是 `START -> collect_workflow_input -> first_business_node`。
 - 节点输出必须用 `outputs` JSON Schema 声明；下游只能引用 schema 中可校验的字段。
 - 工作流验证和调试优先使用 `WorkflowTestBuilder` 或 `python -m xiagent.workflows.testing_cli`。
 
@@ -18,6 +21,7 @@
 - UI 控件规则以 `docs/design/2026-05-27-01-ui-control-manifest-design.md` 为准。
 - 控件选择遵循工作流优先、节点默认保底：`nodes[].ui` 高于 `workflow.ui.defaults`，`workflow.ui.defaults` 高于 `NodeDescriptor.ui_defaults`，最后才使用系统 fallback。
 - 工作流需要定制展示时，优先在 `nodes[].ui` 指定 `controls.input`、`controls.output`、`controls.interaction` 或 `controls.detail`。
+- 起始输入节点使用通用 schema 表单控件承载字段控件，例如文本输入、选择器和资产图片选择；字段控件必须能复用于普通等待节点，不得只服务任务创建页。
 - 工作流级通用展示默认放在 `workflow.ui.defaults`，可按节点 ref、节点类型、字段类型或标签匹配。
 - 节点级 `ui_defaults` 只作为保底建议，不得依赖它表达具体工作流体验。
 - `control_id`、`variant`、`mode` 和 `bindings` 必须来自 UI 控件 manifest 或已注册控件库。

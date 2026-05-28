@@ -63,6 +63,14 @@ UI 配置分三层：
 
 工作流配置优先，节点默认保底。节点实现不应为了某个工作流写死 UI 展示方式。
 
+## Workflow 起始输入边界
+
+`workflow.input_schema` 只描述最终 `$workflow.input` 的数据契约，不是任务创建页表单定义。创建任务页不得根据 `input_schema` 渲染业务参数表单，也不得维护专用资产选择、上传或字段校验逻辑。
+
+带业务入参的工作流必须显式声明首个输入节点，例如 `collect_workflow_input` / `system.workflow_input.v1`。该节点在任务创建后等待用户输入，提交后由运行时校验 payload 并固化为 `$workflow.input`，后续业务节点继续使用 `$workflow.input.<field>` 引用。
+
+起始输入节点、运行中等待输入节点和字段级控件必须复用同一套节点 UI 控件库。通用 schema 表单控件应使用 `ui.input.schema_form.v1` 一类中性命名，字段控件如资产图片选择应能在起始输入和普通输入场景中复用。
+
 ## 控件解析优先级
 
 最终有效 UI 配置按以下顺序解析：

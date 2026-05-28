@@ -32,7 +32,8 @@ XiAgent UI work is versioned under `ui/<version>/...` and must deliver a real en
 - Available workflows for a project are `scope=global` plus workflows whose `project_id` matches the selected project.
 - Global workflow templates keep `project_id` empty in the workflow contract; do not rewrite them to `project_id=global`.
 - Workflow/node/task JSON is transport and persistence data. Do not display raw JSON, schema keys, `input_schema`, `output_snapshot`, `public_url`, or internal refs to end users unless a developer/debug view is explicitly requested.
-- Render workflow input schemas as labels, forms, pickers, toggles, image selectors, cards, status badges, and media previews. Node input/output should be presented as user-facing cards, not as raw object dumps.
+- Task creation pages must not collect workflow business parameters. They show launch information and create the task; required workflow input is submitted later in the task detail start input node.
+- Render workflow input schemas as labels, forms, pickers, toggles, image selectors, cards, status badges, and media previews only through the node UI control path. Node input/output should be presented as user-facing cards, not as raw object dumps.
 
 ## Node UI Controls
 
@@ -76,6 +77,7 @@ For acceptance review, use `xiagent-ui-review` after implementation.
 ## Common Mistakes
 
 - Adding a fake frontend-only global project instead of using `/api/projects`.
+- Reintroducing a task-creation-page business input form instead of using the start input node and node UI controls.
 - Showing raw workflow JSON or schema because it is convenient to render.
 - Hiding test workflows that should be selectable for UI testing.
 - Loading all workflows without selected project context.

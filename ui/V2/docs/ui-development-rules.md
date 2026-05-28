@@ -37,14 +37,16 @@
 
 - 登录后调用 `/api/projects`，选择真实项目；默认应为 `global`。
 - 任务列表、任务详情、事件流、交互提交、资产查询、工作流查询都必须带当前 `project_id`。
-- 创建任务调用 `/api/tasks` 时，body 必须包含当前项目 `project_id`、选中的工作流契约和用户输入。
+- 创建任务调用 `/api/tasks` 时，body 必须包含当前项目 `project_id` 和选中的工作流契约；业务 `input_data` 不得作为创建任务前置表单要求。
+- 工作流必填入参在任务创建后的起始输入节点中填写，提交后由后端固化为 `$workflow.input`。
 - 工作流列表调用 `/api/workflows?project_id=<current>`；不能用无项目上下文的全部工作流列表驱动用户创建任务。
 - 资产查询使用当前项目与 scope，例如 `scope=combined&project_id=<current>`。
 
 ## 节点与控件规则
 
 - V2 页面不得直接显示 `input_schema`、`output_snapshot`、`public_url`、节点 ref 或原始 JSON。
-- 工作流输入 schema 应渲染成可读表单：字符串输入、长文本、选择项、图片资产选择、公开图片地址等。
+- 工作流输入 schema 只能在任务详情的起始输入节点中渲染成可读表单：字符串输入、长文本、选择项、图片资产选择、公开图片地址等。
+- 创建任务页不得为 workflow 入参维护独立表单，也不得复制起始输入节点的资产选择、上传或校验逻辑。
 - 节点执行输入/输出应渲染为用户卡片：字段列表、文本段落、图片预览、状态、错误和等待操作。
 - 节点控件选择遵循工作流优先、节点默认保底：`nodes[].ui` 高于 `workflow.ui.defaults`，`workflow.ui.defaults` 高于 `NodeDescriptor.ui_defaults`，最后才使用系统 fallback。
 - 工作流可以分别指定节点的输入、输出、交互和详情控件；工作流只覆盖某一区域时，不应清空其他区域的默认控件。

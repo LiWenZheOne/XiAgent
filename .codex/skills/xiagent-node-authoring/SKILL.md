@@ -31,6 +31,7 @@ description: Use when creating or modifying XiAgent BaseNode implementations, no
 - 核心领域接口不得依赖 LangGraph、PydanticAI、FastAPI、SQLite 等具体实现；第三方库只能出现在适配器、基础设施或具体节点实现中。
 - 模型类第三方能力可以注册为工作流节点，但节点不得直接依赖模型 SDK、HTTP/API 实现、请求地址、轮询细节或密钥配置；RunningHub、DeepSeek 等能力必须通过 `ChatModelRouter` 调用 `xiagent.models.providers.*`，节点只负责把工作流输入输出适配为模型请求和节点结果。
 - 节点输入输出 schema 要能被工作流契约和下游节点稳定引用；不要把临时内部字段暴露为公共契约。
+- 普通业务节点不得承担任务创建前或工作流起始参数采集职责。初始业务入参必须由任务创建后的首个输入节点收集并固化为 `$workflow.input`。
 - 外部 API 节点必须明确凭据来源、超时、失败状态和测试替身；不要在测试里真实调用外部服务。
 
 ## Structured Output Boundary
@@ -47,6 +48,7 @@ description: Use when creating or modifying XiAgent BaseNode implementations, no
 - 节点可以在 `NodeDescriptor.ui_defaults` 中提供通用默认展示建议，但不得把某个工作流的具体体验写死到节点里。
 - 控件选择优先级是 `nodes[].ui` > `workflow.ui.defaults` > `NodeDescriptor.ui_defaults` > 系统 fallback；节点默认只负责保底。
 - `ui_defaults` 只能引用后端 UI 控件 manifest 中存在的 `control_id`、`variant`、`mode` 和 `bindings`。不要引用 V2 React 组件路径或前端内部实现。
+- 起始输入节点的 `ui_defaults` 应使用通用 schema 表单控件承载字段控件；不要创建任务创建页专用表单或 workflow-only 控件分支。
 - 节点输出 schema 必须先稳定描述业务数据，再让 UI 控件绑定它；不要为了某个控件临时暴露内部字段。
 - 图片、资产、候选列表、三选一等 UI 需求应通过稳定字段表达，例如图片候选数组、图片 URL 字段、选择结果字段。字段是否足够应由工作流 validator 和 UI manifest 校验。
 - 默认推荐把生成候选图和用户三选一拆成不同节点；如果三选一可复用于多个工作流，优先新增或复用用户选择节点。
@@ -104,6 +106,7 @@ python -m xiagent.workflows.testing_cli workflows/global/<workflow-id>.workflow.
 - 先写节点再补测试：违反 TDD，回到 RED 阶段。
 - 第一轮方案只列节点代码、不列 UI 控件缺口：必须同步检查控件库，缺控件时纳入同一计划。
 - 没查现有节点就新建：先列出现有候选节点，等待用户确认复用或继续开发。
+- 让第一个业务节点顺手收集 workflow 初始参数：应新增或复用显式起始输入节点。
 - 注册了节点但没测试注册表：工作流可能仍找不到 `ref`。
 - 节点直接访问数据库或资产路径：改为通过正式服务接口。
 - RunningHub 或 DeepSeek 节点直接导入 SDK、拼接 HTTP 请求或读取模型密钥：改为通过 `ChatModelRouter` 和 `xiagent.models.providers.*`，节点只保留输入输出适配逻辑。

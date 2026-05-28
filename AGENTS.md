@@ -71,6 +71,12 @@ $nodes.planner.output.plan
 
 节点输出不覆盖全局状态。每次节点执行都必须保留独立的输入快照、输出快照、状态、错误和事件。
 
+任务创建前不得收集工作流业务入参。创建任务页只允许展示工作流说明、输入准备提示、节点流程摘要和创建入口；不得根据 `workflow.input_schema` 渲染业务表单，也不得提交业务 `input_data` 作为创建任务的必要条件。
+
+需要用户提供初始参数的工作流，必须在任务创建后通过首个输入节点收集参数。该节点负责等待用户输入、校验 payload，并将结果固化为任务的 `$workflow.input`，后续业务节点继续使用 `$workflow.input.<field>` 长路径引用，不直接依赖输入节点输出路径。
+
+起始输入节点和运行中等待输入节点必须复用同一套节点 UI 控件库和字段控件。不得为任务创建页、起始输入节点和普通等待节点分别维护三套表单或资产选择逻辑。
+
 ## 工作流测试约束
 
 调试和验证工作流时，默认优先使用 `xiagent.workflows.testing.WorkflowTestBuilder` 或 `python -m xiagent.workflows.testing_cli`，把它作为无 UI 工作流测试的标准入口。

@@ -13,22 +13,26 @@ description: Use when creating or modifying XiAgent workflow YAML/JSON contracts
 
 1. 先读项目约束：`AGENTS.md`、`workflows/AGENTS.md`、现有 `workflows/global/*.workflow.yaml`、`xiagent/nodes/**`、`tests/test_workflow_validator.py`、`tests/test_workflow_testing_*.py`。
 2. 从用户描述提炼工作流输入、目标输出、节点顺序、条件分支、人工交互、目标 UI 展示、所需节点控件、资产或图片输入输出。
-3. 写或改工作流前，先明确：需要新增哪些节点、可以复用哪些已有节点、使用哪些模型或模型节点、需要哪些 UI 节点控件、控件是否已存在、是否需要外部模型 API 或模型配置。
-4. 查找可用节点：优先看 `xiagent.nodes.build_node_registry()` 注册了什么，再读各节点的 `NodeDescriptor`、输入输出 schema 和测试。不要凭空写不存在的 `ref`。
-5. 如果现有节点不足，立即暂停工作流落盘，列出缺失节点规格：建议 `ref`、职责、输入 schema、输出 schema、错误语义、是否访问资产、是否需要外部凭据、建议测试。然后建议使用 `$xiagent-node-authoring` 先补节点。
-6. 如果首次需求方案确认时发现缺少对应 UI 节点控件，把控件新增或修改一并列入计划：建议 `control_id`、variant、mode、bindings、依赖的输出 schema、后端 manifest、V2 控件实现、预览/校验测试和目标工作流接入点。然后建议使用 `$xiagent-ui-control-library-authoring` 补控件，不要用虚构控件 ID 继续落工作流。
-7. 如果缺少模型 API、模型密钥或模型配置，必须暂停并让用户提供配置；不得用 mock、跳过或“假通过”替代真实验证。
-8. 节点能力和 UI 控件能力满足后再创建或修改工作流。默认路径是 `workflows/global/<workflow-id>.workflow.yaml`，默认 `scope: global`，除非用户明确要求其他位置或 scope。
-9. 如果工作流需要定制 UI 展示，优先在工作流契约中声明 `workflow.ui` 和 `nodes[].ui`；不要把工作流特定展示塞进节点实现或节点默认 UI。
-10. 用现有加载与校验逻辑验证契约，不绕过运行时或注册表。至少覆盖 schema、节点 ref、边、条件分支、输入路径引用和 UI 控件绑定。
-11. 用工作流测试构建器验证执行：优先 `WorkflowTestBuilder`；CLI 场景用 `python -m xiagent.workflows.testing_cli <workflow>`。需要交互输入时使用 CLI 交互能力；有图片输出时使用 preview 或图片路径输出。
-12. 汇报时给出工作流文件、用到的节点、UI 控件配置、测试命令和结果；如果暂停在节点缺口、控件缺口或模型配置缺口，汇报缺口而不是提交半成品工作流。
+3. 如果工作流有业务入参，必须规划显式起始输入节点，例如 `collect_workflow_input` / `system.workflow_input.v1`。创建任务页不得收集这些参数，业务节点也不得顺手承担初始参数采集。
+4. 写或改工作流前，先明确：需要新增哪些节点、可以复用哪些已有节点、使用哪些模型或模型节点、需要哪些 UI 节点控件、控件是否已存在、是否需要外部模型 API 或模型配置。
+5. 查找可用节点：优先看 `xiagent.nodes.build_node_registry()` 注册了什么，再读各节点的 `NodeDescriptor`、输入输出 schema 和测试。不要凭空写不存在的 `ref`。
+6. 如果现有节点不足，立即暂停工作流落盘，列出缺失节点规格：建议 `ref`、职责、输入 schema、输出 schema、错误语义、是否访问资产、是否需要外部凭据、建议测试。然后建议使用 `$xiagent-node-authoring` 先补节点。
+7. 如果首次需求方案确认时发现缺少对应 UI 节点控件，把控件新增或修改一并列入计划：建议 `control_id`、variant、mode、bindings、依赖的输出 schema、后端 manifest、V2 控件实现、预览/校验测试和目标工作流接入点。然后建议使用 `$xiagent-ui-control-library-authoring` 补控件，不要用虚构控件 ID 继续落工作流。
+8. 如果缺少模型 API、模型密钥或模型配置，必须暂停并让用户提供配置；不得用 mock、跳过或“假通过”替代真实验证。
+9. 节点能力和 UI 控件能力满足后再创建或修改工作流。默认路径是 `workflows/global/<workflow-id>.workflow.yaml`，默认 `scope: global`，除非用户明确要求其他位置或 scope。
+10. 如果工作流需要定制 UI 展示，优先在工作流契约中声明 `workflow.ui` 和 `nodes[].ui`；不要把工作流特定展示塞进节点实现或节点默认 UI。
+11. 用现有加载与校验逻辑验证契约，不绕过运行时或注册表。至少覆盖 schema、节点 ref、边、条件分支、输入路径引用和 UI 控件绑定。
+12. 用工作流测试构建器验证执行：优先 `WorkflowTestBuilder`；CLI 场景用 `python -m xiagent.workflows.testing_cli <workflow>`。需要交互输入时使用 CLI 交互能力；有图片输出时使用 preview 或图片路径输出。
+13. 汇报时给出工作流文件、用到的节点、UI 控件配置、测试命令和结果；如果暂停在节点缺口、控件缺口或模型配置缺口，汇报缺口而不是提交半成品工作流。
 
 ## Project Constraints
 
 - 工作流模板由开发者维护的 YAML/JSON 契约定义，不做拖拽式或低代码编辑器。
 - 第一版只支持 DAG 和条件分支，不支持通用循环。
 - 节点输入使用长路径引用，例如 `$workflow.input.topic`、`$nodes.planner.output.plan`。
+- `workflow.input_schema` 是最终 `$workflow.input` 的数据契约，不是任务创建页表单定义。
+- 带业务入参的工作流必须显式声明首个输入节点，并从 `START` 指向该节点，再进入第一个业务节点。
+- 创建任务前不得收集 workflow 业务入参；起始输入节点提交后再固化 `$workflow.input`。
 - 节点输出不覆盖全局状态；运行时必须保留每个节点的输入快照、输出快照、状态、错误和事件。
 - 不直接访问 SQLite、资产文件路径或其他模块内部实现；测试也要通过正式服务、运行时和构建器。
 - 任务、项目、资产、工作流必须挂到明确的 `user_id` 和 `project_id` 关系下；默认测试用户和项目由构建器创建。
@@ -49,6 +53,7 @@ description: Use when creating or modifying XiAgent workflow YAML/JSON contracts
 - 工作流可以分别指定 `controls.input`、`controls.output`、`controls.interaction`、`controls.detail`、`actions`、`sections` 和 `bindings`。只覆盖某一区域时，不应清空其他区域默认配置。
 - 新工作流需要定制展示时，优先在 `nodes[].ui` 指定 `control_id`、`variant`、`mode` 和 `bindings`；工作流级通用默认放在 `workflow.ui.defaults`。
 - 不得凭空发明控件 ID、variant、mode 或 binding 名称。必须对照 UI 控件 manifest、后端 `/api/ui/node-controls`（实现后）或 V2 控件注册表。
+- 起始输入节点应使用通用 schema 表单控件和字段控件；不得把资产选择、上传或字段校验复制到任务创建页。
 - 三选一图片等控件必须让节点 `outputs` schema 和绑定路径满足控件 manifest：候选图数组数量、元素图片地址字段、选择结果字段都要可校验。
 - 默认推荐把模型生成候选图和用户三选一拆成两个节点；三选一交互节点负责等待选择并输出选择结果，便于跨工作流复用。
 - 保留高级单节点模式：复合节点可以生成候选图并等待用户选择，但仍必须使用标准 waiting/resume、output schema 校验和 UI 控件绑定规则。
@@ -94,6 +99,7 @@ workflows/global/run_deepseek_echo_test.bat --auto
 ## Common Mistakes
 
 - 直接写一个不存在的节点 `ref`：先暂停并补节点规格。
+- 把 workflow 起始参数放回创建任务页，或让第一个业务节点兼任参数采集。
 - 第一轮方案只列节点缺口、不列 UI 控件缺口：必须同步检查控件库，缺控件时纳入同一计划。
 - 为了测试直接查 SQLite 或拼资产路径：使用 `WorkflowTestBuilder`、`RuntimeService` 和 `AssetService`。
 - 忘记工作流是 DAG：不要引入通用循环；需要循环能力时先提出引擎能力缺口。

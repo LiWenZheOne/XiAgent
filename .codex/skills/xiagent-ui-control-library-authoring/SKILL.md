@@ -50,15 +50,24 @@ $node.metadata.<field>
 $nodes.<node_id>.output.<field>
 ```
 
+## Workflow Input Hard Constraints
+
+- `workflow.input_schema` describes the final `$workflow.input` contract. It must not be implemented as a task-creation-page business form.
+- Initial workflow parameters must be collected after task creation by the first input node, typically `system.workflow_input.v1`, and then persisted as `$workflow.input`.
+- The start input node, mid-workflow waiting nodes, and reusable field inputs must share the same node UI control library. Do not create separate create-page-only form controls or asset pickers.
+- Use a generic schema form control such as `ui.input.schema_form.v1` to host field controls. Workflow-specific semantics belong in node metadata/config, not in a `workflow_form` control fork.
+- Field controls such as asset image picker must be reusable under both the start input node and other waiting/input nodes, with the same submit payload semantics.
+
 ## Implementation Workflow
 
 1. 判断需求属于新控件、新 variant、现有控件修复、版本本地展示修复，还是工作流/节点配置修复。
 2. 如果工作流或节点需要引用新的 `control_id`、`variant`、`mode` 或 binding 语义，先更新后端 manifest 和后端验证测试，再做 UI 版本实现。
-3. 如果只是目标 UI 版本的视觉或交互 bug，保持后端 manifest 不变，只改目标版本控件实现和版本规则文档。
-4. 在目标 UI 版本中通过本地控件注册表解析控件，不在页面代码里为某个工作流硬编码可复用展示。
-5. 控件 props 应围绕稳定任务节点快照、工作流节点 spec、workflow snapshot、slot、config、value、busy、preview 和 `onSubmit` 一类输入设计；不要让控件直接读取 SQLite、资产路径、节点类或后端内部实现。
-6. 新增控件时同时补：注册表映射、控件组件、必要 fixture、控件库预览页展示、渲染测试、提交 payload 测试、fallback 行为。
-7. 修改已有控件时保留旧任务 snapshot 的兼容性；需要破坏性变更时新增 `vN+1` 控件 ID，不复用旧 ID 改语义。
+3. 如果需求涉及 workflow 起始入参，先确认业务输入发生在任务详情首个输入节点中；创建任务页只能展示 launch 信息，不能新增表单分支。
+4. 如果只是目标 UI 版本的视觉或交互 bug，保持后端 manifest 不变，只改目标版本控件实现和版本规则文档。
+5. 在目标 UI 版本中通过本地控件注册表解析控件，不在页面代码里为某个工作流硬编码可复用展示。
+6. 控件 props 应围绕稳定任务节点快照、工作流节点 spec、workflow snapshot、slot、config、value、busy、preview 和 `onSubmit` 一类输入设计；不要让控件直接读取 SQLite、资产路径、节点类或后端内部实现。
+7. 新增控件时同时补：注册表映射、控件组件、必要 fixture、控件库预览页展示、渲染测试、提交 payload 测试、fallback 行为。
+8. 修改已有控件时保留旧任务 snapshot 的兼容性；需要破坏性变更时新增 `vN+1` 控件 ID，不复用旧 ID 改语义。
 
 ## UI Version Rules
 
@@ -88,6 +97,7 @@ $nodes.<node_id>.output.<field>
 - 只在 React 注册一个控件，却没有在后端 manifest 注册，导致工作流无法校验。
 - 在工作流里临时写不存在的 `control_id`、variant 或 binding 名称。
 - 为某个工作流把渲染逻辑写进页面，而不是进入控件注册表。
+- 把 workflow 起始入参做成任务创建页专用表单，导致创建页、起始输入节点和等待节点出现多套输入控件。
 - 让 `NodeDescriptor.ui_defaults` 表达具体工作流体验，而不是通用保底展示。
 - 为了控件方便改节点输出字段，破坏下游工作流路径引用。
 - 修改 V2 控件库后没有同步 `ui/V2/AGENTS.md` 或 `ui/V2/docs/ui-development-rules.md`。

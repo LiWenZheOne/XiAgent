@@ -25,6 +25,14 @@
 - 不让前端控件直接读取 SQLite、资产文件路径或资产模块内部实现。
 - 不改变 `image_urls` 的数据形态；单选图片仍提交为长度为 1 的 URL 数组。
 
+## 强约束
+
+- `workflow.input_schema` 是最终 `$workflow.input` 的数据契约，不是创建任务页表单定义。
+- 任务创建页不得收集业务入参，也不得维护独立 schema 表单、资产选择或上传逻辑。
+- 所有初始业务入参必须在任务创建后由首个输入节点收集、校验并固化为 `$workflow.input`。
+- 起始输入节点和运行中等待输入节点必须复用同一套 `node-ui` 控件与字段控件；新增控件时优先保证可复用性。
+- 通用 schema 表单控件应使用 `ui.input.schema_form.v1` 一类中性命名，不使用只服务 workflow 起始输入的 `workflow_form` 分支。
+
 ## 运行模型
 
 任务创建分为两个阶段：
@@ -40,7 +48,7 @@
 
 ## 工作流契约
 
-现有工作流可以显式增加首个输入节点：
+带业务入参的工作流必须显式增加首个输入节点：
 
 ```yaml
 nodes:
@@ -51,7 +59,7 @@ nodes:
     ui:
       controls:
         interaction:
-          control_id: ui.input.workflow_form.v1
+          control_id: ui.input.schema_form.v1
           variant: default
           mode: input
 
@@ -62,9 +70,7 @@ edges:
     to: transform_image
 ```
 
-为减少重复，运行时和验证器也可以支持隐式起始输入节点：当工作流声明 `input_schema` 且未显式声明 `system.workflow_input.v1` 时，系统自动在任务实例中插入起始输入节点。显式节点优先，用于需要定制标题、说明、字段控件和布局的工作流。
-
-推荐落地顺序是先实现显式输入节点能力，再逐步迁移现有工作流；隐式插入作为兼容能力补充，不作为工作流作者的首选表达。
+工作流作者不得依赖运行时隐式插入起始输入节点。验证器应要求带业务入参的工作流显式声明起始输入节点，使任务详情、执行轨迹、输入快照和 UI 控件配置都能在工作流契约中被追踪和评审。
 
 ## 创建任务页
 
@@ -155,7 +161,8 @@ options:
 
 后端需要补充以下校验：
 
-- `system.workflow_input.v1` 只能作为起始输入节点或由运行时隐式插入。
+- `system.workflow_input.v1` 只能作为显式起始输入节点使用。
+- 带必填 `workflow.input_schema` 的工作流必须声明 `collect_workflow_input` 一类起始输入节点，并从 `START` 指向该节点。
 - 起始输入节点提交 payload 必须满足 `workflow.input_schema`。
 - 控件配置中的 `control_id`、`variant`、`mode`、`bindings` 必须存在于 UI control manifest。
 - 资产图片选择控件绑定的字段必须是 `string` 或 `string[]`；当前推荐优先支持 `string[]`。
@@ -163,8 +170,7 @@ options:
 
 兼容策略：
 
-- 已有工作流短期可以由隐式起始输入节点承接，避免一次性破坏。
-- 重点工作流逐步迁移为显式 `collect_workflow_input` 节点，便于配置专属说明和控件。
+- 现有工作流需要随本次改造迁移为显式 `collect_workflow_input` 节点，不能继续把开头参数停留在创建页。
 - V2 创建任务页删除业务参数表单后，旧任务详情仍按已有快照显示，不影响历史任务查看。
 
 ## 测试策略
@@ -172,7 +178,7 @@ options:
 后端测试：
 
 - UI control catalog 包含 `ui.input.asset_image_picker.v1`。
-- workflow validator 接受显式起始输入节点和图片控件配置。
+- workflow validator 接受显式起始输入节点和图片控件配置，并拒绝带必填入参但缺少起始输入节点的新工作流。
 - 创建任务时允许空 `input_data` 进入等待输入状态。
 - 提交起始输入节点后按 `workflow.input_schema` 校验并继续执行。
 - `image_urls` 单选、多选 payload 均保持数组形态。
