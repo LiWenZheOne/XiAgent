@@ -300,6 +300,48 @@ def _approval_contract() -> dict:
     })
 
 
+def _first_node_user_input_contract() -> dict:
+    return {
+        "workflow": {
+            "id": "first-node-input",
+            "version": "1.0.0",
+            "scope": "global",
+            "name": "First Node Input",
+            "input_schema": {"type": "object", "additionalProperties": False},
+        },
+        "nodes": [
+            {
+                "id": "ask_color",
+                "ref": "system.human_approval.v1",
+                "inputs": {
+                    "question": {"value": "请告诉我你喜欢的颜色。"},
+                    "answer": {
+                        "from_user": True,
+                        "schema": {"type": "string", "minLength": 1},
+                    },
+                },
+                "outputs": {
+                    "type": "object",
+                    "required": ["answer"],
+                    "properties": {"answer": {"type": "string", "minLength": 1}},
+                    "additionalProperties": False,
+                },
+            },
+            {
+                "id": "echo",
+                "ref": "tool.echo.v1",
+                "inputs": {"answer": {"from": "$nodes.ask_color.output.answer"}},
+                "outputs": {"type": "object"},
+            },
+        ],
+        "edges": [
+            {"from": "START", "to": "ask_color"},
+            {"from": "ask_color", "to": "echo"},
+            {"from": "echo", "to": "END"},
+        ],
+    }
+
+
 def _with_user_input_node(contract: dict) -> dict:
     input_schema = contract["workflow"].get("input_schema", {})
     if not input_schema.get("properties"):
@@ -571,6 +613,34 @@ async def test_runner_resumes_waiting_task_from_console(tmp_path: Path) -> None:
         "echo",
     ]
     assert any("[等待输入] 节点 review" in line for line in output_lines)
+
+
+async def test_runner_prompts_first_node_input_when_initial_payload_is_empty(
+    tmp_path: Path,
+) -> None:
+    prompts: list[str] = []
+    console = ConsoleIO(
+        input_func=lambda prompt: prompts.append(prompt) or "蓝色",
+    )
+    session = await (
+        WorkflowTestBuilder()
+        .with_database_path(tmp_path / "workflow-test.sqlite3")
+        .with_asset_storage_dir(tmp_path / "assets")
+        .with_workflow_dir(tmp_path / "workflows")
+        .with_run_output_dir(tmp_path / "runs")
+        .build()
+    )
+    runner = WorkflowTestRunner(session=session, console=console)
+
+    result = await runner.run_contract(_first_node_user_input_contract(), input_data={})
+
+    assert result.task.status == "succeeded"
+    assert result.node_executions[0].input_snapshot == {
+        "question": "请告诉我你喜欢的颜色。",
+        "answer": "蓝色",
+    }
+    assert result.node_executions[0].output_snapshot == {"answer": "蓝色"}
+    assert prompts == ["answer: "]
 
 
 async def test_runner_loads_contract_from_workflow_file(tmp_path: Path) -> None:

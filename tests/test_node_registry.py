@@ -295,6 +295,32 @@ async def test_human_approval_returns_waiting_with_requested_inputs() -> None:
     assert result.metadata["requested_inputs"] == inputs
 
 
+async def test_human_approval_filters_success_output_to_declared_schema() -> None:
+    node = HumanApprovalNode()
+    ctx = NodeContext(
+        user_id="user_1",
+        project_id="project_1",
+        task_id="task_1",
+        node_id="review",
+        node_execution_id="exec_1",
+        config={},
+        output_schema={
+            "type": "object",
+            "required": ["answer"],
+            "properties": {"answer": {"type": "string", "minLength": 1}},
+            "additionalProperties": False,
+        },
+        asset_service=None,
+        event_sink=None,
+        logger=None,
+    )
+
+    result = await node.run(ctx=ctx, inputs={"question": "喜欢的颜色？", "answer": "蓝色"})
+
+    assert result.status == "succeeded"
+    assert result.output == {"answer": "蓝色"}
+
+
 async def test_echo_tool_returns_inputs() -> None:
     node = EchoToolNode()
     inputs = {"message": "hello", "count": 2}

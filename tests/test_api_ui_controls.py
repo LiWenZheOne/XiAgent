@@ -40,4 +40,7 @@ def test_get_unknown_ui_node_control_returns_404(test_settings) -> None:
         response = client.get("/api/ui/node-controls/ui.missing.v1")
 
     assert response.status_code == 404
-    assert response.json()["detail"]["code"] == "unknown_ui_control"
+    body = response.json()
+    assert "detail" not in body
+    assert body["error"]["code"] == "unknown_ui_control"
+    assert body["error"]["details"]["control_id"] == "ui.missing.v1"

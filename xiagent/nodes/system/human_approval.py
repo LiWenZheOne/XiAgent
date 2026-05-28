@@ -36,13 +36,13 @@ class HumanApprovalNode(BaseNode):
             and required
             and all(isinstance(name, str) and name in inputs for name in required)
         ):
-            return NodeResult(status="succeeded", output=dict(inputs))
+            return NodeResult(status="succeeded", output=_output_from_schema(output_schema, inputs))
         decision = inputs.get("decision")
         if isinstance(decision, str) and decision:
-            return NodeResult(status="succeeded", output=dict(inputs))
+            return NodeResult(status="succeeded", output=_output_from_schema(output_schema, inputs))
         approved = inputs.get("approved")
         if isinstance(approved, bool):
-            output = dict(inputs)
+            output = _output_from_schema(output_schema, inputs)
             output["decision"] = "approved" if approved else "rejected"
             return NodeResult(status="succeeded", output=output)
         return NodeResult(
@@ -50,3 +50,10 @@ class HumanApprovalNode(BaseNode):
             output={},
             metadata={"requested_inputs": dict(inputs)},
         )
+
+
+def _output_from_schema(output_schema: Mapping[str, Any], inputs: Mapping[str, Any]) -> dict[str, Any]:
+    properties = output_schema.get("properties")
+    if isinstance(properties, Mapping):
+        return {name: inputs[name] for name in properties if isinstance(name, str) and name in inputs}
+    return dict(inputs)

@@ -47,9 +47,9 @@ workflow:
       system:
         controls:
           input:
-            control_id: ui.display.value.v1
+            control_id: ui.input.schema_form.v1
             variant: default
-            mode: readonly
+            mode: input
           output:
             control_id: ui.display.value.v1
             variant: default
@@ -57,21 +57,23 @@ workflow:
       ai.runninghub_image_to_image.v1:
         controls:
           output:
-            control_id: ui.display.image_candidates.v1
-            variant: grid
+            control_id: ui.display.image_viewer.v1
+            variant: grid_modal
             mode: readonly
             bindings:
               items_path: "$node.output.results"
               image_url_path: url
+              label_path: text
       ai.runninghub_image_to_image.v2:
         controls:
           output:
-            control_id: ui.display.image_candidates.v1
-            variant: grid
+            control_id: ui.display.image_viewer.v1
+            variant: grid_modal
             mode: readonly
             bindings:
               items_path: "$node.output.asset_images"
               image_url_path: image_url
+              label_path: full_name
 
 nodes:
   - id: collect_asset_storyboard_input
@@ -1009,6 +1011,21 @@ nodes:
             from: "$nodes.match_variants.output.results"
           accessory_result:
             from: "$nodes.check_accessories.output.results"
+      decision:
+        from_user: true
+        schema:
+          type: string
+          minLength: 1
+      approved:
+        from_user: true
+        required: false
+        schema:
+          type: boolean
+      comment:
+        from_user: true
+        required: false
+        schema:
+          type: string
     outputs:
       type: object
       required: ["decision"]
@@ -1055,6 +1072,30 @@ nodes:
             from: "$nodes.match_variants.output.results"
           accessory_result:
             from: "$nodes.check_accessories.output.results"
+      asset_images:
+        from_user: true
+        schema:
+          type: array
+          items:
+            type: object
+            required: ["full_name", "image_url", "source"]
+            properties:
+              full_name:
+                type: string
+                minLength: 1
+              image_url:
+                type: string
+                minLength: 1
+              variant:
+                type: string
+              asset_id:
+                type: string
+              source:
+                type: string
+                enum: ["ai_generated", "manual_upload"]
+              runninghub_task_id:
+                type: string
+            additionalProperties: false
     outputs:
       type: object
       required: ["asset_images"]
@@ -1516,6 +1557,35 @@ nodes:
             from: "$nodes.merge_asset_images.output.asset_images"
           context:
             from: "$nodes.assemble_storyboard_context.output.context_string"
+      decision:
+        from_user: true
+        schema:
+          type: string
+          minLength: 1
+      approved:
+        from_user: true
+        required: false
+        schema:
+          type: boolean
+      comment:
+        from_user: true
+        required: false
+        schema:
+          type: string
+      corrections:
+        from_user: true
+        required: false
+        schema:
+          type: object
+          properties:
+            corrected_prompt:
+              type: string
+            corrected_image_urls:
+              type: array
+              items:
+                type: string
+                minLength: 1
+          additionalProperties: false
     outputs:
       type: object
       required: ["decision"]
@@ -1523,6 +1593,17 @@ nodes:
         decision:
           type: string
           minLength: 1
+        corrections:
+          type: object
+          properties:
+            corrected_prompt:
+              type: string
+            corrected_image_urls:
+              type: array
+              items:
+                type: string
+                minLength: 1
+          additionalProperties: false
       additionalProperties: false
 
   # ===== 提取目标分格的图像URL =====
@@ -1751,6 +1832,31 @@ nodes:
             from: "$nodes.extract_panel_image_urls.output.panel_image_urls"
           description:
             from: "$nodes.extract_panel_image_urls.output.description"
+      decision:
+        from_user: true
+        schema:
+          type: string
+          minLength: 1
+      approved:
+        from_user: true
+        required: false
+        schema:
+          type: boolean
+      comment:
+        from_user: true
+        required: false
+        schema:
+          type: string
+      selected_image_url:
+        from_user: true
+        required: false
+        schema:
+          type: string
+      revision_notes:
+        from_user: true
+        required: false
+        schema:
+          type: string
     outputs:
       type: object
       required: ["decision"]
@@ -1758,6 +1864,10 @@ nodes:
         decision:
           type: string
           minLength: 1
+        selected_image_url:
+          type: string
+        revision_notes:
+          type: string
       additionalProperties: false
 
 edges:

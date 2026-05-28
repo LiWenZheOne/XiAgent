@@ -33,9 +33,9 @@ workflow:
       system:
         controls:
           input:
-            control_id: ui.display.value.v1
+            control_id: ui.input.schema_form.v1
             variant: default
-            mode: readonly
+            mode: input
           output:
             control_id: ui.display.value.v1
             variant: default
@@ -43,12 +43,13 @@ workflow:
       ai.runninghub_image_to_image.v1:
         controls:
           output:
-            control_id: ui.display.image_candidates.v1
-            variant: grid
+            control_id: ui.display.image_viewer.v1
+            variant: grid_modal
             mode: readonly
             bindings:
               items_path: "$node.output.results"
               image_url_path: url
+              label_path: text
 
 nodes:
   - id: collect_storyboard_input
@@ -410,6 +411,14 @@ nodes:
             from: "$nodes.describe_panels.output.segment_descriptions.0.panels.0.description"
           character_matches:
             from: "$nodes.match_characters.output.character_matches"
+      image_urls:
+        from_user: true
+        schema:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            minLength: 1
     outputs:
       type: object
       required: ["image_urls"]

@@ -53,7 +53,7 @@ class ConsoleIO:
         metadata = _read_attr(execution, "metadata") or {}
         requested_inputs = metadata.get("requested_inputs") if isinstance(metadata, dict) else None
         question = _question_from_requested_inputs(requested_inputs)
-        if question is not None:
+        if question is not None or (isinstance(metadata, dict) and "input_schema" in metadata):
             guided_output = _prompt_resume_schema(output_schema, console=self, question=question)
             if guided_output is not None:
                 return guided_output

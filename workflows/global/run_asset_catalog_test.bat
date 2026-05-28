@@ -136,11 +136,17 @@ if errorlevel 1 goto end_failure
 goto run_preview_auto
 
 :run_basic_auto
-python -m xiagent.workflows.testing_cli "%WORKFLOW_FILE%" --interactive --input-file "%INPUT_FILE%"
+(
+    echo approved
+    echo approved
+) | python -m xiagent.workflows.testing_cli "%WORKFLOW_FILE%" --interactive --input-file "%INPUT_FILE%"
 goto end_with_errorlevel
 
 :run_preview_auto
-python -m xiagent.workflows.testing_cli "%WORKFLOW_FILE%" --interactive --input-file "%INPUT_FILE%" --preview html
+(
+    echo approved
+    echo approved
+) | python -m xiagent.workflows.testing_cli "%WORKFLOW_FILE%" --interactive --input-file "%INPUT_FILE%" --preview html
 goto end_with_errorlevel
 
 :run_basic

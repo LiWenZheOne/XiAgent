@@ -3,9 +3,10 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 
 from xiagent.api.dependencies import ApiServices, get_services
+from xiagent.core.errors import NotFoundError
 
 router = APIRouter(prefix="/api/ui", tags=["ui"])
 
@@ -25,7 +26,8 @@ async def get_node_control(
     try:
         return {"item": asdict(services.ui_controls.get(control_id))}
     except KeyError as exc:
-        raise HTTPException(
-            status_code=404,
-            detail={"code": "unknown_ui_control", "control_id": control_id},
+        raise NotFoundError(
+            code="unknown_ui_control",
+            message="UI control was not found",
+            details={"control_id": control_id},
         ) from exc

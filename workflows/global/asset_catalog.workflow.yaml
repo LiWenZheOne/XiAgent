@@ -33,9 +33,9 @@ workflow:
       system:
         controls:
           input:
-            control_id: ui.display.value.v1
+            control_id: ui.input.schema_form.v1
             variant: default
-            mode: readonly
+            mode: input
           output:
             control_id: ui.display.value.v1
             variant: default
@@ -43,12 +43,13 @@ workflow:
       ai.runninghub_image_to_image.v1:
         controls:
           output:
-            control_id: ui.display.image_candidates.v1
-            variant: grid
+            control_id: ui.display.image_viewer.v1
+            variant: grid_modal
             mode: readonly
             bindings:
               items_path: "$node.output.results"
               image_url_path: url
+              label_path: text
 
 nodes:
   - id: collect_asset_catalog_input
@@ -551,6 +552,24 @@ nodes:
             from: "$nodes.match_variants.output.results"
           accessory_result:
             from: "$nodes.check_accessories.output.results"
+      decision:
+        from_user: true
+        schema:
+          type: string
+          minLength: 1
+      approved_assets:
+        from_user: true
+        required: false
+        schema:
+          type: object
+      image_urls:
+        from_user: true
+        required: false
+        schema:
+          type: array
+          items:
+            type: string
+            minLength: 1
     outputs:
       type: object
       required: ["decision"]
@@ -708,6 +727,19 @@ nodes:
             from: "$nodes.match_variants.output.results"
           accessory_result:
             from: "$nodes.check_accessories.output.results"
+      decision:
+        from_user: true
+        schema:
+          type: string
+          minLength: 1
+      image_urls:
+        from_user: true
+        required: false
+        schema:
+          type: array
+          items:
+            type: string
+            minLength: 1
     outputs:
       type: object
       required: ["decision"]

@@ -23,9 +23,9 @@ workflow:
       system:
         controls:
           input:
-            control_id: ui.display.value.v1
+            control_id: ui.input.schema_form.v1
             variant: default
-            mode: readonly
+            mode: input
           output:
             control_id: ui.display.value.v1
             variant: default
@@ -37,6 +37,11 @@ nodes:
     inputs:
       question:
         value: 请告诉我你喜欢的颜色。
+      answer:
+        from_user: true
+        schema:
+          type: string
+          minLength: 1
     outputs:
       type: object
       required: ["answer"]
@@ -51,6 +56,11 @@ nodes:
     inputs:
       question:
         value: 请告诉我你喜欢的食物。
+      answer:
+        from_user: true
+        schema:
+          type: string
+          minLength: 1
       favorite_color:
         from: "$nodes.ask_color.output.answer"
     outputs:
@@ -67,6 +77,11 @@ nodes:
     inputs:
       question:
         value: 请告诉我你喜欢的运动。
+      answer:
+        from_user: true
+        schema:
+          type: string
+          minLength: 1
       favorite_color:
         from: "$nodes.ask_color.output.answer"
       favorite_food:

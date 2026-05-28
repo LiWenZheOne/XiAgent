@@ -536,7 +536,7 @@ def test_task_list_detail_and_stream_return_project_scoped_runtime_data(test_set
     assert "event: task_succeeded\n" in stream_response.text
 
 
-def test_delete_task_removes_project_scoped_runtime_data(test_settings) -> None:
+def test_delete_task_archives_project_scoped_runtime_data(test_settings) -> None:
     app = create_app(settings=test_settings)
     with TestClient(app) as client:
         client.post(
@@ -573,12 +573,18 @@ def test_delete_task_removes_project_scoped_runtime_data(test_settings) -> None:
             headers=headers,
         )
 
+    archived_rows = asyncio.run(_fetch_archived_task_rows(test_settings.database_path, task["task_id"]))
+
     assert delete_response.status_code == 200
     assert delete_response.json() == {"deleted": True, "task_id": task["task_id"]}
     assert list_response.status_code == 200
     assert list_response.json()["items"] == []
     assert detail_response.status_code == 404
     assert detail_response.json()["error"]["code"] == "task_not_found"
+    assert archived_rows["task_status"] == "archived"
+    assert archived_rows["node_executions"] == 2
+    assert archived_rows["task_events"] > 0
+    assert "task_archived" in archived_rows["event_types"]
 
 
 def test_task_interactions_endpoint_resumes_waiting_task(test_settings) -> None:
@@ -894,7 +900,10 @@ def test_workflows_endpoint_accepts_default_global_project(test_settings) -> Non
 def test_request_validation_errors_use_standard_error_shape(test_settings) -> None:
     app = create_app(settings=test_settings)
     with TestClient(app) as client:
-        response = client.post("/api/auth/register", json={"username": "missing-password"})
+        response = client.post(
+            "/api/auth/register",
+            json={"username": "bad-password-input", "password": 123},
+        )
 
     assert response.status_code == 422
     body = response.json()
@@ -902,6 +911,49 @@ def test_request_validation_errors_use_standard_error_shape(test_settings) -> No
     assert body["error"]["code"] == "request_validation_failed"
     assert body["error"]["message"]
     assert body["error"]["details"]
+    assert body["error"]["details"]["errors"][0]["loc"] == ["body", "password"]
+    assert "input" not in body["error"]["details"]["errors"][0]
+
+
+async def _fetch_archived_task_rows(database_path, task_id: str) -> dict:
+    async with connect_db(database_path) as db:
+        task_row = await _fetch_one(
+            db,
+            "select status from tasks where task_id = ?",
+            (task_id,),
+        )
+        execution_row = await _fetch_one(
+            db,
+            "select count(*) as total from node_executions where task_id = ?",
+            (task_id,),
+        )
+        event_row = await _fetch_one(
+            db,
+            "select count(*) as total from task_events where task_id = ?",
+            (task_id,),
+        )
+        event_cursor = await db.execute(
+            "select event_type from task_events where task_id = ? order by rowid asc",
+            (task_id,),
+        )
+        try:
+            event_rows = await event_cursor.fetchall()
+        finally:
+            await event_cursor.close()
+    return {
+        "task_status": task_row["status"] if task_row is not None else None,
+        "node_executions": int(execution_row["total"]) if execution_row is not None else 0,
+        "task_events": int(event_row["total"]) if event_row is not None else 0,
+        "event_types": [row["event_type"] for row in event_rows],
+    }
+
+
+async def _fetch_one(db, query: str, parameters: tuple):
+    cursor = await db.execute(query, parameters)
+    try:
+        return await cursor.fetchone()
+    finally:
+        await cursor.close()
 
 
 def _workflow_yaml(*, workflow_id: str, name: str, scope: str, project_id: str | None = None) -> str:

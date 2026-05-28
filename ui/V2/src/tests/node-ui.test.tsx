@@ -3,10 +3,11 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApprovalControl } from "../node-ui/controls/ApprovalControl";
+import { ControlLibraryPage } from "../node-ui/ControlLibraryPage";
 import { ImageChoiceThreeControl } from "../node-ui/controls/ImageChoiceThreeControl";
 import { SchemaFormControl } from "../node-ui/controls/SchemaFormControl";
 import { getNodeUiControl, resolveNodeControlConfig, resolveNodeInteractionConfig } from "../node-ui/registry";
-import type { JsonSchema, NodeUiControlConfig, TaskNodeExecution, WorkflowNodeSpec } from "../api/types";
+import type { JsonSchema, NodeUiControlConfig, TaskNodeExecution, UiControlDescriptor, WorkflowNodeSpec } from "../api/types";
 
 const config: NodeUiControlConfig = {
   control_id: "ui.choice.image_three.v1",
@@ -33,6 +34,85 @@ const node: TaskNodeExecution = {
     ],
   },
 };
+
+const controlDescriptors: UiControlDescriptor[] = [
+  {
+    control_id: "ui.display.value.v1",
+    version: "1.0.0",
+    name: "Value Display",
+    kind: "output",
+    tags: ["value", "fallback", "readonly"],
+    variants: [{ name: "default", label: "默认值展示", tags: [], modes: ["readonly"], required_bindings: [] }],
+    description: "通用值展示 fallback 控件。",
+  },
+  {
+    control_id: "ui.display.image_candidates.v1",
+    version: "1.0.0",
+    name: "Image Candidates",
+    kind: "output",
+    tags: ["image", "list", "candidates", "readonly"],
+    variants: [{ name: "grid", label: "网格", tags: [], modes: ["readonly"], required_bindings: [] }],
+    description: "图片候选列表展示控件。",
+  },
+  {
+    control_id: "ui.display.image_viewer.v1",
+    version: "1.0.0",
+    name: "Image Viewer",
+    kind: "output",
+    tags: ["image", "viewer", "modal", "readonly"],
+    variants: [{ name: "grid_modal", label: "缩略图网格原图查看", tags: [], modes: ["readonly"], required_bindings: [] }],
+    description: "只读图片输出查看控件。",
+  },
+  {
+    control_id: "ui.choice.image_three.v1",
+    version: "1.0.0",
+    name: "Image Three Choice",
+    kind: "interaction",
+    tags: ["image", "choice", "select_one", "candidates_3", "interactive"],
+    variants: [
+      { name: "equal_grid", label: "三图等宽", tags: [], modes: ["interactive", "readonly"], required_bindings: [] },
+      { name: "hero_list", label: "首图大列表", tags: [], modes: ["interactive", "readonly"], required_bindings: [] },
+      { name: "hover_focus", label: "悬停放大", tags: [], modes: ["interactive", "readonly"], required_bindings: [] },
+    ],
+    description: "图片候选三选一控件。",
+  },
+  {
+    control_id: "ui.interaction.approval.v1",
+    version: "1.0.0",
+    name: "Approval",
+    kind: "interaction",
+    tags: ["approval", "human", "interactive"],
+    variants: [{ name: "default", label: "默认审批", tags: [], modes: ["interactive", "readonly"], required_bindings: [] }],
+    description: "人工审批交互控件。",
+  },
+  {
+    control_id: "ui.input.schema_form.v1",
+    version: "1.0.0",
+    name: "Schema Input Form",
+    kind: "input",
+    tags: ["schema", "input", "form", "interactive"],
+    variants: [{ name: "default", label: "通用 schema 输入表单", tags: [], modes: ["input", "readonly"], required_bindings: [] }],
+    description: "在输入节点中按 schema 收集用户提交的结构化参数。",
+  },
+  {
+    control_id: "ui.input.asset_image_picker.v1",
+    version: "1.0.0",
+    name: "Asset Image Picker",
+    kind: "input",
+    tags: ["asset", "image", "picker", "upload"],
+    variants: [{ name: "thumbnails", label: "缩略图资产图片选择", tags: [], modes: ["input", "readonly"], required_bindings: [] }],
+    description: "从资产库选择或上传图片。",
+  },
+  {
+    control_id: "ui.fallback.schema_form.v1",
+    version: "1.0.0",
+    name: "Schema Form",
+    kind: "input",
+    tags: ["schema", "form", "fallback"],
+    variants: [{ name: "default", label: "默认表单", tags: [], modes: ["input"], required_bindings: [] }],
+    description: "基于 JSON Schema 的输入表单 fallback 控件。",
+  },
+];
 
 function jsonResponse(body: unknown, status = 200) {
   return Promise.resolve(
@@ -65,6 +145,27 @@ describe("node-ui controls", () => {
       selected_item: { id: "b", label: "第二张", image_url: "https://cdn.example.com/b.png" },
       selected_image_url: "https://cdn.example.com/b.png",
     });
+  });
+
+  it("shows an in-node preview for every manifest control in the control library", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      if (String(input) === "/api/ui/node-controls") return jsonResponse({ items: controlDescriptors });
+      return jsonResponse({ items: [] });
+    }));
+
+    render(<ControlLibraryPage />);
+
+    expect(await screen.findByRole("heading", { name: "控件库" })).toBeInTheDocument();
+    expect(await screen.findAllByRole("heading", { name: "节点效果预览" })).toHaveLength(controlDescriptors.length);
+    expect(screen.getByText("镜头数量")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "候选输出 A" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "示例图片" })).toBeInTheDocument();
+    expect(screen.getAllByLabelText("图片三选一")).toHaveLength(3);
+    expect(screen.getByRole("textbox", { name: "确认意见" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "提示词" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "提交并继续" }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("img", { name: "参考图" }).length).toBeGreaterThan(0);
+    expect(screen.getByRole("textbox", { name: "Fallback 提示词" })).toBeInTheDocument();
   });
 
   it("uses default user choice control when workflow has no explicit ui config", () => {

@@ -6,8 +6,10 @@ from typing import Any
 import aiosqlite
 import pytest
 
+from xiagent.assets.service import SqliteAssetService
 from xiagent.core.errors import ValidationError
 from xiagent.core.schemas import validate_json_value
+from xiagent.infrastructure.migrations import migrate
 from xiagent.models import ChatModelRouter, ChatResponse
 from xiagent.nodes import build_node_registry
 from xiagent.nodes.ai.deepseek_structured_json import DeepSeekStructuredJsonNode
@@ -16,6 +18,7 @@ from xiagent.nodes.ai.parallel_deepseek_structured_json import (
 )
 from xiagent.nodes.ai.runninghub_image import RunningHubImageToImageNode
 from xiagent.nodes.registry import NodeRegistry
+from xiagent.nodes.base import NodeContext
 from xiagent.nodes.system.human_approval import HumanApprovalNode
 from xiagent.nodes.system.user_input import SystemUserInputNode
 from xiagent.nodes.tools.asset_lookup import AssetLookupNode
@@ -26,6 +29,7 @@ from xiagent.workflows.testing import WorkflowTestBuilder
 from xiagent.workflows.testing.console import ConsoleIO
 from xiagent.workflows.testing.runner import WorkflowTestRunner
 from xiagent.workflows.validator import validate_workflow_contract
+from xiagent.users.service import SqliteUserService
 
 ASSET_CATALOG_WORKFLOW_PATH = Path("workflows/global/asset_catalog.workflow.yaml")
 
@@ -45,6 +49,63 @@ async def test_create_text_asset_requires_asset_service_context() -> None:
         )
 
     assert exc_info.value.code == "create_text_asset_no_context"
+
+
+async def test_create_text_asset_uses_context_project(test_settings) -> None:
+    node = CreateTextAssetNode()
+    descriptor = node.describe()
+    assert "project_id" not in descriptor.input_schema["properties"]
+
+    await migrate(test_settings.database_path)
+    users = SqliteUserService(test_settings.database_path)
+    user = await users.create_user(username="asset-node-user", password="secret-123")
+    project_a = await users.create_project(owner_user_id=user.user_id, name="project A")
+    project_b = await users.create_project(owner_user_id=user.user_id, name="project B")
+    assets = SqliteAssetService(
+        database_path=test_settings.database_path,
+        storage_dir=test_settings.asset_storage_dir,
+        user_service=users,
+    )
+    ctx = NodeContext(
+        user_id=user.user_id,
+        project_id=project_a.project_id,
+        task_id="task_1",
+        node_id="create_asset",
+        node_execution_id="node_execution_1",
+        config={},
+        output_schema={},
+        asset_service=assets,
+        event_sink=None,
+        logger=None,
+    )
+
+    with pytest.raises(ValidationError) as exc_info:
+        await node.run(
+            ctx,
+            {
+                "scope": "project",
+                "project_id": project_b.project_id,
+                "name": "story seed",
+                "text": "content",
+            },
+        )
+
+    result = await node.run(
+        ctx,
+        {
+            "scope": "project",
+            "name": "story seed",
+            "text": "content",
+        },
+    )
+    record = await assets.get_asset(
+        user_id=user.user_id,
+        asset_id=result.output["asset_id"],
+        project_id=project_a.project_id,
+    )
+
+    assert exc_info.value.code == "create_text_asset_project_mismatch"
+    assert record.project_id == project_a.project_id
 
 
 def test_asset_catalog_workflow_contract_structure(test_settings) -> None:

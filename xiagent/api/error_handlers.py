@@ -37,7 +37,7 @@ async def request_validation_error_handler(_request: Request, exc: Exception) ->
         422,
         "request_validation_failed",
         "Request validation failed",
-        {"errors": exc.errors()},
+        {"errors": _sanitize_validation_errors(exc.errors())},
     )
 
 
@@ -65,3 +65,15 @@ def _error_response(
         status_code=status_code,
         content={"error": {"code": code, "message": message, "details": details}},
     )
+
+
+def _sanitize_validation_errors(errors: list[dict]) -> list[dict]:
+    return [_strip_input(error) for error in errors]
+
+
+def _strip_input(value):
+    if isinstance(value, dict):
+        return {key: _strip_input(item) for key, item in value.items() if key != "input"}
+    if isinstance(value, list):
+        return [_strip_input(item) for item in value]
+    return value

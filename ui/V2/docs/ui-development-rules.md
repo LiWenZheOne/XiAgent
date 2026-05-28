@@ -55,7 +55,7 @@
 - 可复用节点 UI 已建立在 `ui/V2/src/node-ui/`：
   - `registry.ts` 负责把后端 `control_id` 映射到 V2 React 控件。
   - `resolve.ts` 负责解析任务节点的交互控件配置和 binding。
-  - `ControlLibraryPage.tsx` 负责顶部“控件库”页签。
+  - `ControlLibraryPage.tsx` 负责顶部“控件库”页签，并为每个后端 manifest 控件展示真实节点控件渲染出的“节点效果预览”。
   - `controls/ImageViewerControl.tsx` 支持 `ui.display.image_viewer.v1` 的只读图片输出展示，按 `items_path`、`image_url_path`、`label_path` 渲染缩略图网格，并通过点击弹窗查看原图。
   - `controls/ImageChoiceThreeControl.tsx` 支持图片三选一的 `equal_grid`、`hero_list`、`hover_focus` 变体。
   - `controls/SchemaFormControl.tsx` 支持 `ui.input.schema_form.v1`，用于任务详情里的起始输入节点、普通等待输入节点，以及提交成功后的 readonly 参数快照展示。
@@ -64,10 +64,10 @@
   - 每个控件有稳定 `control_id`。
   - 工作流或节点配置只引用控件 ID、variant、mode、bindings。
   - 控件输入输出必须匹配工作流 schema、节点 descriptor 和运行时交互 payload。
-  - 新控件必须补测试，并在本文件记录用途和 payload 约束。
+  - 新控件必须补测试，并在本文件记录用途、payload 约束和控件库预览 fixture。
 - 任务详情页的节点输入、输出通过 `ui/V2/src/node-ui/` 控件注册表解析；等待交互优先使用控件注册表，未声明交互控件时按节点输出 schema 使用页面级 fallback。
 - 节点输入和输出采用上下堆叠布局，不使用左右双栏；默认折叠输入和节点事件，只展开输出或错误区域，避免大输入、大输出节点横向溢出。
-- 顶部导航已有“控件库”页签，用于浏览可用控件、变体、能力标签、绑定要求和预览 fixture。
+- 顶部导航已有“控件库”页签，用于浏览可用控件、变体、能力标签、绑定要求和预览 fixture；每个 manifest 控件都必须能在该页直观看到节点中的展示样子，字段级控件可通过承载它的节点控件预览展示。
 - `system.user_choice.v1` 在没有工作流显式配置时使用 V2 默认三选一控件；工作流仍可通过 `nodes[].ui.controls.interaction` 改为首图大列表或 hover 放大变体。
 
 ## 交互状态

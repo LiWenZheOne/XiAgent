@@ -300,10 +300,27 @@ class SqliteRuntimeService:
         )
         task = await self._get_task_by_id(task_id)
         _ensure_task_belongs_to_project(task, user_id=user_id, project_id=project_id)
+        _ensure_task_is_visible(task)
         async with connect_db(self._database_path) as db:
-            await db.execute("delete from task_events where task_id = ?", (task_id,))
-            await db.execute("delete from node_executions where task_id = ?", (task_id,))
-            await db.execute("delete from tasks where task_id = ?", (task_id,))
+            now = _utc_now()
+            executions = await _fetch_node_executions(db, task_id)
+            current_view = build_current_view("archived", executions)
+            await db.execute(
+                """
+                update tasks
+                set status = ?, current_view_json = ?, finished_at = coalesce(finished_at, ?),
+                    updated_at = ?
+                where task_id = ?
+                """,
+                ("archived", dump_json(current_view), now, now, task_id),
+            )
+            await insert_event(
+                db,
+                task_id=task_id,
+                event_type="task_archived",
+                payload={},
+                created_at=now,
+            )
 
     async def get_task_workflow_snapshot(
         self,
@@ -403,6 +420,7 @@ class SqliteRuntimeService:
         )
         task = await self._get_task_by_id(task_id)
         _ensure_task_belongs_to_project(task, user_id=user_id, project_id=project_id)
+        _ensure_task_is_visible(task)
 
     async def _continue_task(
         self,
@@ -1327,3 +1345,8 @@ def _ensure_task_belongs_to_project(
         message="User does not have access to this project",
         details={"action": "task:read", "project_id": project_id},
     )
+
+
+def _ensure_task_is_visible(task: TaskRecord) -> None:
+    if task.status == "archived":
+        raise NotFoundError("task_not_found", "Task was not found", {"task_id": task.task_id})

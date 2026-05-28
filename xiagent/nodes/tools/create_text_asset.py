@@ -21,7 +21,6 @@ class CreateTextAssetNode(BaseNode):
                         "type": "string",
                         "enum": ["global", "project"],
                     },
-                    "project_id": {"type": "string"},
                     "name": {"type": "string", "minLength": 1},
                     "text": {"type": "string", "minLength": 1},
                     "metadata": {"type": "object"},
@@ -70,9 +69,16 @@ class CreateTextAssetNode(BaseNode):
                 message="text must be a non-empty string",
             )
 
-        project_id = inputs.get("project_id")
-        if project_id is not None and not isinstance(project_id, str):
-            project_id = None
+        input_project_id = inputs.get("project_id")
+        if input_project_id is not None and (
+            not isinstance(input_project_id, str)
+            or input_project_id != ctx.project_id
+            or scope != "project"
+        ):
+            raise ValidationError(
+                code="create_text_asset_project_mismatch",
+                message="project_id must match the node execution context",
+            )
 
         metadata = inputs.get("metadata")
         if not isinstance(metadata, dict):
@@ -81,7 +87,7 @@ class CreateTextAssetNode(BaseNode):
         record = await ctx.asset_service.create_text_asset(
             user_id=ctx.user_id,
             scope=scope,
-            project_id=project_id if scope == "project" else None,
+            project_id=ctx.project_id if scope == "project" else None,
             name=name.strip(),
             text=text,
             metadata=metadata,

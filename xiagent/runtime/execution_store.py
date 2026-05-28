@@ -28,7 +28,7 @@ class SqliteExecutionStore:
                 """
                 select *
                 from tasks
-                where user_id = ? and project_id = ?
+                where user_id = ? and project_id = ? and status != 'archived'
                 order by created_at desc, rowid desc
                 """,
                 (user_id, project_id),

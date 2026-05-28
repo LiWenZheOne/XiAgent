@@ -17,7 +17,7 @@
 - `src/node-ui/resolve.ts`：解析节点 `input`、`output`、`interaction`、`detail` slot 的控件配置和 binding。
 - `src/node-ui/types.ts`：定义 V2 控件 props 和公共控件类型。
 - `src/node-ui/controls/`：存放具体控件实现。
-- `src/node-ui/fixtures/`：存放控件库预览 fixture。
+- `src/node-ui/fixtures/`：存放控件库预览 fixture；控件库页面必须为每个后端 manifest 控件提供能直观看到节点中展示效果的本地预览，字段级控件可通过承载它的节点控件预览展示。
 - `src/tests/node-ui.test.tsx`：覆盖控件渲染、默认解析、提交 payload 和 fallback。
 
 当前已注册控件：
@@ -56,7 +56,7 @@
 2. 在 `src/node-ui/controls/` 新增或修改控件组件，使用 `NodeUiControlProps`，保持 `preview`、`busy`、`onSubmit` 等状态语义清晰。
 3. 在 `src/node-ui/registry.ts` 注册控件 ID；未知控件继续走 `FallbackValueControl`。
 4. 如果控件需要读取 binding，优先在 `src/node-ui/resolve.ts` 增加小而稳定的解析函数，路径语义必须与后端 validator 一致。
-5. 给控件库页面补预览 fixture；预览只使用脱敏、稳定的本地示例数据。
+5. 给控件库页面补预览 fixture；每个后端 manifest 控件都要有“节点效果预览”，预览只使用脱敏、稳定的本地示例数据。
 6. 在 `src/tests/node-ui.test.tsx` 或相关测试中覆盖渲染、variant、fallback、提交 payload 和禁用态。
 7. 同步更新 `ui/V2/docs/ui-development-rules.md`，记录 V2 专属用途、variant、payload 和验证命令。
 

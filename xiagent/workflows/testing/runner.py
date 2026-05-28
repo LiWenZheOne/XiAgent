@@ -100,10 +100,16 @@ class WorkflowTestRunner:
             uses_node_input = isinstance(input_schema, dict)
             resume_schema = input_schema if uses_node_input else node_def["outputs"]
             self._console.write(f"[等待输入] 节点 {waiting_execution.node_id}")
-            if uses_node_input and pending_user_input is not None:
+            if (
+                uses_node_input
+                and pending_user_input is not None
+                and _payload_matches_schema(resume_schema, pending_user_input)
+            ):
                 payload = pending_user_input
                 pending_user_input = None
             else:
+                if uses_node_input:
+                    pending_user_input = None
                 payload = self._console.prompt_resume_output(waiting_execution, resume_schema)
             validate_json_value(resume_schema, payload)
             try:
@@ -247,3 +253,11 @@ def _node_by_id(contract: dict[str, Any], node_id: str) -> dict[str, Any]:
         message="Workflow node was not found",
         details={"node_id": node_id},
     )
+
+
+def _payload_matches_schema(schema: dict[str, Any], payload: dict[str, Any]) -> bool:
+    try:
+        validate_json_value(schema, payload)
+    except ValidationError:
+        return False
+    return True

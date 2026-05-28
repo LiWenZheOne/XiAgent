@@ -131,6 +131,17 @@ class SqliteAssetService(AssetService):
         if not content:
             raise ValidationError("asset_content_required", "File content must not be empty")
 
+        clean_collection_ids = _clean_string_list(collection_ids)
+        clean_tag_ids = _clean_string_list(tag_ids)
+        async with connect_db(self._database_path) as db:
+            await _validate_index_targets(
+                db,
+                scope=scope,
+                project_id=project_id,
+                collection_ids=clean_collection_ids,
+                tag_ids=clean_tag_ids,
+            )
+
         (
             content_hash,
             storage_uri,
@@ -156,8 +167,6 @@ class SqliteAssetService(AssetService):
                 clean_metadata["public_url"] = stored_object.public_url
                 clean_metadata["object_storage"] = asdict(stored_object)
 
-            clean_collection_ids = _clean_string_list(collection_ids)
-            clean_tag_ids = _clean_string_list(tag_ids)
             metadata_json = _metadata_json(clean_metadata)
             async with connect_db(self._database_path) as db:
                 await db.execute(
@@ -260,6 +269,14 @@ class SqliteAssetService(AssetService):
         collection_id = new_id("collection")
         now = _utc_now()
         async with connect_db(self._database_path) as db:
+            if parent_id is not None:
+                await _validate_collection_scope(
+                    db,
+                    collection_id=parent_id,
+                    scope=scope,
+                    project_id=project_id,
+                    mismatch_code="asset_collection_scope_mismatch",
+                )
             await db.execute(
                 """
                 insert into asset_collections (
@@ -609,29 +626,65 @@ def _search_filter(
     clean_tag_ids = _clean_string_list(tag_ids)
     if clean_tag_ids:
         placeholders = ", ".join("?" for _ in clean_tag_ids)
+        index_where, index_parameters = _qualified_scope_filter(
+            "idx",
+            scope=scope,
+            project_id=project_id,
+        )
+        tag_where, tag_parameters = _qualified_scope_filter(
+            "tag",
+            scope=scope,
+            project_id=project_id,
+        )
         where.append(
             "asset_id in ("
-            "select asset_id from asset_index_entries "
-            f"where tag_id in ({placeholders}) "
-            "group by asset_id having count(distinct tag_id) = ?"
+            "select idx.asset_id from asset_index_entries idx "
+            "join asset_tags tag on tag.tag_id = idx.tag_id "
+            f"where idx.tag_id in ({placeholders}) "
+            f"and {' and '.join(index_where)} "
+            f"and {' and '.join(tag_where)} "
+            "group by idx.asset_id having count(distinct idx.tag_id) = ?"
             ")"
         )
         parameters.extend(clean_tag_ids)
+        parameters.extend(index_parameters)
+        parameters.extend(tag_parameters)
         parameters.append(len(clean_tag_ids))
     if collection_id is not None and collection_id.strip():
+        start_where, start_parameters = _qualified_scope_filter(
+            "start",
+            scope=scope,
+            project_id=project_id,
+        )
+        child_where, child_parameters = _qualified_scope_filter(
+            "child",
+            scope=scope,
+            project_id=project_id,
+        )
+        index_where, index_parameters = _qualified_scope_filter(
+            "idx",
+            scope=scope,
+            project_id=project_id,
+        )
         where.append(
             "asset_id in ("
             "with recursive collection_tree(collection_id) as ("
-            "select collection_id from asset_collections where collection_id = ? "
+            "select start.collection_id from asset_collections start "
+            f"where start.collection_id = ? and {' and '.join(start_where)} "
             "union all "
             "select child.collection_id from asset_collections child "
-            "join collection_tree parent on child.parent_id = parent.collection_id"
+            "join collection_tree parent on child.parent_id = parent.collection_id "
+            f"where {' and '.join(child_where)}"
             ") "
-            "select asset_id from asset_index_entries "
-            "where collection_id in (select collection_id from collection_tree)"
+            "select idx.asset_id from asset_index_entries idx "
+            f"where idx.collection_id in (select collection_id from collection_tree) "
+            f"and {' and '.join(index_where)}"
             ")"
         )
         parameters.append(collection_id.strip())
+        parameters.extend(start_parameters)
+        parameters.extend(child_parameters)
+        parameters.extend(index_parameters)
     return where, parameters
 
 
@@ -645,6 +698,101 @@ def _scope_filter(*, scope: str, project_id: str | None) -> tuple[list[str], lis
         "project",
         project_id or "",
     ]
+
+
+def _qualified_scope_filter(
+    alias: str,
+    *,
+    scope: str,
+    project_id: str | None,
+) -> tuple[list[str], list[str]]:
+    if scope == "global":
+        return [f"{alias}.scope = ?"], ["global"]
+    if scope == "project":
+        return [f"{alias}.scope = ?", f"{alias}.project_id = ?"], ["project", project_id or ""]
+    return [f"({alias}.scope = ? or ({alias}.scope = ? and {alias}.project_id = ?))"], [
+        "global",
+        "project",
+        project_id or "",
+    ]
+
+
+async def _validate_index_targets(
+    db: aiosqlite.Connection,
+    *,
+    scope: str,
+    project_id: str | None,
+    collection_ids: list[str],
+    tag_ids: list[str],
+) -> None:
+    for collection_id in collection_ids:
+        await _validate_collection_scope(
+            db,
+            collection_id=collection_id,
+            scope=scope,
+            project_id=project_id,
+            mismatch_code="asset_index_scope_mismatch",
+        )
+    for tag_id in tag_ids:
+        await _validate_tag_scope(
+            db,
+            tag_id=tag_id,
+            scope=scope,
+            project_id=project_id,
+        )
+
+
+async def _validate_collection_scope(
+    db: aiosqlite.Connection,
+    *,
+    collection_id: str,
+    scope: str,
+    project_id: str | None,
+    mismatch_code: str,
+) -> None:
+    row = await _fetch_one(
+        db,
+        "select scope, project_id from asset_collections where collection_id = ?",
+        (collection_id,),
+    )
+    if row is None:
+        raise NotFoundError(
+            "asset_collection_not_found",
+            "Asset collection was not found",
+            {"collection_id": collection_id},
+        )
+    if not _same_scope(row, scope=scope, project_id=project_id):
+        raise ValidationError(
+            mismatch_code,
+            "Asset collection scope does not match asset scope",
+            {"collection_id": collection_id, "scope": scope, "project_id": project_id},
+        )
+
+
+async def _validate_tag_scope(
+    db: aiosqlite.Connection,
+    *,
+    tag_id: str,
+    scope: str,
+    project_id: str | None,
+) -> None:
+    row = await _fetch_one(
+        db,
+        "select scope, project_id from asset_tags where tag_id = ?",
+        (tag_id,),
+    )
+    if row is None:
+        raise NotFoundError("asset_tag_not_found", "Asset tag was not found", {"tag_id": tag_id})
+    if not _same_scope(row, scope=scope, project_id=project_id):
+        raise ValidationError(
+            "asset_index_scope_mismatch",
+            "Asset tag scope does not match asset scope",
+            {"tag_id": tag_id, "scope": scope, "project_id": project_id},
+        )
+
+
+def _same_scope(row: aiosqlite.Row, *, scope: str, project_id: str | None) -> bool:
+    return row["scope"] == scope and row["project_id"] == project_id
 
 
 def _clean_string_list(values: list[str] | None) -> list[str]:

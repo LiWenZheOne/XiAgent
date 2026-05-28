@@ -8,6 +8,7 @@ import pytest
 from xiagent.assets.local_storage import LocalAssetStorage
 from xiagent.assets.service import SqliteAssetService
 from xiagent.core.errors import NotFoundError, PermissionDeniedError, ValidationError
+from xiagent.infrastructure.database import connect_db
 from xiagent.infrastructure.migrations import migrate
 from xiagent.infrastructure.object_storage.base import ObjectStorageService
 from xiagent.infrastructure.object_storage.models import StoredObject
@@ -250,6 +251,89 @@ async def test_get_project_asset_rejects_mismatched_project_context(test_setting
 
     assert asset_exc_info.value.code == "asset_not_found"
     assert content_exc_info.value.code == "asset_not_found"
+
+
+async def test_import_file_asset_rejects_cross_project_collection_and_tag(test_settings) -> None:
+    await migrate(test_settings.database_path)
+    users = SqliteUserService(test_settings.database_path)
+    user = await users.create_user(username="alice", password="secret-123")
+    project_a = await users.create_project(owner_user_id=user.user_id, name="project A")
+    project_b = await users.create_project(owner_user_id=user.user_id, name="project B")
+    assets = SqliteAssetService(
+        database_path=test_settings.database_path,
+        storage_dir=test_settings.asset_storage_dir,
+        user_service=users,
+    )
+    collection_b = await assets.create_collection_node(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project_b.project_id,
+        parent_id=None,
+        name="project B collection",
+    )
+    tag_b = await assets.create_tag(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project_b.project_id,
+        name="project B tag",
+    )
+
+    with pytest.raises(ValidationError) as collection_exc_info:
+        await assets.import_file_asset(
+            user_id=user.user_id,
+            scope="project",
+            project_id=project_a.project_id,
+            file_name="hero.png",
+            content_type="image/png",
+            content=b"fake image",
+            metadata={},
+            collection_ids=[collection_b.collection_id],
+        )
+    with pytest.raises(ValidationError) as tag_exc_info:
+        await assets.import_file_asset(
+            user_id=user.user_id,
+            scope="project",
+            project_id=project_a.project_id,
+            file_name="hero-tag.png",
+            content_type="image/png",
+            content=b"fake image",
+            metadata={},
+            tag_ids=[tag_b.tag_id],
+        )
+
+    assert collection_exc_info.value.code == "asset_index_scope_mismatch"
+    assert tag_exc_info.value.code == "asset_index_scope_mismatch"
+
+
+async def test_create_collection_rejects_cross_project_parent(test_settings) -> None:
+    await migrate(test_settings.database_path)
+    users = SqliteUserService(test_settings.database_path)
+    user = await users.create_user(username="alice", password="secret-123")
+    project_a = await users.create_project(owner_user_id=user.user_id, name="project A")
+    project_b = await users.create_project(owner_user_id=user.user_id, name="project B")
+    assets = SqliteAssetService(
+        database_path=test_settings.database_path,
+        storage_dir=test_settings.asset_storage_dir,
+        user_service=users,
+    )
+    parent_b = await assets.create_collection_node(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project_b.project_id,
+        parent_id=None,
+        name="project B parent",
+    )
+
+    with pytest.raises(ValidationError) as exc_info:
+        await assets.create_collection_node(
+            user_id=user.user_id,
+            scope="project",
+            project_id=project_a.project_id,
+            parent_id=parent_b.collection_id,
+            name="project A child",
+        )
+
+    assert exc_info.value.code == "asset_collection_scope_mismatch"
 
 
 async def test_create_text_asset_preserves_original_text_and_size(test_settings) -> None:
@@ -522,6 +606,64 @@ async def test_search_assets_by_parent_collection_includes_child_collections(tes
     )
 
     assert [item.asset_id for item in result.items] == [asset.asset_id]
+
+
+async def test_search_assets_ignores_collection_index_entries_outside_scope(test_settings) -> None:
+    await migrate(test_settings.database_path)
+    users = SqliteUserService(test_settings.database_path)
+    user = await users.create_user(username="asset-index-scope", password="secret-123")
+    project_a = await users.create_project(owner_user_id=user.user_id, name="project A")
+    project_b = await users.create_project(owner_user_id=user.user_id, name="project B")
+    assets = SqliteAssetService(
+        database_path=test_settings.database_path,
+        storage_dir=test_settings.asset_storage_dir,
+        user_service=users,
+    )
+    asset_a = await assets.create_text_asset(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project_a.project_id,
+        name="project A asset",
+        text="project A content",
+        metadata={},
+    )
+    collection_b = await assets.create_collection_node(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project_b.project_id,
+        parent_id=None,
+        name="project B collection",
+    )
+    async with connect_db(test_settings.database_path) as db:
+        await db.execute(
+            """
+            insert into asset_index_entries (
+              entry_id, scope, project_id, asset_id, collection_id, tag_id,
+              search_text, created_at, updated_at
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "asset_index_cross_project",
+                "project",
+                project_a.project_id,
+                asset_a.asset_id,
+                collection_b.collection_id,
+                None,
+                asset_a.name,
+                "2026-05-29T00:00:00+00:00",
+                "2026-05-29T00:00:00+00:00",
+            ),
+        )
+
+    result = await assets.search_assets(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project_a.project_id,
+        collection_id=collection_b.collection_id,
+    )
+
+    assert result.items == []
+    assert result.total == 0
 
 
 async def test_import_file_asset_cleans_local_file_when_publish_fails(test_settings) -> None:
