@@ -23,12 +23,13 @@ workflow:
       ai.runninghub_text_to_image.v1:
         controls:
           output:
-            control_id: ui.display.image_candidates.v1
-            variant: grid
+            control_id: ui.display.image_viewer.v1
+            variant: grid_modal
             mode: readonly
             bindings:
               items_path: "$node.output.results"
               image_url_path: url
+              label_path: text
 
 nodes:
   - id: generate_image

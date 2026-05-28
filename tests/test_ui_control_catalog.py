@@ -13,6 +13,7 @@ def test_builtin_ui_controls_have_unique_ids() -> None:
 
     assert len({control.control_id for control in controls}) == len(controls)
     assert "ui.choice.image_three.v1" in {control.control_id for control in controls}
+    assert "ui.display.image_viewer.v1" in {control.control_id for control in controls}
     assert "ui.input.schema_form.v1" in {control.control_id for control in controls}
     assert "ui.input.asset_image_picker.v1" in {control.control_id for control in controls}
 
@@ -29,6 +30,22 @@ def test_image_three_choice_control_declares_expected_variants() -> None:
         "hover_focus",
     }
     assert all("readonly" in variant.modes for variant in control.variants)
+
+
+def test_image_viewer_control_declares_grid_modal_bindings() -> None:
+    catalog = build_builtin_ui_control_catalog()
+    control = catalog.get("ui.display.image_viewer.v1")
+    variant = control.variants[0]
+
+    assert control.kind == "output"
+    assert {"image", "viewer", "modal", "readonly"}.issubset(control.tags)
+    assert variant.name == "grid_modal"
+    assert variant.modes == ("readonly",)
+    assert {binding.name for binding in variant.required_bindings} == {
+        "items_path",
+        "image_url_path",
+        "label_path",
+    }
 
 
 def test_approval_control_declares_readonly_mode() -> None:

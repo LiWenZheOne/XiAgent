@@ -26,6 +26,7 @@
 | --- | --- | --- |
 | `ui.display.value.v1` | 通用值展示 | `ValueDisplayControl` |
 | `ui.display.image_candidates.v1` | 图片候选列表展示 | `ImageCandidatesControl` |
+| `ui.display.image_viewer.v1` | 图片输出缩略图与原图弹窗查看 | `ImageViewerControl` |
 | `ui.choice.image_three.v1` | 图片三选一交互 | `ImageChoiceThreeControl` |
 | `ui.interaction.approval.v1` | 人工审批交互 | `ApprovalControl` |
 | `ui.input.schema_form.v1` | 起始输入和等待输入的 schema 表单 | `SchemaFormControl` |
@@ -39,6 +40,7 @@
 - V2 控件实现必须兼容 `xiagent/ui_controls/catalog.py` 中的 `control_id`、variant、mode、binding 和 submit schema。
 - 控件库页面通过 `/api/ui/node-controls` 读取 manifest 只读视图；不要在前端复制一份独立 manifest 作为事实来源。
 - 工作流或节点配置引用不存在的控件、变体、模式或 binding 时，应先补后端 manifest 和校验测试，不能只在 V2 中临时兜底。
+- 任务详情必须按任务持有的 workflow snapshot 和节点 UI 配置渲染。禁止为了让历史任务显示新样式，在前端把旧 `control_id`、variant、mode 或 binding 映射成新控件语义；需要旧任务使用新样式时，必须显式迁移或修正该历史 snapshot/config。
 - V2 不 import 后端 Python 模块，不直接读取 SQLite、资产文件路径、节点实现类或 provider 适配细节。
 
 ## 任务创建与起始输入
@@ -91,3 +93,5 @@ python -m pytest tests/test_ui_control_catalog.py tests/test_workflow_validator.
 ```
 
 最终验收应使用真实后端和浏览器主流程确认：登录或注册、选择项目、创建任务、进入任务详情、触发或查看目标控件、确认没有普通用户不应理解的 JSON。
+验证工作流控件样式变更时，必须新建任务确认新任务持有的新 workflow snapshot 生效；如果验收目标是历史任务，则必须先明确更新该历史任务引用的 snapshot/config，不能通过修改旧控件实现绕过配置来源。
+修改工作流 YAML 后，真实浏览器验收前必须确认后端已重新加载工作流目录；当前后端 catalog 在服务启动时加载工作流，不能用未重启/未重载的后端进程作为新 snapshot 验收依据。

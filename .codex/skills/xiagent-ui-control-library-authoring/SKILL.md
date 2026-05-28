@@ -39,6 +39,7 @@ description: Use when adding, modifying, registering, validating, or documenting
 - 交互控件的 `submit_schema` 必须能被节点 `outputs` 接受；UI 提交内容不得绕过运行时输出校验。
 - 控件解析优先级是 `nodes[].ui` > `workflow.ui.defaults` > `NodeDescriptor.ui_defaults` > 系统 fallback。
 - 工作流只覆盖某个 slot 时，不应清空其他 slot 的默认配置。常见 slot 是 `input`、`output`、`interaction`、`detail`。
+- 任务详情必须忠实消费该任务持有的 workflow snapshot 和节点 UI 配置。禁止把旧 `control_id`、variant、mode 或 binding 在前端静默映射为新控件语义；需要历史任务显示新样式时，必须显式迁移或修正该任务引用的 snapshot/config。
 
 支持的通用 binding 路径：
 
@@ -68,6 +69,7 @@ $nodes.<node_id>.output.<field>
 6. 控件 props 应围绕稳定任务节点快照、工作流节点 spec、workflow snapshot、slot、config、value、busy、preview 和 `onSubmit` 一类输入设计；不要让控件直接读取 SQLite、资产路径、节点类或后端内部实现。
 7. 新增控件时同时补：注册表映射、控件组件、必要 fixture、控件库预览页展示、渲染测试、提交 payload 测试、fallback 行为。
 8. 修改已有控件时保留旧任务 snapshot 的兼容性；需要破坏性变更时新增 `vN+1` 控件 ID，不复用旧 ID 改语义。
+9. 验收工作流控件配置变更时，默认新建任务确认新 workflow snapshot 已持久化并驱动 UI；如果使用历史任务验收，先明确执行 snapshot/config 迁移，不得通过修改旧控件实现让旧 snapshot 看起来像新配置。
 
 ## UI Version Rules
 
@@ -91,6 +93,8 @@ $nodes.<node_id>.output.<field>
 - 工作流配置变更：运行 `python -m xiagent.workflows.testing_cli <workflow-path> --interactive` 或 `WorkflowTestBuilder`，并通过真实等待/提交交互路径提供业务参数。
 - UI 版本控件变更：运行目标版本 AGENTS 中列出的测试、构建和浏览器验证命令。
 - 涉及人工交互控件时，至少验证等待态渲染、提交 payload、busy/disabled 状态、错误态和刷新后的任务详情。
+- 涉及工作流默认控件或节点 UI 配置变更时，浏览器验收必须验证新建任务的新 snapshot；历史任务只可用于验证旧配置仍按旧语义展示，除非已显式迁移该 snapshot/config。
+- 修改工作流 YAML 后，真实浏览器验收前必须确认后端已重新加载工作流目录；如果后端 catalog 只在启动时加载工作流，先重启/重载后端再创建新任务。
 
 ## Common Mistakes
 
@@ -101,3 +105,4 @@ $nodes.<node_id>.output.<field>
 - 让 `NodeDescriptor.ui_defaults` 表达具体工作流体验，而不是通用保底展示。
 - 为了控件方便改节点输出字段，破坏下游工作流路径引用。
 - 修改 V2 控件库后没有同步 `ui/V2/AGENTS.md` 或 `ui/V2/docs/ui-development-rules.md`。
+- 看到历史任务仍是旧样式，就修改旧控件或注册表让旧 `control_id` 表现为新控件；正确做法是新建任务验证新 snapshot，或显式迁移历史 snapshot/config。

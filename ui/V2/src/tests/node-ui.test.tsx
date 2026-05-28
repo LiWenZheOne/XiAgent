@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -75,6 +75,48 @@ describe("node-ui controls", () => {
     render(<Control config={resolved!} node={node} preview />);
 
     expect(screen.getByLabelText("图片三选一")).toBeInTheDocument();
+  });
+
+  it("opens readonly image viewer thumbnails in an original image dialog", async () => {
+    const Control = getNodeUiControl("ui.display.image_viewer.v1");
+    const outputNode: TaskNodeExecution = {
+      node_execution_id: "exec-viewer",
+      node_id: "generate_image",
+      node_ref: "ai.runninghub_text_to_image.v1",
+      status: "succeeded",
+      output_snapshot: {
+        results: [
+          {
+            id: "rh-1",
+            url: "https://cdn.example.com/generated.png",
+            text: "Generated image",
+            output_type: "image",
+          },
+        ],
+      },
+    };
+
+    render(
+      <Control
+        config={{
+          control_id: "ui.display.image_viewer.v1",
+          variant: "grid_modal",
+          mode: "readonly",
+          bindings: {
+            items_path: "$node.output.results",
+            image_url_path: "url",
+            label_path: "text",
+          },
+        }}
+        node={outputNode}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "查看 Generated image" }));
+
+    const dialog = screen.getByRole("dialog", { name: "图片预览" });
+    expect(within(dialog).getByRole("img", { name: "Generated image" })).toHaveAttribute("src", "https://cdn.example.com/generated.png");
+    expect(within(dialog).getByRole("link", { name: "打开原图" })).toHaveAttribute("href", "https://cdn.example.com/generated.png");
   });
 
   it("reuses a completed interaction control as the readonly output renderer", () => {

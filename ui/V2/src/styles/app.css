@@ -897,6 +897,45 @@ dd {
   background: var(--surface-strong);
 }
 
+.image-viewer-grid {
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+}
+
+.image-viewer-thumb {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-soft);
+  color: var(--text);
+  text-align: left;
+  cursor: zoom-in;
+}
+
+.image-viewer-thumb:hover,
+.image-viewer-thumb:focus-visible {
+  border-color: #60a5fa;
+  background: #eff6ff;
+}
+
+.image-viewer-thumb img {
+  height: 150px;
+  object-fit: contain;
+}
+
+.image-viewer-thumb span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.image-viewer-actions {
+  justify-content: flex-end;
+}
+
 .node-ui-choice {
   overflow: visible;
 }

@@ -51,10 +51,12 @@
 - 节点控件选择遵循工作流优先、节点默认保底：`nodes[].ui` 高于 `workflow.ui.defaults`，`workflow.ui.defaults` 高于 `NodeDescriptor.ui_defaults`，最后才使用系统 fallback。
 - 工作流可以分别指定节点的输入、输出、交互和详情控件；工作流只覆盖某一区域时，不应清空其他区域的默认控件。
 - 后端 UI 控件 manifest 是控件兼容性的硬性检查来源，V2 React 控件实现必须使用相同 `control_id`、`variant`、`mode` 和 `bindings` 语义。
+- 历史任务必须按其持有的 workflow snapshot 和节点 UI 配置展示。禁止在前端把旧 `control_id`、variant、mode 或 binding 静默映射为新控件效果；新样式验收必须通过新建任务生成新 snapshot，或显式迁移/修正目标历史 snapshot/config。
 - 可复用节点 UI 已建立在 `ui/V2/src/node-ui/`：
   - `registry.ts` 负责把后端 `control_id` 映射到 V2 React 控件。
   - `resolve.ts` 负责解析任务节点的交互控件配置和 binding。
   - `ControlLibraryPage.tsx` 负责顶部“控件库”页签。
+  - `controls/ImageViewerControl.tsx` 支持 `ui.display.image_viewer.v1` 的只读图片输出展示，按 `items_path`、`image_url_path`、`label_path` 渲染缩略图网格，并通过点击弹窗查看原图。
   - `controls/ImageChoiceThreeControl.tsx` 支持图片三选一的 `equal_grid`、`hero_list`、`hover_focus` 变体。
   - `controls/SchemaFormControl.tsx` 支持 `ui.input.schema_form.v1`，用于任务详情里的起始输入节点、普通等待输入节点，以及提交成功后的 readonly 参数快照展示。
   - `controls/SchemaFormControl.tsx` 会根据 JSON Schema 字段生成可读标签、placeholder 和 hover 提示；固定枚举字段三个及以内渲染为单选选项组，超过三个渲染为下拉框，不得退回普通文本输入。
@@ -92,6 +94,8 @@ python -m pytest tests/test_api_smoke.py tests/test_users_service.py tests/test_
 ```
 
 最终验收必须用真实浏览器和真实后端完成一条主流程：注册/登录、确认当前项目为全局项目、创建任务、进入任务详情、确认页面没有用户不需要理解的 JSON。
+涉及工作流控件配置变更时，验收主流程必须创建新任务并验证该任务详情使用新的 workflow snapshot；如果使用历史任务验收，必须先说明并执行快照配置迁移，不能用旧控件代码兼容来替代配置生效验证。
+修改工作流 YAML 后，浏览器验收前必须确认后端已重新加载工作流目录；当前 WorkflowCatalog 在服务启动时加载，未重启/未重载的后端会继续为新任务生成旧 snapshot。
 
 ## 维护要求
 

@@ -913,6 +913,17 @@ def test_runninghub_workflow_contracts_call_registered_nodes(
         "usage",
         "results",
     }
+    if workflow_id == "runninghub_text_to_image_test":
+        output_control = (
+            contract["workflow"]["ui"]["defaults"]["ai.runninghub_text_to_image.v1"]["controls"]["output"]
+        )
+        assert output_control["control_id"] == "ui.display.image_viewer.v1"
+        assert output_control["variant"] == "grid_modal"
+        assert output_control["bindings"] == {
+            "items_path": "$node.output.results",
+            "image_url_path": "url",
+            "label_path": "text",
+        }
 
     validate_workflow_contract(contract, build_node_registry(test_settings))
 

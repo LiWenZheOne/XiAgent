@@ -98,6 +98,39 @@ def build_builtin_ui_control_catalog() -> UiControlCatalog:
                 description="图片候选列表展示控件。",
             ),
             UiControlDescriptor(
+                control_id="ui.display.image_viewer.v1",
+                version="1.0.0",
+                name="Image Viewer",
+                kind="output",
+                tags=("image", "viewer", "modal", "readonly"),
+                variants=(
+                    UiControlVariant(
+                        name="grid_modal",
+                        label="缩略图网格原图查看",
+                        modes=("readonly",),
+                        required_bindings=(
+                            UiControlBindingRequirement(
+                                name="items_path",
+                                schema_constraints={"type": "array", "minItems": 1},
+                            ),
+                            UiControlBindingRequirement(
+                                name="image_url_path",
+                                binding_kind="item_field",
+                                accepted_sources=("item",),
+                                schema_constraints={"type": "string"},
+                            ),
+                            UiControlBindingRequirement(
+                                name="label_path",
+                                binding_kind="item_field",
+                                accepted_sources=("item",),
+                                schema_constraints={"type": "string"},
+                            ),
+                        ),
+                    ),
+                ),
+                description="只读图片输出查看控件，支持缩略图网格和点击弹窗查看原图。",
+            ),
+            UiControlDescriptor(
                 control_id="ui.choice.image_three.v1",
                 version="1.0.0",
                 name="Image Three Choice",

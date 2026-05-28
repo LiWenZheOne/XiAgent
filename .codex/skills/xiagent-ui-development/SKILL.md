@@ -34,6 +34,7 @@ XiAgent UI work is versioned under `ui/<version>/...` and must deliver a real en
 - Workflow/node/task JSON is transport and persistence data. Do not display raw JSON, schema keys, `input_schema`, `output_snapshot`, `public_url`, or internal refs to end users unless a developer/debug view is explicitly requested.
 - Task creation pages must not collect workflow business parameters. They show launch information and create the task; required user input is submitted later through a node that declares `from_user: true`.
 - Render node user input schemas as labels, forms, pickers, toggles, image selectors, cards, status badges, and media previews only through the node UI control path. Node input/output should be presented as user-facing cards, not as raw object dumps.
+- Task detail rendering must follow the workflow snapshot and node UI config persisted for that task. Do not make old snapshots display new behavior by aliasing an old `control_id`, variant, mode, or binding to a new control in frontend code. To make an existing task use new UI config, explicitly migrate or update that task's snapshot/config.
 
 ## Node UI Controls
 
@@ -41,6 +42,7 @@ XiAgent UI work is versioned under `ui/<version>/...` and must deliver a real en
 - Workflow/node config may reference UI control IDs, variants, modes, sections, actions, and bindings. Resolve those references through the registered UI control library.
 - Control inputs and outputs must follow the node descriptor/schema and workflow contract. Do not invent UI-only payload shapes that the runtime cannot validate.
 - If a needed node control does not exist, add it to the registry, document it in `ui/<version>/docs/ui-development-rules.md`, and add tests for the rendered input/output state.
+- Keep each registered control ID semantically stable. If a workflow should get a new interaction style, add/use a new control ID or variant and update the workflow config; do not change an existing old control so historical snapshots silently behave like the new config.
 - Keep program transport JSON inside API calls and adapters. The visible UI should speak in domain terms such as task, project, workflow, asset, input, output, waiting, failed, succeeded.
 
 ## Implementation Rules
@@ -65,6 +67,10 @@ npm run test:e2e
 
 Also run backend/API tests when UI behavior depends on backend contracts. Finish with a real browser flow using the running backend and UI: login or register, select/confirm project, exercise the changed page, perform the core action, refresh or navigate as needed, and verify persisted results. Check that no user-facing raw JSON appears.
 
+When validating workflow UI config changes, create a fresh task and verify the new task detail is driven by the new persisted workflow snapshot. Historical tasks are evidence for old-snapshot behavior only unless their snapshot/config was explicitly migrated before the test.
+
+After editing workflow YAML, confirm the backend has reloaded the workflow directory before browser acceptance. If the runtime catalog loads workflows only at service startup, restart or explicitly reload the backend before creating the verification task.
+
 For acceptance review, use `xiagent-ui-review` after implementation.
 
 ## Rule Updates
@@ -82,4 +88,5 @@ For acceptance review, use `xiagent-ui-review` after implementation.
 - Hiding test workflows that should be selectable for UI testing.
 - Loading all workflows without selected project context.
 - Treating screenshots as proof without checking API source and persisted state.
+- Treating a historical task rendered with old snapshot config as proof that new workflow UI config failed, or changing old control code to make that historical snapshot look new instead of creating a new task or migrating the snapshot.
 - Updating V2 visual language while leaving `ui/V2/docs/ui-development-rules.md` stale.

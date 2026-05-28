@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { listNodeControls } from "../api/ui";
-import type { UiControlDescriptor } from "../api/types";
+import type { TaskNodeExecution, UiControlDescriptor } from "../api/types";
 import { imageChoicePreviewNode } from "./fixtures/imageChoiceThree";
 import { getNodeUiControl } from "./registry";
 
@@ -15,6 +15,33 @@ const imageChoiceConfig = {
     items_path: "$node.input.candidates",
     image_url_path: "image_url",
     value_path: "id",
+  },
+};
+
+const imageViewerConfig = {
+  control_id: "ui.display.image_viewer.v1",
+  variant: "grid_modal",
+  mode: "readonly",
+  bindings: {
+    items_path: "$node.output.results",
+    image_url_path: "url",
+    label_path: "text",
+  },
+};
+
+const imageViewerPreviewNode: TaskNodeExecution = {
+  node_execution_id: "preview-image-viewer",
+  node_id: "preview_image_viewer",
+  node_ref: "ai.runninghub_text_to_image.v1",
+  status: "succeeded",
+  output_snapshot: {
+    results: [
+      {
+        id: "sample-1",
+        url: "https://images.unsplash.com/photo-1541701494587-cb58502866ab?w=800&auto=format&fit=crop",
+        text: "示例图片",
+      },
+    ],
   },
 };
 
@@ -102,6 +129,7 @@ function ControlCard({ control }: { control: UiControlDescriptor }) {
           </section>
         ))}
       </div>
+      {control.control_id === "ui.display.image_viewer.v1" ? <ImageViewerPreview /> : null}
       {control.control_id === "ui.choice.image_three.v1" ? <ImageChoicePreview /> : null}
     </article>
   );
@@ -202,6 +230,15 @@ function ImageChoicePreview() {
           preview
         />
       ))}
+    </div>
+  );
+}
+
+function ImageViewerPreview() {
+  const Control = getNodeUiControl("ui.display.image_viewer.v1");
+  return (
+    <div className="control-preview-stack">
+      <Control config={imageViewerConfig} node={imageViewerPreviewNode} preview />
     </div>
   );
 }
