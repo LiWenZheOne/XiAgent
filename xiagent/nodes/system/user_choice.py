@@ -67,6 +67,29 @@ class SystemUserChoiceNode(BaseNode):
 
     async def run(self, ctx: NodeContext | None, inputs: Mapping[str, Any]) -> NodeResult:
         candidates = list(inputs.get("candidates", []))
+        selected_id = inputs.get("selected_id")
+        selected_item = inputs.get("selected_item")
+        if selected_item is None and isinstance(selected_id, str):
+            selected_item = next(
+                (
+                    candidate
+                    for candidate in candidates
+                    if isinstance(candidate, Mapping) and candidate.get("id") == selected_id
+                ),
+                {},
+            )
+        selected_index = inputs.get("selected_index")
+        selected_image_url = inputs.get("selected_image_url")
+        output: dict[str, Any] = {
+            "selected_id": selected_id,
+            "selected_item": selected_item if isinstance(selected_item, Mapping) else {},
+        }
+        if isinstance(selected_index, int):
+            output["selected_index"] = selected_index
+        if isinstance(selected_image_url, str):
+            output["selected_image_url"] = selected_image_url
+        if isinstance(output["selected_id"], str):
+            return NodeResult(status="succeeded", output=output)
         question = inputs.get("question")
         return NodeResult(
             status="waiting",

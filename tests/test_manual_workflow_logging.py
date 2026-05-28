@@ -23,9 +23,15 @@ def _echo_contract() -> dict[str, Any]:
         },
         "nodes": [
             {
-                "id": "collect_workflow_input",
-                "ref": "system.workflow_input.v1",
-                "inputs": {},
+                "id": "collect_user_input",
+                "ref": "system.user_input.v1",
+                "inputs": {
+                    "topic": {
+                        "from_user": True,
+                        "schema": {"type": "string"},
+                        "required": True,
+                    }
+                },
                 "outputs": {
                     "type": "object",
                     "required": ["topic"],
@@ -35,13 +41,13 @@ def _echo_contract() -> dict[str, Any]:
             {
                 "id": "echo",
                 "ref": "tool.echo.v1",
-                "inputs": {"topic": {"from": "$workflow.input.topic"}},
+                "inputs": {"topic": {"from": "$nodes.collect_user_input.output.topic"}},
                 "outputs": {"type": "object"},
             }
         ],
         "edges": [
-            {"from": "START", "to": "collect_workflow_input"},
-            {"from": "collect_workflow_input", "to": "echo"},
+            {"from": "START", "to": "collect_user_input"},
+            {"from": "collect_user_input", "to": "echo"},
             {"from": "echo", "to": "END"},
         ],
     }
@@ -136,7 +142,7 @@ def test_logged_echo_workflow_process(test_settings) -> None:
             title="创建并执行工作流任务",
         )
         assert task["status"] == "waiting"
-        assert "collect_workflow_input" in task["current_view"]["active_node_outputs"]
+        assert "collect_user_input" in task["current_view"]["active_node_outputs"]
 
         resumed = _assert_ok(
             client.post(
@@ -144,8 +150,8 @@ def test_logged_echo_workflow_process(test_settings) -> None:
                 headers=headers,
                 json={
                     "project_id": project_id,
-                    "node_id": "collect_workflow_input",
-                    "output": {"topic": "观察一次完整工作流执行过程"},
+                    "node_id": "collect_user_input",
+                    "input": {"topic": "观察一次完整工作流执行过程"},
                 },
             ),
             step=8,
@@ -168,7 +174,7 @@ def test_logged_echo_workflow_process(test_settings) -> None:
 
     assert detail["task"]["status"] == "succeeded"
     assert [execution["node_id"] for execution in detail["node_executions"]] == [
-        "collect_workflow_input",
+        "collect_user_input",
         "echo",
     ]
     assert detail["node_executions"][1]["status"] == "succeeded"

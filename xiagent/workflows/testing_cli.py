@@ -85,7 +85,7 @@ async def run_from_args(args: argparse.Namespace) -> int:
             inline_json=args.input,
             input_file=args.input_file,
             interactive=args.interactive,
-            input_schema=contract["workflow"]["input_schema"],
+            input_schema=_first_user_input_schema(contract),
             console=console,
         )
         runner = WorkflowTestRunner(session=session, console=console)
@@ -114,6 +114,40 @@ def _preview_argument(preview: str | None) -> bool | None:
     if preview == "html":
         return True
     return None
+
+
+def _first_user_input_schema(contract: dict[str, Any]) -> dict[str, Any]:
+    for node in contract.get("nodes", []):
+        if not isinstance(node, dict):
+            continue
+        input_schema = _user_input_schema_from_specs(node.get("inputs", {}))
+        if input_schema is not None:
+            return input_schema
+    return {"type": "object", "additionalProperties": False}
+
+
+def _user_input_schema_from_specs(input_specs: Any) -> dict[str, Any] | None:
+    if not isinstance(input_specs, dict):
+        return None
+    properties: dict[str, Any] = {}
+    required: list[str] = []
+    for input_name, input_spec in input_specs.items():
+        if not isinstance(input_name, str) or not isinstance(input_spec, dict):
+            continue
+        if input_spec.get("from_user") is not True:
+            continue
+        schema = input_spec.get("schema", {})
+        properties[input_name] = dict(schema) if isinstance(schema, dict) else {}
+        if input_spec.get("required", True) is not False:
+            required.append(input_name)
+    if not properties:
+        return None
+    return {
+        "type": "object",
+        "required": required,
+        "properties": properties,
+        "additionalProperties": False,
+    }
 
 
 def _print_json_result(result: Any, console: ConsoleIO) -> None:

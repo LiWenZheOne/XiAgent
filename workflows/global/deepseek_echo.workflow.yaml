@@ -4,10 +4,6 @@ workflow:
   scope: global
   name: DeepSeek 偏好画像工作流
   description: 分三段询问用户喜欢的颜色、食物和运动，并使用 DeepSeek 生成性格侧写。
-  input_schema:
-    type: object
-    additionalProperties: false
-    properties: {}
   ui:
     layout:
       node_io: vertical_stack

@@ -4,26 +4,6 @@ workflow:
   scope: global
   name: RunningHub 文生图调用测试
   description: 使用 RunningHub 文生图模型生成图片，并把结果 URL 暴露给测试运行器。
-  input_schema: &workflow_input_schema
-    type: object
-    required: ["prompt", "aspect_ratio", "resolution"]
-    properties:
-      prompt:
-        type: string
-        minLength: 1
-      aspect_ratio:
-        type: string
-        title: 画面比例
-        description: RunningHub 图片画面比例，必须从固定比例中选择。
-        enum: ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "21:9"]
-        minLength: 1
-      resolution:
-        type: string
-        title: 清晰度
-        description: RunningHub 图片输出清晰度，必须从固定档位中选择。
-        enum: ["1k", "2k", "4k"]
-        minLength: 1
-    additionalProperties: false
   ui:
     layout:
       node_io: vertical_stack
@@ -51,29 +31,30 @@ workflow:
               image_url_path: url
 
 nodes:
-  - id: collect_workflow_input
-    ref: system.workflow_input.v1
-    inputs: {}
-    outputs: *workflow_input_schema
-    config:
-      title: 填写运行输入
-      description: 收集 RunningHub 文生图调用参数。
-    ui:
-      controls:
-        interaction:
-          control_id: ui.input.schema_form.v1
-          variant: default
-          mode: input
-
   - id: generate_image
     ref: ai.runninghub_text_to_image.v1
     inputs:
       prompt:
-        from: "$workflow.input.prompt"
+        from_user: true
+        schema:
+          type: string
+          minLength: 1
       aspect_ratio:
-        from: "$workflow.input.aspect_ratio"
+        from_user: true
+        schema:
+          type: string
+          title: 画面比例
+          description: RunningHub 图片画面比例，必须从固定比例中选择。
+          enum: ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "21:9"]
+          minLength: 1
       resolution:
-        from: "$workflow.input.resolution"
+        from_user: true
+        schema:
+          type: string
+          title: 清晰度
+          description: RunningHub 图片输出清晰度，必须从固定档位中选择。
+          enum: ["1k", "2k", "4k"]
+          minLength: 1
     outputs:
       type: object
       required: ["image_url", "model", "usage", "results"]
@@ -104,11 +85,15 @@ nodes:
         status:
           type: string
       additionalProperties: false
+    ui:
+      controls:
+        input:
+          control_id: ui.input.schema_form.v1
+          variant: default
+          mode: input
 
 edges:
   - from: START
-    to: collect_workflow_input
-  - from: collect_workflow_input
     to: generate_image
   - from: generate_image
     to: END

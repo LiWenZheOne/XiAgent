@@ -5,11 +5,13 @@ from typing import Any
 
 from xiagent.core.errors import ValidationError
 
+_MISSING = object()
+
 
 def resolve_node_inputs(
     input_specs: Mapping[str, Any],
-    workflow_input: Mapping[str, Any],
     node_outputs: Mapping[str, Mapping[str, Any]],
+    user_input: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     resolved: dict[str, Any] = {}
     for input_name, input_spec in input_specs.items():
@@ -19,19 +21,23 @@ def resolve_node_inputs(
                 message="Node input spec must be an object",
                 details={"input_name": input_name},
             )
-        resolved[input_name] = resolve_input_spec(
+        value = resolve_input_spec(
             input_spec,
-            workflow_input=workflow_input,
+            input_name=input_name,
             node_outputs=node_outputs,
+            user_input=user_input,
         )
+        if value is not _MISSING:
+            resolved[input_name] = value
     return resolved
 
 
 def resolve_input_spec(
     input_spec: Mapping[str, Any],
     *,
-    workflow_input: Mapping[str, Any],
+    input_name: str,
     node_outputs: Mapping[str, Mapping[str, Any]],
+    user_input: Mapping[str, Any] | None = None,
 ) -> Any:
     if not isinstance(input_spec, Mapping):
         raise ValidationError(
@@ -40,10 +46,20 @@ def resolve_input_spec(
             details={"input_spec": input_spec},
         )
 
+    if input_spec.get("from_user") is True:
+        if user_input is None or input_name not in user_input:
+            if input_spec.get("required", True) is False:
+                return _MISSING
+            raise ValidationError(
+                code="workflow_user_input_required",
+                message="Node input requires user-provided data",
+                details={"input_name": input_name},
+            )
+        return user_input[input_name]
+
     if "from" in input_spec:
         return resolve_path(
             input_spec.get("from"),
-            workflow_input=workflow_input,
             node_outputs=node_outputs,
         )
 
@@ -55,21 +71,22 @@ def resolve_input_spec(
         if not isinstance(template, str):
             raise ValidationError(
                 code="invalid_workflow_reference",
-                message="Workflow input template must be a string",
+                message="Node input template must be a string",
                 details={"template": template},
             )
         variables = input_spec.get("vars", {})
         if not isinstance(variables, Mapping):
             raise ValidationError(
                 code="invalid_workflow_reference",
-                message="Workflow input template vars must be an object",
+                message="Node input template vars must be an object",
                 details={"vars": variables},
             )
         resolved_vars = {
             name: resolve_input_spec(
                 variable_spec,
-                workflow_input=workflow_input,
+                input_name=name,
                 node_outputs=node_outputs,
+                user_input=user_input,
             )
             for name, variable_spec in variables.items()
         }
@@ -78,7 +95,7 @@ def resolve_input_spec(
         except KeyError as exc:
             raise ValidationError(
                 code="invalid_workflow_reference",
-                message="Workflow input template references an unknown variable",
+                message="Node input template references an unknown variable",
                 details={"variable": str(exc)},
             ) from exc
 
@@ -88,7 +105,6 @@ def resolve_input_spec(
 def resolve_path(
     reference: Any,
     *,
-    workflow_input: Mapping[str, Any],
     node_outputs: Mapping[str, Mapping[str, Any]],
 ) -> Any:
     if not isinstance(reference, str):
@@ -99,10 +115,7 @@ def resolve_path(
         )
 
     if reference.startswith("$workflow.input."):
-        field_path = reference.removeprefix("$workflow.input.").split(".")
-        if not field_path or not field_path[0]:
-            _raise_invalid_reference(reference)
-        return _resolve_segments(workflow_input, field_path, reference)
+        _raise_invalid_reference(reference)
 
     if reference.startswith("$nodes."):
         parts = reference.split(".")

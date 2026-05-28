@@ -17,7 +17,7 @@
 - 在工作流模块下提供测试专用构建器，快速准备工作流执行所需依赖。
 - 提供 CLI 入口执行指定工作流文件或已加载工作流模板。
 - 默认创建或复用一个测试管理员用户和测试项目，避免每次手动注册登录。
-- 支持通过命令行参数、JSON 文件或交互式提示提供工作流输入。
+- 支持通过命令行参数、JSON 文件或交互式提示提交等待节点的用户输入。
 - 执行过程中逐步展示任务事件、节点输入快照、输出快照、等待状态和错误。
 - 遇到 `waiting` 任务时，在 CLI 中收集恢复输出，并调用正式 `RuntimeService.resume_task` 继续执行。
 - 对图片输入和输出提供稳定的展示方式：路径打印、系统查看器打开、HTML 预览报告。
@@ -110,22 +110,22 @@ python -m xiagent.workflows.testing_cli --workflow-id deepseek_echo
 - 项目作用域工作流必须使用当前测试项目；如果契约中已有 `project_id`，必须与测试项目一致。
 - 工作流执行前继续使用现有 `validate_workflow_contract()` 和 `validate_json_value()`。
 
-## 输入采集
+## 用户输入提交
 
-CLI 支持三种输入来源：
+CLI 支持三种用户输入来源，用于恢复带 `from_user: true` 的等待节点，不用于创建任务业务 `input_data`：
 
 ```powershell
-python -m xiagent.workflows.testing_cli workflows/global/deepseek_echo.workflow.yaml --input '{"prompt":"你好"}'
-python -m xiagent.workflows.testing_cli workflows/global/deepseek_echo.workflow.yaml --input-file .data/input.json
+python -m xiagent.workflows.testing_cli workflows/global/deepseek_echo.workflow.yaml --interaction '{"prompt":"你好"}'
+python -m xiagent.workflows.testing_cli workflows/global/deepseek_echo.workflow.yaml --interaction-file .data/input.json
 python -m xiagent.workflows.testing_cli workflows/global/deepseek_echo.workflow.yaml --interactive
 ```
 
 输入优先级：
 
-1. `--input`
-2. `--input-file`
+1. `--interaction`
+2. `--interaction-file`
 3. `--interactive`
-4. 如果都没有提供，则根据 `workflow.input_schema.required` 逐项询问。
+4. 如果都没有提供，则根据等待节点 input spec 中的 `from_user: true` 字段逐项询问。
 
 交互式输入第一版只对常见 JSON Schema 类型做简单提示：
 
@@ -134,7 +134,7 @@ python -m xiagent.workflows.testing_cli workflows/global/deepseek_echo.workflow.
 - `boolean`：接受 `true/false`、`yes/no`。
 - `object`、`array`：要求输入 JSON。
 
-最终输入必须通过工作流 `input_schema` 校验。
+最终输入必须通过目标等待节点 input spec 校验，并由正式恢复路径写入该节点 `input_snapshot`。工作流测试不得把业务参数塞到 create_task `input_data` 绕过运行时。
 
 ## 执行过程展示
 
@@ -272,8 +272,8 @@ data:image/png;base64,...
 ```text
 workflow_path                    可选，工作流 YAML/JSON 文件路径
 --workflow-id <id>               从 WorkflowCatalog 读取工作流
---input <json>                   工作流输入 JSON
---input-file <path>              工作流输入 JSON 文件
+--interaction <json>             等待节点用户输入 JSON
+--interaction-file <path>        等待节点用户输入 JSON 文件
 --interactive                    强制交互输入
 --database-path <path>           测试数据库路径
 --asset-storage-dir <path>       测试资产目录
@@ -312,7 +312,7 @@ details: {"path":["prompt"],"error":"..."}
 新增测试覆盖：
 
 - builder 能迁移数据库、创建测试用户、创建测试项目、装配节点注册表和运行时。
-- CLI 输入解析支持 `--input`、`--input-file` 和按 schema 交互输入。
+- CLI 输入解析支持 `--interaction`、`--interaction-file` 和按等待节点 input spec 交互输入。
 - runner 能执行 `tool.echo.v1` 工作流并输出事件摘要。
 - runner 遇到 `system.human_approval.v1` 后能通过模拟 console 输入恢复任务。
 - 图片识别能识别本地路径、明确 image 对象和 data URL，并能为 data URL 落盘。
@@ -336,6 +336,7 @@ details: {"path":["prompt"],"error":"..."}
 
 - 本设计没有新增第二套工作流执行引擎，执行仍由 `RuntimeService` 负责。
 - 测试管理员不绕过权限，任务仍绑定明确的 `user_id` 和 `project_id`。
+- 业务参数必须走真实等待/提交路径，不通过创建任务 `input_data` 注入。
 - 图片展示能力限定在测试工具层，不污染核心工作流契约和运行时接口。
 - CLI、runner、console、artifacts 职责清晰，可分别测试。
 - 第一版范围可在一次实现计划内完成，不需要拆成多个项目。

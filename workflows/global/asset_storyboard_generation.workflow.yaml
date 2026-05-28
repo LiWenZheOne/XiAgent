@@ -4,34 +4,6 @@ workflow:
   scope: global
   name: Asset Storyboard Generation
   description: 从剧本中提取角色资产（P1全名精确匹配+LLM语义匹配，P2变体匹配+配件检查），人工审核并上传图像后，进行分镜生成（剧本拆分→角色分配→上下文组装→分镜描述→审核→提示词组装→图像生成→审核）。
-  input_schema: &workflow_input_schema
-    type: object
-    required: ["script", "background"]
-    properties:
-      script:
-        type: string
-        minLength: 1
-      background:
-        type: string
-        minLength: 1
-      generate_assets:
-        type: string
-        enum: ["手动上传", "自动生成"]
-      template_image_url:
-        type: string
-      storyboard_target:
-        type: object
-        properties:
-          segment_index:
-            type: integer
-            minimum: 0
-            default: 0
-          panel_index:
-            type: integer
-            minimum: 0
-            default: 0
-        additionalProperties: false
-    additionalProperties: false
   output_schema:
     type: object
     required: ["decision"]
@@ -102,16 +74,79 @@ workflow:
               image_url_path: image_url
 
 nodes:
-  - id: collect_workflow_input
-    ref: system.workflow_input.v1
-    inputs: {}
-    outputs: *workflow_input_schema
+  - id: collect_asset_storyboard_input
+    ref: system.user_input.v1
+    inputs:
+      script:
+        from_user: true
+        schema:
+          type: string
+          minLength: 1
+      background:
+        from_user: true
+        schema:
+          type: string
+          minLength: 1
+      generate_assets:
+        from_user: true
+        required: false
+        schema:
+          type: string
+          enum: ["手动上传", "自动生成"]
+      template_image_url:
+        from_user: true
+        required: false
+        schema:
+          type: string
+      storyboard_target:
+        from_user: true
+        required: false
+        schema:
+          type: object
+          properties:
+            segment_index:
+              type: integer
+              minimum: 0
+              default: 0
+            panel_index:
+              type: integer
+              minimum: 0
+              default: 0
+          additionalProperties: false
+    outputs:
+      type: object
+      required: ["script", "background"]
+      properties:
+        script:
+          type: string
+          minLength: 1
+        background:
+          type: string
+          minLength: 1
+        generate_assets:
+          type: string
+          enum: ["手动上传", "自动生成"]
+        template_image_url:
+          type: string
+        storyboard_target:
+          type: object
+          properties:
+            segment_index:
+              type: integer
+              minimum: 0
+              default: 0
+            panel_index:
+              type: integer
+              minimum: 0
+              default: 0
+          additionalProperties: false
+      additionalProperties: false
     config:
       title: 填写分镜输入
       description: 收集剧本、世界背景、资产生成方式和目标分镜。
     ui:
       controls:
-        interaction:
+        input:
           control_id: ui.input.schema_form.v1
           variant: default
           mode: input
@@ -141,7 +176,7 @@ nodes:
           排除条件：仅在对话中被提及、谈论、派遣、回忆的角色不收录。
         vars:
           background:
-            from: "$workflow.input.background"
+            from: "$nodes.collect_asset_storyboard_input.output.background"
       prompt:
         template: |
           请从以下剧本中提取所有角色信息。
@@ -164,9 +199,9 @@ nodes:
           根层级除 reasoning、characters 和 character_names 外不得包含其他键。
         vars:
           script:
-            from: "$workflow.input.script"
+            from: "$nodes.collect_asset_storyboard_input.output.script"
           background:
-            from: "$workflow.input.background"
+            from: "$nodes.collect_asset_storyboard_input.output.background"
       max_attempts:
         value: 2
     outputs:
@@ -425,7 +460,7 @@ nodes:
           将你的完整分析过程写入 reasoning 字段。
         vars:
           background:
-            from: "$workflow.input.background"
+            from: "$nodes.collect_asset_storyboard_input.output.background"
       prompt:
         template: |
           请从以下剧本中提取所有场景信息。
@@ -447,9 +482,9 @@ nodes:
           根层级除 reasoning、scenes 和 scene_names 外不得包含其他键。
         vars:
           script:
-            from: "$workflow.input.script"
+            from: "$nodes.collect_asset_storyboard_input.output.script"
           background:
-            from: "$workflow.input.background"
+            from: "$nodes.collect_asset_storyboard_input.output.background"
       max_attempts:
         value: 2
     outputs:
@@ -744,7 +779,7 @@ nodes:
           将你的分析过程写入 reasoning 字段。
         vars:
           background:
-            from: "$workflow.input.background"
+            from: "$nodes.collect_asset_storyboard_input.output.background"
       prompt:
         template: |
           请从以下剧本中提取所有关键道具。
@@ -765,9 +800,9 @@ nodes:
           根层级除 reasoning、props 和 prop_names 外不得包含其他键。
         vars:
           script:
-            from: "$workflow.input.script"
+            from: "$nodes.collect_asset_storyboard_input.output.script"
           background:
-            from: "$workflow.input.background"
+            from: "$nodes.collect_asset_storyboard_input.output.background"
       max_attempts:
         value: 2
     outputs:
@@ -1088,7 +1123,7 @@ nodes:
           根层级除 prompt_results 外不得包含其他键。
         vars:
           script:
-            from: "$workflow.input.script"
+            from: "$nodes.collect_asset_storyboard_input.output.script"
           characters:
             from: "$nodes.extract_characters.output.characters"
           variant_results:
@@ -1200,7 +1235,7 @@ nodes:
     ref: tool.script_split.v1
     inputs:
       script:
-        from: "$workflow.input.script"
+        from: "$nodes.collect_asset_storyboard_input.output.script"
     outputs:
       type: object
       required: ["count", "segments"]
@@ -1270,7 +1305,7 @@ nodes:
           asset_images:
             from: "$nodes.merge_asset_images.output.asset_images"
           background:
-            from: "$workflow.input.background"
+            from: "$nodes.collect_asset_storyboard_input.output.background"
       max_attempts:
         value: 2
     outputs:
@@ -1319,7 +1354,7 @@ nodes:
       segment_assignments:
         from: "$nodes.assign_assets_to_segments.output.segment_assignments"
       background:
-        from: "$workflow.input.background"
+        from: "$nodes.collect_asset_storyboard_input.output.background"
     outputs:
       type: object
       required: ["context_string"]
@@ -1528,9 +1563,9 @@ nodes:
           segment_descriptions:
             from: "$nodes.describe_panels.output.segment_descriptions"
           segment_index:
-            from: "$workflow.input.storyboard_target.segment_index"
+            from: "$nodes.collect_asset_storyboard_input.output.storyboard_target.segment_index"
           panel_index:
-            from: "$workflow.input.storyboard_target.panel_index"
+            from: "$nodes.collect_asset_storyboard_input.output.storyboard_target.panel_index"
       max_attempts:
         value: 1
     outputs:
@@ -1727,10 +1762,10 @@ nodes:
 
 edges:
   - from: START
-    to: collect_workflow_input
-  - from: collect_workflow_input
+    to: collect_asset_storyboard_input
+  - from: collect_asset_storyboard_input
     to: extract_characters
-  - from: collect_workflow_input
+  - from: collect_asset_storyboard_input
     to: extract_props
   - from: extract_characters
     to: lookup_existing_assets
@@ -1756,10 +1791,10 @@ edges:
     to: review_assets
   - from: review_assets
     to: upload_images
-    when: {path: "$workflow.input.generate_assets", equals: "手动上传"}
+    when: {path: "$nodes.collect_asset_storyboard_input.output.generate_assets", equals: "手动上传"}
   - from: review_assets
     to: generate_prompt_v2
-    when: {path: "$workflow.input.generate_assets", equals: "自动生成"}
+    when: {path: "$nodes.collect_asset_storyboard_input.output.generate_assets", equals: "自动生成"}
   - from: generate_prompt_v2
     to: generate_asset_images_v2
   - from: upload_images
@@ -1784,7 +1819,7 @@ edges:
     to: generate_image_v2
   - from: generate_image_v2
     to: review_storyboard_image
-  - from: collect_workflow_input
+  - from: collect_asset_storyboard_input
     to: extract_scenes
   - from: extract_scenes
     to: lookup_scene_assets

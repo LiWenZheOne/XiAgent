@@ -13,7 +13,7 @@ export interface NodeUiControlProps {
   projectId?: string;
   busy?: boolean;
   preview?: boolean;
-  onSubmit?: (output: Record<string, unknown>) => void;
+  onSubmit?: (input: Record<string, unknown>) => void;
 }
 
 export type NodeUiComponent = (props: NodeUiControlProps) => ReactElement;

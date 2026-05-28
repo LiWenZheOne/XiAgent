@@ -61,16 +61,13 @@ class SqliteRuntimeService:
         )
         validate_workflow_contract(contract, self._node_registry)
         _validate_workflow_project_scope(contract["workflow"], project_id=project_id)
-        has_workflow_input_node = _has_workflow_input_node(contract)
-        if has_workflow_input_node and input_data:
+        if input_data:
             raise ValidationError(
-                code="workflow_input_must_use_start_node",
-                message="Workflow input must be submitted through the start input node",
+                code="task_input_data_not_supported",
+                message="Task business input must be submitted through node user inputs",
                 details={"workflow_id": contract["workflow"]["id"]},
             )
-        if not has_workflow_input_node:
-            validate_json_value(contract["workflow"]["input_schema"], input_data)
-        stored_input = {} if has_workflow_input_node else input_data
+        stored_input: dict[str, Any] = {}
 
         workflow = contract["workflow"]
         now = _utc_now()
@@ -128,7 +125,6 @@ class SqliteRuntimeService:
                 user_id=user_id,
                 project_id=project_id,
                 contract=contract,
-                workflow_input=stored_input,
                 start_node_id=_START,
             )
         except XiAgentError as exc:
@@ -155,7 +151,8 @@ class SqliteRuntimeService:
         project_id: str,
         task_id: str,
         node_id: str,
-        output: dict[str, Any],
+        input: dict[str, Any] | None = None,
+        output: dict[str, Any] | None = None,
     ) -> TaskRecord:
         await self._user_service.ensure_project_access(
             user_id=user_id,
@@ -172,12 +169,22 @@ class SqliteRuntimeService:
             )
 
         node_def = _node_by_id(contract, node_id)
-        is_workflow_input_node = _is_workflow_input_node(node_def)
-        if is_workflow_input_node:
-            validate_json_value(contract["workflow"]["input_schema"], output)
-        else:
-            validate_json_value(node_def["outputs"], output)
-        next_workflow_input = output if is_workflow_input_node else task.input_data
+        payload = _resume_payload(input=input, output=output)
+        waiting_execution = await self._get_waiting_execution(task_id, node_id)
+        input_schema = waiting_execution.metadata.get("input_schema")
+        if isinstance(input_schema, dict):
+            return await self._resume_node_with_input(
+                user_id=user_id,
+                project_id=project_id,
+                task=task,
+                contract=contract,
+                node_def=node_def,
+                waiting_execution=waiting_execution,
+                input_schema=input_schema,
+                user_input=payload,
+            )
+
+        validate_json_value(node_def["outputs"], payload)
         now = _utc_now()
         async with connect_db(self._database_path) as db:
             cursor = await db.execute(
@@ -186,7 +193,7 @@ class SqliteRuntimeService:
                 set output_snapshot_json = ?, status = ?, finished_at = ?, updated_at = ?
                 where task_id = ? and node_id = ? and status = 'waiting'
                 """,
-                (dump_json(output), "succeeded", now, now, task_id, node_id),
+                (dump_json(payload), "succeeded", now, now, task_id, node_id),
             )
             if cursor.rowcount != 1:
                 await cursor.close()
@@ -196,36 +203,20 @@ class SqliteRuntimeService:
                     details={"task_id": task_id, "node_id": node_id},
                 )
             await cursor.close()
-            waiting_execution = await _fetch_execution_by_task_node_status(
+            succeeded_execution = await _fetch_execution_by_task_node_status(
                 db,
                 task_id=task_id,
                 node_id=node_id,
                 status="succeeded",
             )
-            if is_workflow_input_node:
-                await db.execute(
-                    """
-                    update tasks
-                    set input_json = ?, status = ?, current_view_json = ?, updated_at = ?
-                    where task_id = ?
-                    """,
-                    (
-                        dump_json(next_workflow_input),
-                        "running",
-                        dump_json(task.current_view | {"status": "running"}),
-                        now,
-                        task_id,
-                    ),
-                )
-            else:
-                await db.execute(
-                    """
-                    update tasks
-                    set status = ?, current_view_json = ?, updated_at = ?
-                    where task_id = ?
-                    """,
-                    ("running", dump_json(task.current_view | {"status": "running"}), now, task_id),
-                )
+            await db.execute(
+                """
+                update tasks
+                set status = ?, current_view_json = ?, updated_at = ?
+                where task_id = ?
+                """,
+                ("running", dump_json(task.current_view | {"status": "running"}), now, task_id),
+            )
             await insert_event(
                 db,
                 task_id=task_id,
@@ -239,7 +230,7 @@ class SqliteRuntimeService:
                 event_type="node_succeeded",
                 payload={
                     "node_id": node_id,
-                    "node_execution_id": waiting_execution.node_execution_id,
+                    "node_execution_id": succeeded_execution.node_execution_id,
                 },
                 created_at=now,
             )
@@ -250,7 +241,6 @@ class SqliteRuntimeService:
                 user_id=user_id,
                 project_id=project_id,
                 contract=contract,
-                workflow_input=next_workflow_input,
                 start_node_id=node_id,
             )
         except XiAgentError as exc:
@@ -390,7 +380,6 @@ class SqliteRuntimeService:
             user_id=user_id,
             project_id=project_id,
             contract=contract,
-            workflow_input=task.input_data,
             start_node_id=node_id,
         )
 
@@ -422,7 +411,6 @@ class SqliteRuntimeService:
         user_id: str,
         project_id: str,
         contract: dict[str, Any],
-        workflow_input: dict[str, Any],
         start_node_id: str,
     ) -> TaskRecord:
         _ = start_node_id
@@ -433,7 +421,6 @@ class SqliteRuntimeService:
             node_outputs = await self._load_node_outputs(task_id)
             ready_node_ids = _ready_node_ids(
                 contract,
-                workflow_input,
                 node_outputs,
                 executions,
             )
@@ -449,7 +436,6 @@ class SqliteRuntimeService:
                     project_id=project_id,
                     contract=contract,
                     node_id=next_node_id,
-                    workflow_input=workflow_input,
                     node_outputs=node_outputs,
                 )
                 if execution.status == "waiting":
@@ -465,12 +451,17 @@ class SqliteRuntimeService:
         project_id: str,
         contract: dict[str, Any],
         node_id: str,
-        workflow_input: dict[str, Any],
         node_outputs: dict[str, dict[str, Any]],
     ) -> NodeExecutionRecord:
         node_def = _node_by_id(contract, node_id)
         node = self._node_registry.get(node_def["ref"])
-        inputs = resolve_node_inputs(node_def.get("inputs", {}), workflow_input, node_outputs)
+        descriptor = node.describe()
+        user_input_schema = _node_user_input_schema(node_def, descriptor.input_schema)
+        inputs = (
+            _resolve_non_user_node_inputs(node_def.get("inputs", {}), node_outputs)
+            if user_input_schema is not None
+            else resolve_node_inputs(node_def.get("inputs", {}), node_outputs)
+        )
         now = _utc_now()
         attempt = await self._next_attempt(task_id, node_id)
         node_execution_id = new_id("node_execution")
@@ -508,6 +499,17 @@ class SqliteRuntimeService:
                 event_type="node_started",
                 payload={"node_id": node_id, "node_execution_id": node_execution_id},
                 created_at=now,
+            )
+
+        if user_input_schema is not None:
+            return await self._mark_node_waiting(
+                task_id=task_id,
+                node_execution_id=node_execution_id,
+                node_id=node_id,
+                metadata={
+                    "input_schema": user_input_schema,
+                    "requested_inputs": {},
+                },
             )
 
         ctx = NodeContext(
@@ -560,6 +562,130 @@ class SqliteRuntimeService:
                 node_id=node_id,
                 error={"code": "node_execution_failed", "message": str(exc), "details": {}},
             )
+
+    async def _resume_node_with_input(
+        self,
+        *,
+        user_id: str,
+        project_id: str,
+        task: TaskRecord,
+        contract: dict[str, Any],
+        node_def: dict[str, Any],
+        waiting_execution: NodeExecutionRecord,
+        input_schema: dict[str, Any],
+        user_input: dict[str, Any],
+    ) -> TaskRecord:
+        validate_json_value(input_schema, user_input)
+        node_outputs = await self._load_node_outputs(task.task_id)
+        inputs = resolve_node_inputs(
+            node_def.get("inputs", {}),
+            node_outputs,
+            user_input=user_input,
+        )
+        now = _utc_now()
+        async with connect_db(self._database_path) as db:
+            await db.execute(
+                """
+                update node_executions
+                set input_snapshot_json = ?, status = ?, updated_at = ?
+                where node_execution_id = ? and status = 'waiting'
+                """,
+                (dump_json(inputs), "running", now, waiting_execution.node_execution_id),
+            )
+            await db.execute(
+                """
+                update tasks
+                set status = ?, current_view_json = ?, updated_at = ?
+                where task_id = ?
+                """,
+                ("running", dump_json(task.current_view | {"status": "running"}), now, task.task_id),
+            )
+            await insert_event(
+                db,
+                task_id=task.task_id,
+                event_type="task_resumed",
+                payload={"node_id": waiting_execution.node_id},
+                created_at=now,
+            )
+
+        node = self._node_registry.get(node_def["ref"])
+        ctx = NodeContext(
+            user_id=user_id,
+            project_id=project_id,
+            task_id=task.task_id,
+            node_id=waiting_execution.node_id,
+            node_execution_id=waiting_execution.node_execution_id,
+            config=dict(node_def.get("config", {})),
+            output_schema=dict(node_def["outputs"]),
+            asset_service=self._asset_service,
+            event_sink=None,
+            logger=None,
+        )
+        try:
+            result = await node.run(ctx, inputs)
+            if result.status == "waiting":
+                return await self._mark_node_waiting(
+                    task_id=task.task_id,
+                    node_execution_id=waiting_execution.node_execution_id,
+                    node_id=waiting_execution.node_id,
+                    metadata=result.metadata,
+                )
+            if result.status != "succeeded":
+                raise ValidationError(
+                    code="unsupported_node_result_status",
+                    message="Node returned an unsupported status",
+                    details={"status": result.status, "node_id": waiting_execution.node_id},
+                )
+            validate_json_value(node_def["outputs"], result.output)
+            await self._mark_node_succeeded(
+                task_id=task.task_id,
+                node_execution_id=waiting_execution.node_execution_id,
+                node_id=waiting_execution.node_id,
+                output=result.output,
+                metadata=result.metadata,
+                asset_refs=result.asset_refs,
+            )
+        except XiAgentError as exc:
+            await self._mark_node_failed(
+                task_id=task.task_id,
+                node_execution_id=waiting_execution.node_execution_id,
+                node_id=waiting_execution.node_id,
+                error={"code": exc.code, "message": exc.message, "details": exc.details},
+            )
+            raise
+        except Exception as exc:
+            await self._mark_node_failed(
+                task_id=task.task_id,
+                node_execution_id=waiting_execution.node_execution_id,
+                node_id=waiting_execution.node_id,
+                error={"code": "node_execution_failed", "message": str(exc), "details": {}},
+            )
+            raise
+
+        try:
+            return await self._continue_task(
+                task_id=task.task_id,
+                user_id=user_id,
+                project_id=project_id,
+                contract=contract,
+                start_node_id=waiting_execution.node_id,
+            )
+        except XiAgentError as exc:
+            await self._fail_task(
+                task.task_id,
+                {"code": exc.code, "message": exc.message, "details": exc.details},
+            )
+            raise exc.__class__(
+                code=exc.code,
+                message=exc.message,
+                details=exc.details | {"task_id": task.task_id},
+            ) from exc
+        except Exception as exc:
+            await self._fail_task(
+                task.task_id,
+                {"code": "task_execution_failed", "message": str(exc), "details": {}},
+            )
+            raise
 
     async def _mark_node_waiting(
         self,
@@ -818,13 +944,11 @@ class SqliteRuntimeService:
 
 def _ready_node_ids(
     contract: dict[str, Any],
-    workflow_input: dict[str, Any],
     node_outputs: dict[str, dict[str, Any]],
     executions: list[NodeExecutionRecord],
 ) -> list[str]:
     active_nodes, active_edges, potential_nodes = _activation_state(
         contract,
-        workflow_input,
         node_outputs,
     )
     started_node_ids = {
@@ -838,7 +962,6 @@ def _ready_node_ids(
         if _node_is_ready(
             contract,
             node_id,
-            workflow_input,
             node_outputs,
             active_nodes,
             active_edges,
@@ -850,7 +973,6 @@ def _ready_node_ids(
 
 def _activation_state(
     contract: dict[str, Any],
-    workflow_input: dict[str, Any],
     node_outputs: dict[str, dict[str, Any]],
 ) -> tuple[set[str], set[tuple[str, str]], set[str]]:
     completed_node_ids = set(node_outputs)
@@ -861,7 +983,7 @@ def _activation_state(
         from_node = edge["from"]
         if from_node != _START and from_node not in completed_node_ids:
             continue
-        if not _edge_matches(edge, workflow_input, node_outputs):
+        if not _edge_matches(edge, node_outputs):
             continue
         to_node = edge["to"]
         active_edges.add((from_node, to_node))
@@ -897,7 +1019,6 @@ def _potential_downstream_nodes(
 def _node_is_ready(
     contract: dict[str, Any],
     node_id: str,
-    workflow_input: dict[str, Any],
     node_outputs: dict[str, dict[str, Any]],
     active_nodes: set[str],
     active_edges: set[tuple[str, str]],
@@ -914,7 +1035,7 @@ def _node_is_ready(
         if from_node == _START:
             continue
         if from_node in node_outputs:
-            if _edge_matches(edge, workflow_input, node_outputs):
+            if _edge_matches(edge, node_outputs):
                 has_active_incoming = True
             continue
         if from_node in active_nodes or from_node in potential_nodes:
@@ -924,7 +1045,6 @@ def _node_is_ready(
 
 def _edge_matches(
     edge: Mapping[str, Any],
-    workflow_input: dict[str, Any],
     node_outputs: dict[str, dict[str, Any]],
 ) -> bool:
     condition = edge.get("when")
@@ -932,7 +1052,6 @@ def _edge_matches(
         return True
     actual = resolve_path(
         condition.get("path"),
-        workflow_input=workflow_input,
         node_outputs=node_outputs,
     )
     if "equals" in condition:
@@ -956,12 +1075,74 @@ def _validate_workflow_project_scope(workflow: dict[str, Any], *, project_id: st
         )
 
 
-def _has_workflow_input_node(contract: dict[str, Any]) -> bool:
-    return any(_is_workflow_input_node(node) for node in contract.get("nodes", []))
+def _resume_payload(
+    *,
+    input: dict[str, Any] | None,
+    output: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if input is not None and output is not None:
+        raise ValidationError(
+            code="ambiguous_resume_payload",
+            message="Resume request must provide input or output, not both",
+            details={},
+        )
+    payload = input if input is not None else output
+    if payload is None:
+        raise ValidationError(
+            code="missing_resume_input",
+            message="Resume request must include input",
+            details={},
+        )
+    return payload
 
 
-def _is_workflow_input_node(node: Mapping[str, Any]) -> bool:
-    return node.get("ref") == "system.workflow_input.v1"
+def _node_user_input_schema(
+    node: Mapping[str, Any],
+    descriptor_input_schema: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    input_specs = node.get("inputs", {})
+    if not isinstance(input_specs, Mapping):
+        return None
+    descriptor_properties = descriptor_input_schema.get("properties")
+    if not isinstance(descriptor_properties, Mapping):
+        descriptor_properties = {}
+
+    properties: dict[str, Any] = {}
+    required: list[str] = []
+    for input_name, input_spec in input_specs.items():
+        if not isinstance(input_name, str) or not isinstance(input_spec, Mapping):
+            continue
+        if input_spec.get("from_user") is not True:
+            continue
+        schema = input_spec.get("schema")
+        if not isinstance(schema, Mapping):
+            schema = descriptor_properties.get(input_name, {})
+        properties[input_name] = dict(schema) if isinstance(schema, Mapping) else {}
+        if input_spec.get("required", True) is not False:
+            required.append(input_name)
+
+    if not properties:
+        return None
+    return {
+        "type": "object",
+        "required": required,
+        "properties": properties,
+        "additionalProperties": False,
+    }
+
+
+def _resolve_non_user_node_inputs(
+    input_specs: Any,
+    node_outputs: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    if not isinstance(input_specs, Mapping):
+        return {}
+    non_user_specs = {
+        input_name: input_spec
+        for input_name, input_spec in input_specs.items()
+        if not (isinstance(input_spec, Mapping) and input_spec.get("from_user") is True)
+    }
+    return resolve_node_inputs(non_user_specs, node_outputs)
 
 
 def _node_by_id(contract: dict[str, Any], node_id: str) -> dict[str, Any]:

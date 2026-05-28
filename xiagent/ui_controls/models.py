@@ -10,7 +10,6 @@ class UiControlBindingRequirement:
     required: bool = True
     binding_kind: str = "schema_path"
     accepted_sources: tuple[str, ...] = (
-        "workflow.input",
         "node.input",
         "node.output",
         "node.metadata",

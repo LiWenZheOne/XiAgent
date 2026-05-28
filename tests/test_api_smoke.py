@@ -27,7 +27,7 @@ def _auth_headers(
 
 
 def _echo_contract() -> dict:
-    return _with_workflow_input_node({
+    return _with_user_input_node({
         "workflow": {
             "id": "api-echo",
             "version": "1.0.0",
@@ -43,7 +43,7 @@ def _echo_contract() -> dict:
             {
                 "id": "echo",
                 "ref": "tool.echo.v1",
-                "inputs": {"topic": {"from": "$workflow.input.topic"}},
+                "inputs": {"topic": {"from": "$nodes.collect_user_input.output.topic"}},
                 "outputs": {"type": "object"},
             }
         ],
@@ -52,7 +52,7 @@ def _echo_contract() -> dict:
 
 
 def _approval_contract() -> dict:
-    return _with_workflow_input_node({
+    return _with_user_input_node({
         "workflow": {
             "id": "api-approval",
             "version": "1.0.0",
@@ -68,7 +68,7 @@ def _approval_contract() -> dict:
             {
                 "id": "review",
                 "ref": "system.human_approval.v1",
-                "inputs": {"topic": {"from": "$workflow.input.topic"}},
+                "inputs": {"topic": {"from": "$nodes.collect_user_input.output.topic"}},
                 "outputs": {
                     "type": "object",
                     "required": ["decision"],
@@ -94,23 +94,23 @@ def _approval_contract() -> dict:
     })
 
 
-def _with_workflow_input_node(contract: dict) -> dict:
+def _with_user_input_node(contract: dict) -> dict:
     input_schema = contract["workflow"].get("input_schema", {})
     if not input_schema.get("properties"):
         return contract
     contract["nodes"].append(
         {
-            "id": "collect_workflow_input",
-            "ref": "system.workflow_input.v1",
-            "inputs": {},
+            "id": "collect_user_input",
+            "ref": "system.user_input.v1",
+            "inputs": _user_input_specs(input_schema),
             "outputs": input_schema,
         }
     )
     contract["edges"] = [
-        {"from": "START", "to": "collect_workflow_input"},
+        {"from": "START", "to": "collect_user_input"},
         *[
             (
-                {"from": "collect_workflow_input", "to": edge["to"]}
+                {"from": "collect_user_input", "to": edge["to"]}
                 if edge["from"] == "START"
                 else edge
             )
@@ -120,7 +120,22 @@ def _with_workflow_input_node(contract: dict) -> dict:
     return contract
 
 
-def _create_task_with_workflow_input(
+def _user_input_specs(input_schema: dict) -> dict[str, dict]:
+    properties = input_schema.get("properties", {})
+    required = set(input_schema.get("required", []))
+    if not isinstance(properties, dict):
+        return {}
+    return {
+        name: {
+            "from_user": True,
+            "schema": dict(schema) if isinstance(schema, dict) else {},
+            "required": name in required,
+        }
+        for name, schema in properties.items()
+    }
+
+
+def _create_task_with_user_input(
     client: TestClient,
     *,
     headers: dict[str, str],
@@ -139,8 +154,8 @@ def _create_task_with_workflow_input(
         f"/api/tasks/{task['task_id']}/interactions",
         json={
             "project_id": project_id,
-            "node_id": "collect_workflow_input",
-            "output": input_data,
+            "node_id": "collect_user_input",
+            "input": input_data,
         },
         headers=headers,
     )
@@ -228,7 +243,7 @@ def test_global_project_is_default_shared_project_and_supports_user_tasks(test_s
 
         alice_projects_response = client.get("/api/projects", headers=alice_headers)
         bob_projects_response = client.get("/api/projects", headers=bob_headers)
-        task = _create_task_with_workflow_input(
+        task = _create_task_with_user_input(
             client,
             headers=alice_headers,
             project_id="global",
@@ -398,7 +413,7 @@ def test_task_endpoints_create_succeeded_echo_task_and_read_it(test_settings) ->
             headers=headers,
         ).json()
 
-        task = _create_task_with_workflow_input(
+        task = _create_task_with_user_input(
             client,
             headers=headers,
             project_id=project["project_id"],
@@ -420,7 +435,7 @@ def test_task_endpoints_create_succeeded_echo_task_and_read_it(test_settings) ->
     assert body["task"]["status"] == "succeeded"
 
 
-def test_create_task_rejects_pre_task_workflow_input_data(test_settings) -> None:
+def test_create_task_rejects_pre_task_business_input_data(test_settings) -> None:
     app = create_app(settings=test_settings)
     with TestClient(app) as client:
         client.post(
@@ -467,14 +482,14 @@ def test_task_list_detail_and_stream_return_project_scoped_runtime_data(test_set
         ).json()
         contract = _echo_contract()
 
-        first_task = _create_task_with_workflow_input(
+        first_task = _create_task_with_user_input(
             client,
             headers=headers,
             project_id=first_project["project_id"],
             contract=contract,
             input_data={"topic": "first"},
         )
-        second_task = _create_task_with_workflow_input(
+        second_task = _create_task_with_user_input(
             client,
             headers=headers,
             project_id=second_project["project_id"],
@@ -509,7 +524,7 @@ def test_task_list_detail_and_stream_return_project_scoped_runtime_data(test_set
     assert detail_response.status_code == 200
     detail = detail_response.json()
     assert detail["workflow_snapshot"] == contract
-    assert detail["node_attempts"]["collect_workflow_input"][0]["attempt"] == 1
+    assert detail["node_attempts"]["collect_user_input"][0]["attempt"] == 1
     assert detail["node_attempts"]["echo"][0]["attempt"] == 1
     assert detail["node_attempts"]["echo"][0]["node_execution_id"] == detail["task"][
         "current_view"
@@ -534,7 +549,7 @@ def test_delete_task_removes_project_scoped_runtime_data(test_settings) -> None:
             json={"name": "Delete Task Project"},
             headers=headers,
         ).json()
-        task = _create_task_with_workflow_input(
+        task = _create_task_with_user_input(
             client,
             headers=headers,
             project_id=project["project_id"],
@@ -579,7 +594,7 @@ def test_task_interactions_endpoint_resumes_waiting_task(test_settings) -> None:
             json={"name": "Interaction Project"},
             headers=headers,
         ).json()
-        task = _create_task_with_workflow_input(
+        task = _create_task_with_user_input(
             client,
             headers=headers,
             project_id=project["project_id"],
@@ -592,7 +607,7 @@ def test_task_interactions_endpoint_resumes_waiting_task(test_settings) -> None:
             json={
                 "project_id": project["project_id"],
                 "node_id": "review",
-                "output": {"decision": "approve"},
+                "input": {"decision": "approve"},
             },
             headers=headers,
         )
@@ -662,7 +677,7 @@ def test_protected_get_routes_reject_query_user_id(test_settings) -> None:
             json={"name": "Query Project"},
             headers=headers,
         ).json()
-        task = _create_task_with_workflow_input(
+        task = _create_task_with_user_input(
             client,
             headers=headers,
             project_id=project["project_id"],
@@ -719,7 +734,7 @@ def test_wrong_project_access_uses_standard_error_shape(test_settings) -> None:
             headers=other_headers,
         ).json()
 
-        task = _create_task_with_workflow_input(
+        task = _create_task_with_user_input(
             client,
             headers=owner_headers,
             project_id=owner_project["project_id"],
@@ -754,29 +769,33 @@ workflow:
   version: 1.0.0
   scope: global
   name: Nested Sample
-  input_schema: &workflow_input_schema
-    type: object
-    required:
-      - topic
-    properties:
-      topic:
-        type: string
 nodes:
-  - id: collect_workflow_input
-    ref: system.workflow_input.v1
-    inputs: {}
-    outputs: *workflow_input_schema
+  - id: collect_user_input
+    ref: system.user_input.v1
+    inputs:
+      topic:
+        from_user: true
+        schema:
+          type: string
+        required: true
+    outputs:
+      type: object
+      required:
+        - topic
+      properties:
+        topic:
+          type: string
   - id: echo
     ref: tool.echo.v1
     inputs:
       topic:
-        from: $workflow.input.topic
+        from: $nodes.collect_user_input.output.topic
     outputs:
       type: object
 edges:
   - from: START
-    to: collect_workflow_input
-  - from: collect_workflow_input
+    to: collect_user_input
+  - from: collect_user_input
     to: echo
   - from: echo
     to: END
@@ -893,29 +912,33 @@ workflow:
   version: 1.0.0
   scope: {scope}
 {project_line}  name: {name}
-  input_schema: &workflow_input_schema
-    type: object
-    required:
-      - topic
-    properties:
-      topic:
-        type: string
 nodes:
-  - id: collect_workflow_input
-    ref: system.workflow_input.v1
-    inputs: {{}}
-    outputs: *workflow_input_schema
+  - id: collect_user_input
+    ref: system.user_input.v1
+    inputs:
+      topic:
+        from_user: true
+        schema:
+          type: string
+        required: true
+    outputs:
+      type: object
+      required:
+        - topic
+      properties:
+        topic:
+          type: string
   - id: echo
     ref: tool.echo.v1
     inputs:
       topic:
-        from: $workflow.input.topic
+        from: $nodes.collect_user_input.output.topic
     outputs:
       type: object
 edges:
   - from: START
-    to: collect_workflow_input
-  - from: collect_workflow_input
+    to: collect_user_input
+  - from: collect_user_input
     to: echo
   - from: echo
     to: END

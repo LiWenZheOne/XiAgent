@@ -33,7 +33,7 @@ from xiagent.nodes.base import AssetRef, BaseNode, NodeContext, NodeDescriptor, 
 from xiagent.nodes.registry import NodeRegistry
 from xiagent.nodes.system.human_approval import HumanApprovalNode
 from xiagent.nodes.system.user_choice import SystemUserChoiceNode
-from xiagent.nodes.system.workflow_input import WorkflowInputNode
+from xiagent.nodes.system.user_input import SystemUserInputNode
 from xiagent.nodes.tools.assemble_segment_context import AssembleSegmentContextNode
 from xiagent.nodes.tools.assemble_storyboard_context import AssembleStoryboardContextNode
 from xiagent.nodes.tools.asset_lookup import AssetLookupNode
@@ -118,7 +118,7 @@ def build_node_registry(settings: Settings) -> NodeRegistry:
     registry = NodeRegistry()
     registry.register(HumanApprovalNode())
     registry.register(SystemUserChoiceNode())
-    registry.register(WorkflowInputNode())
+    registry.register(SystemUserInputNode())
     registry.register(EchoToolNode())
     registry.register(MergeAssetImagesNode())
     registry.register(ScriptSplitNode())
@@ -205,6 +205,6 @@ __all__ = [
     "NodeRegistry",
     "NodeResult",
     "SystemUserChoiceNode",
-    "WorkflowInputNode",
+    "SystemUserInputNode",
     "build_node_registry",
 ]

@@ -22,7 +22,7 @@ from xiagent.nodes.ai.runninghub_image import (
 )
 from xiagent.nodes.registry import NodeRegistry
 from xiagent.nodes.system.human_approval import HumanApprovalNode
-from xiagent.nodes.system.workflow_input import WorkflowInputNode
+from xiagent.nodes.system.user_input import SystemUserInputNode
 from xiagent.nodes.tools.assemble_storyboard_context import AssembleStoryboardContextNode
 from xiagent.nodes.tools.asset_lookup import AssetLookupNode
 from xiagent.nodes.tools.create_text_asset import CreateTextAssetNode
@@ -41,6 +41,9 @@ ORCHESTRATION_WORKFLOW_PATH = Path(
     "workflows/global/asset_storyboard_generation.workflow.yaml"
 )
 
+def _user_input_outputs(contract: dict[str, Any]) -> dict[str, Any]:
+    return next(node for node in contract["nodes"] if node["id"] == "collect_asset_storyboard_input")["outputs"]
+
 
 def test_orchestration_workflow_contract_structure(test_settings) -> None:
     contract = load_workflow_file(ORCHESTRATION_WORKFLOW_PATH)
@@ -48,7 +51,7 @@ def test_orchestration_workflow_contract_structure(test_settings) -> None:
     assert contract["workflow"]["id"] == "asset_storyboard_generation"
     assert contract["workflow"]["version"] == "1.0.0"
     assert contract["workflow"]["scope"] == "global"
-    assert contract["workflow"]["input_schema"]["required"] == [
+    assert _user_input_outputs(contract)["required"] == [
         "script",
         "background",
     ]
@@ -61,7 +64,7 @@ def test_orchestration_workflow_node_list(test_settings) -> None:
 
     nodes_by_id = {node["id"]: node for node in contract["nodes"]}
     assert list(nodes_by_id) == [
-        "collect_workflow_input",
+        "collect_asset_storyboard_input",
         "extract_characters",
         "lookup_existing_assets",
         "match_by_name",
@@ -93,7 +96,7 @@ def test_orchestration_workflow_node_list(test_settings) -> None:
         "review_storyboard_image",
     ]
     assert {node_id: node["ref"] for node_id, node in nodes_by_id.items()} == {
-        "collect_workflow_input": "system.workflow_input.v1",
+        "collect_asset_storyboard_input": "system.user_input.v1",
         "extract_characters": "ai.deepseek_structured_json.v1",
         "lookup_existing_assets": "tool.asset_lookup.v1",
         "match_by_name": "tool.asset_lookup.v1",
@@ -140,18 +143,18 @@ def test_orchestration_workflow_edges_are_dag(test_settings) -> None:
         {
             "from": "review_assets",
             "to": "upload_images",
-            "when": {"path": "$workflow.input.generate_assets", "equals": "手动上传"},
+            "when": {"path": "$nodes.collect_asset_storyboard_input.output.generate_assets", "equals": "手动上传"},
         },
         {
             "from": "review_assets",
             "to": "generate_prompt_v2",
-            "when": {"path": "$workflow.input.generate_assets", "equals": "自动生成"},
+            "when": {"path": "$nodes.collect_asset_storyboard_input.output.generate_assets", "equals": "自动生成"},
         },
     ]
     assert unconditional_edges == [
-        {"from": "START", "to": "collect_workflow_input"},
-        {"from": "collect_workflow_input", "to": "extract_characters"},
-        {"from": "collect_workflow_input", "to": "extract_props"},
+        {"from": "START", "to": "collect_asset_storyboard_input"},
+        {"from": "collect_asset_storyboard_input", "to": "extract_characters"},
+        {"from": "collect_asset_storyboard_input", "to": "extract_props"},
         {"from": "extract_characters", "to": "lookup_existing_assets"},
         {"from": "extract_props", "to": "lookup_prop_assets"},
         {"from": "lookup_prop_assets", "to": "match_props_by_name"},
@@ -175,7 +178,7 @@ def test_orchestration_workflow_edges_are_dag(test_settings) -> None:
         {"from": "extract_panel_image_urls", "to": "assemble_prompt_v2"},
         {"from": "assemble_prompt_v2", "to": "generate_image_v2"},
         {"from": "generate_image_v2", "to": "review_storyboard_image"},
-        {"from": "collect_workflow_input", "to": "extract_scenes"},
+        {"from": "collect_asset_storyboard_input", "to": "extract_scenes"},
         {"from": "extract_scenes", "to": "lookup_scene_assets"},
         {"from": "lookup_scene_assets", "to": "match_scenes_by_name"},
         {"from": "match_scenes_by_name", "to": "enrich_scenes"},
@@ -193,7 +196,7 @@ def test_orchestration_workflow_manual_path_valid(test_settings) -> None:
     manual_edge = {
         "from": "review_assets",
         "to": "upload_images",
-        "when": {"path": "$workflow.input.generate_assets", "equals": "手动上传"},
+        "when": {"path": "$nodes.collect_asset_storyboard_input.output.generate_assets", "equals": "手动上传"},
     }
 
     assert manual_edge in edges
@@ -233,7 +236,7 @@ def test_orchestration_input_schema_storyboard_target_default(
 ) -> None:
     contract = load_workflow_file(ORCHESTRATION_WORKFLOW_PATH)
 
-    input_schema = contract["workflow"]["input_schema"]
+    input_schema = _user_input_outputs(contract)
     assert "required" in input_schema
     assert "storyboard_target" not in input_schema["required"]
 
@@ -385,7 +388,7 @@ def _orchestration_registry(router: FakeOrchestrationRouter) -> NodeRegistry:
     """Register all nodes needed for the orchestrated asset-storyboard workflow,
     with the fake router injected for DeepSeek and RunningHub calls."""
     registry = NodeRegistry()
-    registry.register(WorkflowInputNode())
+    registry.register(SystemUserInputNode())
     registry.register(HumanApprovalNode())
     registry.register(MergeAssetImagesNode())
     registry.register(ScriptSplitNode())
@@ -646,14 +649,16 @@ async def test_orchestration_manual_upload_path(
     def _safe_resolve_input_spec(
         input_spec: Any,
         *,
-        workflow_input: Any,
+        input_name: str,
         node_outputs: Any,
+        user_input: Any | None = None,
     ) -> Any:
         try:
             return _original_resolve_input_spec(
                 input_spec,
-                workflow_input=workflow_input,
+                input_name=input_name,
                 node_outputs=node_outputs,
+                user_input=user_input,
             )
         except ValidationError as exc:
             if exc.code == "workflow_reference_missing_node_output":
@@ -983,7 +988,7 @@ def test_orchestration_storyboard_target_default(test_settings) -> None:
     """storyboard_target 可选，不提供时默认 segment=0, panel=0。"""
     contract = load_workflow_file(ORCHESTRATION_WORKFLOW_PATH)
 
-    input_schema = contract["workflow"]["input_schema"]
+    input_schema = _user_input_outputs(contract)
     assert "storyboard_target" not in input_schema["required"]
 
     # input 不含 storyboard_target 应通过验证
@@ -1156,14 +1161,16 @@ async def test_scene_pipeline_execution(
     def _safe_resolve_input_spec(
         input_spec: Any,
         *,
-        workflow_input: Any,
+        input_name: str,
         node_outputs: Any,
+        user_input: Any | None = None,
     ) -> Any:
         try:
             return _original_resolve_input_spec(
                 input_spec,
-                workflow_input=workflow_input,
+                input_name=input_name,
                 node_outputs=node_outputs,
+                user_input=user_input,
             )
         except ValidationError as exc:
             if exc.code == "workflow_reference_missing_node_output":

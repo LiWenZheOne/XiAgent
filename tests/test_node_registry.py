@@ -51,7 +51,7 @@ def test_build_node_registry_registers_builtin_nodes(test_settings) -> None:
     assert refs == {
         "system.human_approval.v1",
         "system.user_choice.v1",
-        "system.workflow_input.v1",
+        "system.user_input.v1",
         "tool.echo.v1",
         "tool.script_split.v1",
         "tool.assemble_segment_context.v1",
@@ -193,50 +193,26 @@ async def test_user_choice_node_waits_with_candidates_metadata() -> None:
     }
 
 
-async def test_workflow_input_node_waits_with_output_schema_metadata() -> None:
-    from xiagent.nodes.base import NodeContext
-    from xiagent.nodes.system.workflow_input import WorkflowInputNode
+async def test_user_input_node_returns_inputs_with_schema_form_defaults() -> None:
+    from xiagent.nodes.system.user_input import SystemUserInputNode
 
-    output_schema = {
-        "type": "object",
-        "required": ["prompt", "image_urls"],
-        "properties": {
-            "prompt": {"type": "string", "minLength": 1},
-            "image_urls": {
-                "type": "array",
-                "minItems": 1,
-                "items": {"type": "string", "minLength": 1},
-            },
-        },
-        "additionalProperties": False,
-    }
-    ctx = NodeContext(
-        user_id="user_1",
-        project_id="project_1",
-        task_id="task_1",
-        node_id="collect_workflow_input",
-        node_execution_id="node_exec_1",
-        config={"title": "填写运行输入", "description": "提供图生图参数"},
-        output_schema=output_schema,
-        asset_service=None,
-        event_sink=None,
-        logger=None,
-    )
+    inputs = {"prompt": "雨夜城市", "image_urls": ["https://example.test/a.png"]}
 
-    result = await WorkflowInputNode().run(ctx, {})
-    descriptor = WorkflowInputNode().describe()
+    result = await SystemUserInputNode().run(ctx=None, inputs=inputs)
+    descriptor = SystemUserInputNode().describe()
 
-    assert result.status == "waiting"
-    assert result.output == {}
-    assert descriptor.ui_defaults["controls"]["interaction"] == {
+    assert result.status == "succeeded"
+    assert result.output == inputs
+    assert descriptor.ui_defaults["controls"]["input"] == {
         "control_id": "ui.input.schema_form.v1",
         "variant": "default",
         "mode": "input",
     }
-    assert result.metadata["input_schema"] == output_schema
-    assert result.metadata["title"] == "填写运行输入"
-    assert result.metadata["description"] == "提供图生图参数"
-    assert result.metadata["requested_inputs"] == {}
+    assert descriptor.ui_defaults["controls"]["output"] == {
+        "control_id": "ui.input.schema_form.v1",
+        "variant": "default",
+        "mode": "readonly",
+    }
 
 
 def test_build_node_registry_uses_settings_deepseek_model(test_settings) -> None:

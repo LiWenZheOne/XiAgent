@@ -4,22 +4,6 @@ workflow:
   scope: global
   name: Asset Catalog
   description: 从剧本中提取角色资产，P1全名精确匹配+LLM语义匹配，P2变体匹配+配件检查，审核后生成图像或手动上传。
-  input_schema: &workflow_input_schema
-    type: object
-    required: ["script", "generate_assets", "background"]
-    properties:
-      script:
-        type: string
-        minLength: 1
-      generate_assets:
-        type: string
-        enum: ["手动上传", "自动生成"]
-      background:
-        type: string
-        minLength: 1
-      template_image_url:
-        type: string
-    additionalProperties: false
   ui:
     layout:
       node_io: vertical_stack
@@ -67,16 +51,51 @@ workflow:
               image_url_path: url
 
 nodes:
-  - id: collect_workflow_input
-    ref: system.workflow_input.v1
-    inputs: {}
-    outputs: *workflow_input_schema
+  - id: collect_asset_catalog_input
+    ref: system.user_input.v1
+    inputs:
+      script:
+        from_user: true
+        schema:
+          type: string
+          minLength: 1
+      generate_assets:
+        from_user: true
+        schema:
+          type: string
+          enum: ["手动上传", "自动生成"]
+      background:
+        from_user: true
+        schema:
+          type: string
+          minLength: 1
+      template_image_url:
+        from_user: true
+        required: false
+        schema:
+          type: string
+    outputs:
+      type: object
+      required: ["script", "generate_assets", "background"]
+      properties:
+        script:
+          type: string
+          minLength: 1
+        generate_assets:
+          type: string
+          enum: ["手动上传", "自动生成"]
+        background:
+          type: string
+          minLength: 1
+        template_image_url:
+          type: string
+      additionalProperties: false
     config:
       title: 填写资产抽取输入
       description: 收集剧本、世界背景和资产生成方式。
     ui:
       controls:
-        interaction:
+        input:
           control_id: ui.input.schema_form.v1
           variant: default
           mode: input
@@ -106,7 +125,7 @@ nodes:
           排除条件：仅在对话中被提及、谈论、派遣、回忆的角色不收录。
         vars:
           background:
-            from: "$workflow.input.background"
+            from: "$nodes.collect_asset_catalog_input.output.background"
       prompt:
         template: |
           请从以下剧本中提取所有角色信息。
@@ -129,9 +148,9 @@ nodes:
           根层级除 reasoning、characters 和 character_names 外不得包含其他键。
         vars:
           script:
-            from: "$workflow.input.script"
+            from: "$nodes.collect_asset_catalog_input.output.script"
           background:
-            from: "$workflow.input.background"
+            from: "$nodes.collect_asset_catalog_input.output.background"
       max_attempts:
         value: 2
     outputs:
@@ -584,7 +603,7 @@ nodes:
           根层级除 prompt_results 外不得包含其他键。
         vars:
           script:
-            from: "$workflow.input.script"
+            from: "$nodes.collect_asset_catalog_input.output.script"
           characters:
             from: "$nodes.extract_characters.output.characters"
           variant_results:
@@ -705,8 +724,8 @@ nodes:
 
 edges:
   - from: START
-    to: collect_workflow_input
-  - from: collect_workflow_input
+    to: collect_asset_catalog_input
+  - from: collect_asset_catalog_input
     to: extract_characters
   - from: extract_characters
     to: lookup_existing_assets
@@ -724,10 +743,10 @@ edges:
     to: review_assets
   - from: review_assets
     to: generate_prompt
-    when: {path: "$workflow.input.generate_assets", equals: "自动生成"}
+    when: {path: "$nodes.collect_asset_catalog_input.output.generate_assets", equals: "自动生成"}
   - from: review_assets
     to: upload_images
-    when: {path: "$workflow.input.generate_assets", equals: "手动上传"}
+    when: {path: "$nodes.collect_asset_catalog_input.output.generate_assets", equals: "手动上传"}
   - from: generate_prompt
     to: generate_image
   - from: generate_image

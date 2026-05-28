@@ -12,7 +12,7 @@ from xiagent.infrastructure.migrations import migrate
 from xiagent.nodes.base import AssetRef, BaseNode, NodeContext, NodeDescriptor, NodeResult
 from xiagent.nodes.registry import NodeRegistry
 from xiagent.nodes.system.human_approval import HumanApprovalNode
-from xiagent.nodes.system.workflow_input import WorkflowInputNode
+from xiagent.nodes.system.user_input import SystemUserInputNode
 from xiagent.nodes.system.user_choice import SystemUserChoiceNode
 from xiagent.nodes.tools.echo_tool import EchoToolNode
 from xiagent.runtime.input_resolver import resolve_node_inputs
@@ -22,7 +22,7 @@ from xiagent.users.service import SqliteUserService
 
 
 def _echo_contract() -> dict:
-    return _with_workflow_input_node({
+    return _with_user_input_node({
         "workflow": {
             "id": "echo",
             "version": "1.0.0",
@@ -38,7 +38,7 @@ def _echo_contract() -> dict:
             {
                 "id": "echo",
                 "ref": "tool.echo.v1",
-                "inputs": {"topic": {"from": "$workflow.input.topic"}},
+                "inputs": {"topic": {"from": "$nodes.collect_user_input.output.topic"}},
                 "outputs": {"type": "object"},
             }
         ],
@@ -46,7 +46,7 @@ def _echo_contract() -> dict:
     })
 
 
-def _workflow_input_contract() -> dict:
+def _user_input_contract() -> dict:
     input_schema = {
         "type": "object",
         "required": ["topic"],
@@ -58,21 +58,21 @@ def _workflow_input_contract() -> dict:
             "id": "workflow-input-echo",
             "version": "1.0.0",
             "scope": "global",
-            "name": "Workflow Input Echo",
+            "name": "Node Input Echo",
             "input_schema": input_schema,
         },
         "nodes": [
             {
-                "id": "collect_workflow_input",
-                "ref": "system.workflow_input.v1",
-                "inputs": {},
+                "id": "collect_user_input",
+                "ref": "system.user_input.v1",
+                "inputs": _user_input_specs(input_schema),
                 "outputs": input_schema,
                 "config": {"title": "填写运行输入"},
             },
             {
                 "id": "echo",
                 "ref": "tool.echo.v1",
-                "inputs": {"topic": {"from": "$workflow.input.topic"}},
+                "inputs": {"topic": {"from": "$nodes.collect_user_input.output.topic"}},
                 "outputs": {
                     "type": "object",
                     "required": ["echo"],
@@ -82,15 +82,15 @@ def _workflow_input_contract() -> dict:
             },
         ],
         "edges": [
-            {"from": "START", "to": "collect_workflow_input"},
-            {"from": "collect_workflow_input", "to": "echo"},
+            {"from": "START", "to": "collect_user_input"},
+            {"from": "collect_user_input", "to": "echo"},
             {"from": "echo", "to": "END"},
         ],
     }
 
 
 def _approval_contract() -> dict:
-    return _with_workflow_input_node({
+    return _with_user_input_node({
         "workflow": {
             "id": "approval",
             "version": "1.0.0",
@@ -106,7 +106,7 @@ def _approval_contract() -> dict:
             {
                 "id": "review",
                 "ref": "system.human_approval.v1",
-                "inputs": {"topic": {"from": "$workflow.input.topic"}},
+                "inputs": {"topic": {"from": "$nodes.collect_user_input.output.topic"}},
                 "outputs": {
                     "type": "object",
                     "required": ["decision"],
@@ -132,23 +132,39 @@ def _approval_contract() -> dict:
     })
 
 
-def _with_workflow_input_node(contract: dict[str, Any]) -> dict[str, Any]:
+def _user_input_specs(input_schema: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    properties = input_schema.get("properties", {})
+    required = set(input_schema.get("required", []))
+    if not isinstance(properties, Mapping):
+        return {}
+    return {
+        name: {
+            "from_user": True,
+            "schema": dict(schema) if isinstance(schema, Mapping) else {},
+            "required": name in required,
+        }
+        for name, schema in properties.items()
+        if isinstance(name, str)
+    }
+
+
+def _with_user_input_node(contract: dict[str, Any]) -> dict[str, Any]:
     input_schema = contract["workflow"].get("input_schema", {})
     if not input_schema.get("properties"):
         return contract
     contract["nodes"].append(
         {
-            "id": "collect_workflow_input",
-            "ref": "system.workflow_input.v1",
-            "inputs": {},
+            "id": "collect_user_input",
+            "ref": "system.user_input.v1",
+            "inputs": _user_input_specs(input_schema),
             "outputs": input_schema,
         }
     )
     contract["edges"] = [
-        {"from": "START", "to": "collect_workflow_input"},
+        {"from": "START", "to": "collect_user_input"},
         *[
             (
-                {"from": "collect_workflow_input", "to": edge["to"]}
+                {"from": "collect_user_input", "to": edge["to"]}
                 if edge["from"] == "START"
                 else edge
             )
@@ -507,8 +523,8 @@ def _single_node_contract(*, workflow_id: str, node_id: str, ref: str) -> dict:
 
 
 async def _runtime(test_settings, registry: NodeRegistry) -> tuple[SqliteRuntimeService, str, str]:
-    if all(node.describe().ref != "system.workflow_input.v1" for node in registry.list()):
-        registry.register(WorkflowInputNode())
+    if all(node.describe().ref != "system.user_input.v1" for node in registry.list()):
+        registry.register(SystemUserInputNode())
     await migrate(test_settings.database_path)
     users = SqliteUserService(test_settings.database_path)
     user = await users.create_user(username="alice", password="secret-123")
@@ -521,7 +537,7 @@ async def _runtime(test_settings, registry: NodeRegistry) -> tuple[SqliteRuntime
     return runtime, user.user_id, project.project_id
 
 
-async def _create_task_with_workflow_input(
+async def _create_task_with_user_input(
     runtime: SqliteRuntimeService,
     *,
     user_id: str,
@@ -540,8 +556,8 @@ async def _create_task_with_workflow_input(
         user_id=user_id,
         project_id=project_id,
         task_id=task.task_id,
-        node_id="collect_workflow_input",
-        output=input_data,
+        node_id="collect_user_input",
+        input=input_data,
     )
 
 
@@ -629,7 +645,7 @@ async def test_simple_workflow_task_succeeds(test_settings) -> None:
     registry.register(EchoToolNode())
     runtime, user_id, project_id = await _runtime(test_settings, registry)
 
-    task = await _create_task_with_workflow_input(
+    task = await _create_task_with_user_input(
         runtime,
         user_id=user_id,
         project_id=project_id,
@@ -643,22 +659,22 @@ async def test_simple_workflow_task_succeeds(test_settings) -> None:
         project_id=project_id,
         task_id=task.task_id,
     )
-    assert [execution.node_id for execution in executions] == ["collect_workflow_input", "echo"]
+    assert [execution.node_id for execution in executions] == ["collect_user_input", "echo"]
     assert executions[0].output_snapshot == {"topic": "测试"}
     assert executions[1].input_snapshot == {"topic": "测试"}
     assert executions[1].output_snapshot == {"echo": {"topic": "测试"}}
 
 
-async def test_create_task_without_business_input_waits_on_workflow_input_node(test_settings) -> None:
+async def test_create_task_without_business_input_waits_on_user_input_node(test_settings) -> None:
     registry = NodeRegistry()
-    registry.register(WorkflowInputNode())
+    registry.register(SystemUserInputNode())
     registry.register(EchoToolNode())
     runtime, user_id, project_id = await _runtime(test_settings, registry)
 
     task = await runtime.create_task_from_contract(
         user_id=user_id,
         project_id=project_id,
-        contract=_workflow_input_contract(),
+        contract=_user_input_contract(),
         input_data={},
     )
 
@@ -669,15 +685,15 @@ async def test_create_task_without_business_input_waits_on_workflow_input_node(t
         project_id=project_id,
         task_id=task.task_id,
     )
-    assert [execution.node_id for execution in executions] == ["collect_workflow_input"]
-    assert executions[0].node_ref == "system.workflow_input.v1"
+    assert [execution.node_id for execution in executions] == ["collect_user_input"]
+    assert executions[0].node_ref == "system.user_input.v1"
     assert executions[0].status == "waiting"
-    assert executions[0].metadata["input_schema"] == _workflow_input_contract()["workflow"]["input_schema"]
+    assert executions[0].metadata["input_schema"] == _user_input_contract()["workflow"]["input_schema"]
 
 
 async def test_create_task_rejects_business_input_when_workflow_has_input_node(test_settings) -> None:
     registry = NodeRegistry()
-    registry.register(WorkflowInputNode())
+    registry.register(SystemUserInputNode())
     registry.register(EchoToolNode())
     runtime, user_id, project_id = await _runtime(test_settings, registry)
 
@@ -685,22 +701,22 @@ async def test_create_task_rejects_business_input_when_workflow_has_input_node(t
         await runtime.create_task_from_contract(
             user_id=user_id,
             project_id=project_id,
-            contract=_workflow_input_contract(),
+            contract=_user_input_contract(),
             input_data={"topic": "不应在创建页提交"},
         )
 
-    assert exc_info.value.code == "workflow_input_must_use_start_node"
+    assert exc_info.value.code == "task_input_data_not_supported"
 
 
-async def test_resume_workflow_input_updates_task_input_and_continues(test_settings) -> None:
+async def test_resume_user_input_updates_node_snapshots_and_continues(test_settings) -> None:
     registry = NodeRegistry()
-    registry.register(WorkflowInputNode())
+    registry.register(SystemUserInputNode())
     registry.register(EchoToolNode())
     runtime, user_id, project_id = await _runtime(test_settings, registry)
     task = await runtime.create_task_from_contract(
         user_id=user_id,
         project_id=project_id,
-        contract=_workflow_input_contract(),
+        contract=_user_input_contract(),
         input_data={},
     )
 
@@ -708,18 +724,18 @@ async def test_resume_workflow_input_updates_task_input_and_continues(test_setti
         user_id=user_id,
         project_id=project_id,
         task_id=task.task_id,
-        node_id="collect_workflow_input",
-        output={"topic": "统一输入"},
+        node_id="collect_user_input",
+        input={"topic": "统一输入"},
     )
 
     assert resumed.status == "succeeded"
-    assert resumed.input_data == {"topic": "统一输入"}
+    assert resumed.input_data == {}
     executions = await runtime.list_node_executions(
         user_id=user_id,
         project_id=project_id,
         task_id=task.task_id,
     )
-    assert [execution.node_id for execution in executions] == ["collect_workflow_input", "echo"]
+    assert [execution.node_id for execution in executions] == ["collect_user_input", "echo"]
     assert executions[0].output_snapshot == {"topic": "统一输入"}
     assert executions[1].input_snapshot == {"topic": "统一输入"}
 
@@ -964,7 +980,7 @@ async def test_human_node_waits_and_resume_succeeds(test_settings) -> None:
     registry.register(EchoToolNode())
     runtime, user_id, project_id = await _runtime(test_settings, registry)
 
-    task = await _create_task_with_workflow_input(
+    task = await _create_task_with_user_input(
         runtime,
         user_id=user_id,
         project_id=project_id,
@@ -1039,7 +1055,7 @@ async def test_list_events_are_ordered_for_wait_and_resume(test_settings) -> Non
     registry.register(EchoToolNode())
     runtime, user_id, project_id = await _runtime(test_settings, registry)
 
-    task = await _create_task_with_workflow_input(
+    task = await _create_task_with_user_input(
         runtime,
         user_id=user_id,
         project_id=project_id,
@@ -1140,7 +1156,7 @@ async def test_resume_with_invalid_output_keeps_task_waiting(test_settings) -> N
     registry.register(EchoToolNode())
     runtime, user_id, project_id = await _runtime(test_settings, registry)
 
-    task = await _create_task_with_workflow_input(
+    task = await _create_task_with_user_input(
         runtime,
         user_id=user_id,
         project_id=project_id,
@@ -1184,7 +1200,7 @@ async def test_resume_preserves_node_output_history(test_settings) -> None:
     registry.register(EchoToolNode())
     runtime, user_id, project_id = await _runtime(test_settings, registry)
 
-    task = await _create_task_with_workflow_input(
+    task = await _create_task_with_user_input(
         runtime,
         user_id=user_id,
         project_id=project_id,
@@ -1218,7 +1234,7 @@ async def test_resume_reject_succeeds_without_echo_execution(test_settings) -> N
     registry.register(EchoToolNode())
     runtime, user_id, project_id = await _runtime(test_settings, registry)
 
-    task = await _create_task_with_workflow_input(
+    task = await _create_task_with_user_input(
         runtime,
         user_id=user_id,
         project_id=project_id,
@@ -1239,9 +1255,9 @@ async def test_resume_reject_succeeds_without_echo_execution(test_settings) -> N
         task_id=task.task_id,
     )
     assert resumed.status == "succeeded"
-    assert [item.node_id for item in executions] == ["collect_workflow_input", "review"]
+    assert [item.node_id for item in executions] == ["collect_user_input", "review"]
     assert resumed.current_view["active_node_outputs"] == {
-        "collect_workflow_input": executions[0].node_execution_id,
+        "collect_user_input": executions[0].node_execution_id,
         "review": executions[1].node_execution_id,
     }
 
@@ -1255,13 +1271,16 @@ async def test_missing_optional_input_reference_fails_persisted_task(test_settin
         "type": "object",
         "properties": {"optional_field": {"type": "string"}},
     }
-    next(node for node in contract["nodes"] if node["id"] == "collect_workflow_input")[
+    next(node for node in contract["nodes"] if node["id"] == "collect_user_input")[
         "outputs"
     ] = contract["workflow"]["input_schema"]
-    contract["nodes"][0]["inputs"] = {"value": {"from": "$workflow.input.optional_field"}}
+    next(node for node in contract["nodes"] if node["id"] == "collect_user_input")[
+        "inputs"
+    ] = _user_input_specs(contract["workflow"]["input_schema"])
+    contract["nodes"][0]["inputs"] = {"value": {"from": "$nodes.collect_user_input.output.optional_field"}}
 
     with pytest.raises(ValidationError) as exc_info:
-        await _create_task_with_workflow_input(
+        await _create_task_with_user_input(
             runtime,
             user_id=user_id,
             project_id=project_id,
@@ -1333,14 +1352,14 @@ async def test_workflow_template_project_id_uses_call_context(test_settings) -> 
     project_contract["workflow"]["scope"] = "project"
     project_contract["workflow"]["project_id"] = project_id
 
-    project_task = await _create_task_with_workflow_input(
+    project_task = await _create_task_with_user_input(
         runtime,
         user_id=user_id,
         project_id=project_id,
         contract=project_contract,
         input_data={"topic": "project"},
     )
-    global_task = await _create_task_with_workflow_input(
+    global_task = await _create_task_with_user_input(
         runtime,
         user_id=user_id,
         project_id=project_id,
@@ -1365,14 +1384,14 @@ async def test_changed_workflow_contract_creates_new_template_snapshot(test_sett
     second_contract["workflow"]["name"] = "Echo Updated"
     second_contract["nodes"][0]["config"] = {"title": "Updated Echo"}
 
-    first_task = await _create_task_with_workflow_input(
+    first_task = await _create_task_with_user_input(
         runtime,
         user_id=user_id,
         project_id=project_id,
         contract=first_contract,
         input_data={"topic": "first"},
     )
-    second_task = await _create_task_with_workflow_input(
+    second_task = await _create_task_with_user_input(
         runtime,
         user_id=user_id,
         project_id=project_id,
@@ -1402,7 +1421,7 @@ async def test_repeated_resume_does_not_duplicate_downstream_work(test_settings)
     registry.register(EchoToolNode())
     runtime, user_id, project_id = await _runtime(test_settings, registry)
 
-    task = await _create_task_with_workflow_input(
+    task = await _create_task_with_user_input(
         runtime,
         user_id=user_id,
         project_id=project_id,
@@ -1440,14 +1459,14 @@ async def test_repeated_resume_does_not_duplicate_downstream_work(test_settings)
         event.payload for event in events if event.event_type == "node_succeeded"
     ]
     assert exc_info.value.code in {"task_not_waiting", "node_not_waiting"}
-    assert [item.node_id for item in executions] == ["collect_workflow_input", "review", "echo"]
+    assert [item.node_id for item in executions] == ["collect_user_input", "review", "echo"]
     assert len([item for item in executions if item.node_id == "echo"]) == 1
     assert event_types.count("task_resumed") == 2
     assert event_types.count("task_succeeded") == 1
     assert event_types.count("node_started") == 3
     assert event_types.count("node_succeeded") == 3
     assert [payload["node_id"] for payload in node_succeeded_payloads] == [
-        "collect_workflow_input",
+        "collect_user_input",
         "review",
         "echo",
     ]
@@ -1455,7 +1474,7 @@ async def test_repeated_resume_does_not_duplicate_downstream_work(test_settings)
 
 async def test_runtime_read_apis_require_project_access(test_settings) -> None:
     registry = NodeRegistry()
-    registry.register(WorkflowInputNode())
+    registry.register(SystemUserInputNode())
     registry.register(EchoToolNode())
     await migrate(test_settings.database_path)
     users = SqliteUserService(test_settings.database_path)
@@ -1468,7 +1487,7 @@ async def test_runtime_read_apis_require_project_access(test_settings) -> None:
         user_service=users,
         node_registry=registry,
     )
-    task = await _create_task_with_workflow_input(
+    task = await _create_task_with_user_input(
         runtime,
         user_id=owner.user_id,
         project_id=owner_project.project_id,
@@ -1509,14 +1528,14 @@ async def test_repeated_direct_contract_reuses_workflow_template(test_settings) 
     registry.register(EchoToolNode())
     runtime, user_id, project_id = await _runtime(test_settings, registry)
 
-    first = await _create_task_with_workflow_input(
+    first = await _create_task_with_user_input(
         runtime,
         user_id=user_id,
         project_id=project_id,
         contract=_echo_contract(),
         input_data={"topic": "测试1"},
     )
-    second = await _create_task_with_workflow_input(
+    second = await _create_task_with_user_input(
         runtime,
         user_id=user_id,
         project_id=project_id,
@@ -1531,7 +1550,6 @@ async def test_repeated_direct_contract_reuses_workflow_template(test_settings) 
 def test_input_resolver_resolves_nested_node_outputs() -> None:
     resolved = resolve_node_inputs(
         {"title": {"from": "$nodes.plan.output.story.title"}},
-        workflow_input={"topic": "测试"},
         node_outputs={"plan": {"story": {"title": "第一章"}}},
     )
 
@@ -1550,7 +1568,6 @@ def test_input_resolver_resolves_literal_values_and_templates() -> None:
                 },
             },
         },
-        workflow_input={},
         node_outputs={"color": {"answer": "蓝色"}, "food": {"answer": "米饭"}},
     )
 
@@ -1561,7 +1578,6 @@ def test_input_resolver_missing_path_raises_validation_error() -> None:
     with pytest.raises(ValidationError) as exc_info:
         resolve_node_inputs(
             {"title": {"from": "$nodes.plan.output.story.title"}},
-            workflow_input={"topic": "测试"},
             node_outputs={"plan": {"story": {}}},
         )
 

@@ -4,14 +4,6 @@ workflow:
   scope: global
   name: Storyboard Generation
   description: Generate one storyboard image prompt from the first script segment.
-  input_schema: &workflow_input_schema
-    type: object
-    required: ["script"]
-    properties:
-      script:
-        type: string
-        minLength: 1
-    additionalProperties: false
   ui:
     layout:
       node_io: vertical_stack
@@ -59,16 +51,28 @@ workflow:
               image_url_path: url
 
 nodes:
-  - id: collect_workflow_input
-    ref: system.workflow_input.v1
-    inputs: {}
-    outputs: *workflow_input_schema
+  - id: collect_storyboard_input
+    ref: system.user_input.v1
+    inputs:
+      script:
+        from_user: true
+        schema:
+          type: string
+          minLength: 1
+    outputs:
+      type: object
+      required: ["script"]
+      properties:
+        script:
+          type: string
+          minLength: 1
+      additionalProperties: false
     config:
       title: 填写剧本输入
       description: 收集分镜生成所需的剧本文本。
     ui:
       controls:
-        interaction:
+        input:
           control_id: ui.input.schema_form.v1
           variant: default
           mode: input
@@ -77,7 +81,7 @@ nodes:
     ref: tool.script_split.v1
     inputs:
       script:
-        from: "$workflow.input.script"
+        from: "$nodes.collect_storyboard_input.output.script"
     outputs:
       type: object
       required: ["count", "segments"]
@@ -531,8 +535,8 @@ nodes:
 
 edges:
   - from: START
-    to: collect_workflow_input
-  - from: collect_workflow_input
+    to: collect_storyboard_input
+  - from: collect_storyboard_input
     to: split_script
   - from: split_script
     to: analyze_characters

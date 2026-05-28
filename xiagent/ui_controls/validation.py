@@ -43,7 +43,6 @@ def validate_ui_config(
     ui_config: Mapping[str, Any],
     *,
     catalog: UiControlCatalog | None = None,
-    workflow_input_schema: dict[str, Any] | None = None,
     current_input_schema: dict[str, Any] | None = None,
     current_output_schema: dict[str, Any] | None = None,
     current_metadata_schema: dict[str, Any] | None = None,
@@ -76,7 +75,6 @@ def validate_ui_config(
             control_config,
             slot=str(slot),
             catalog=active_catalog,
-            workflow_input_schema=workflow_input_schema,
             current_input_schema=current_input_schema,
             current_output_schema=current_output_schema,
             current_metadata_schema=current_metadata_schema,
@@ -91,7 +89,6 @@ def _validate_control_config(
     *,
     slot: str,
     catalog: UiControlCatalog,
-    workflow_input_schema: dict[str, Any] | None,
     current_input_schema: dict[str, Any] | None,
     current_output_schema: dict[str, Any] | None,
     current_metadata_schema: dict[str, Any] | None,
@@ -150,7 +147,6 @@ def _validate_control_config(
         if requirement.binding_kind == "schema_path":
             target_schema = _resolve_binding_schema(
                 value,
-                workflow_input_schema=workflow_input_schema,
                 current_input_schema=current_input_schema,
                 current_output_schema=current_output_schema,
                 current_metadata_schema=current_metadata_schema,
@@ -232,7 +228,6 @@ def _find_variant(
 def _resolve_binding_schema(
     binding: Any,
     *,
-    workflow_input_schema: dict[str, Any] | None,
     current_input_schema: dict[str, Any] | None,
     current_output_schema: dict[str, Any] | None,
     current_metadata_schema: dict[str, Any] | None,
@@ -243,11 +238,11 @@ def _resolve_binding_schema(
     if not isinstance(binding, str) or not binding:
         _raise("invalid_ui_binding_path", "UI binding path must be a string", location=location)
     if binding.startswith("$workflow.input."):
-        return _schema_at_path(
-            workflow_input_schema,
-            binding.removeprefix("$workflow.input.").split("."),
-            binding,
-            location,
+        _raise(
+            "invalid_ui_binding_path",
+            "Workflow input UI bindings are no longer supported",
+            binding=binding,
+            location=location,
         )
     if binding.startswith("$node.input."):
         return _schema_at_path(

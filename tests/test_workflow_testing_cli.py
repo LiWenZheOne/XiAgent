@@ -68,7 +68,6 @@ workflow:
   id: invalid-cli
   version: 1.0.0
   scope: global
-  name: Invalid CLI
 nodes:
   - id: echo
     ref: tool.echo.v1
@@ -152,28 +151,32 @@ workflow:
   version: 1.0.0
   scope: global
   name: CLI Echo
-  input_schema: &workflow_input_schema
-    type: object
-    required: ["topic"]
-    properties:
-      topic:
-        type: string
 nodes:
-  - id: collect_workflow_input
-    ref: system.workflow_input.v1
-    inputs: {{}}
-    outputs: *workflow_input_schema
+  - id: collect_user_input
+    ref: system.user_input.v1
+    inputs:
+      topic:
+        from_user: true
+        schema:
+          type: string
+        required: true
+    outputs:
+      type: object
+      required: ["topic"]
+      properties:
+        topic:
+          type: string
   - id: echo
     ref: tool.echo.v1
     inputs:
       topic:
-        from: "$workflow.input.topic"
+        from: "$nodes.collect_user_input.output.topic"
     outputs:
       type: object
 edges:
   - from: START
-    to: collect_workflow_input
-  - from: collect_workflow_input
+    to: collect_user_input
+  - from: collect_user_input
     to: echo
   - from: echo
     to: END

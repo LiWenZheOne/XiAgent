@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { createTextAsset, deleteAsset, downloadAssetContent, listAssetCollections, listAssetTags, searchAssets, uploadAsset } from "../api/assets";
 import { getCurrentUser, login, register } from "../api/auth";
@@ -745,10 +745,13 @@ function TaskDetailPanel({
     setRefreshKey((current) => current + 1);
   }
 
-  async function handleInteraction(nodeId: string, output: Record<string, unknown>) {
-    await submitInteraction(taskId, { project_id: projectId, node_id: nodeId, output });
-    onTaskChanged();
-    setRefreshKey((current) => current + 1);
+  async function handleInteraction(nodeId: string, input: Record<string, unknown>) {
+    try {
+      await submitInteraction(taskId, { project_id: projectId, node_id: nodeId, input });
+    } finally {
+      onTaskChanged();
+      setRefreshKey((current) => current + 1);
+    }
   }
 
   return (
@@ -801,10 +804,11 @@ function NodeExecutionCard({
   events: TaskEvent[];
   projectId: string;
   snapshot?: WorkflowSnapshot | null;
-  onInteraction: (nodeId: string, output: Record<string, unknown>) => Promise<void>;
+  onInteraction: (nodeId: string, input: Record<string, unknown>) => Promise<void>;
   onRerun: (nodeId: string) => Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
   const [actionError, setActionError] = useState("");
   const nodeSpec = snapshot?.nodes?.find((item) => item.id === node.node_id);
   const displayTitle = nodeDisplayTitle(node, snapshot);
@@ -816,11 +820,14 @@ function NodeExecutionCard({
     : resolveNodeControlConfig(node, nodeSpec, snapshot, "output");
   const interactionConfig = resolveNodeInteractionConfig(node, nodeSpec, snapshot);
   const InteractionControl = interactionConfig ? getNodeUiControl(interactionConfig.control_id) : null;
+  const inputCanSubmit = isWaitingNode(node, snapshot) && inputConfig?.mode === "input";
   const inputDefaultOpen = nodeSectionDefaultOpen(snapshot, "input", false);
   const outputDefaultOpen = node.error ? true : nodeSectionDefaultOpen(snapshot, "output", true);
   const eventsDefaultOpen = nodeSectionDefaultOpen(snapshot, "events", false);
 
   async function withBusy(action: () => Promise<void>) {
+    if (busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     setActionError("");
     try {
@@ -828,6 +835,7 @@ function NodeExecutionCard({
     } catch (nextError) {
       setActionError(nodeActionError(nextError));
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   }
@@ -853,6 +861,7 @@ function NodeExecutionCard({
 
         <div className="node-data-stack">
           <NodeDataSection
+            busy={busy}
             config={inputConfig}
             defaultOpen={inputDefaultOpen}
             imageAltPrefix={`${displayTitle} 输入图片`}
@@ -863,6 +872,7 @@ function NodeExecutionCard({
             snapshot={snapshot}
             title="输入"
             value={node.input_snapshot}
+            onSubmit={inputCanSubmit ? (input) => withBusy(() => onInteraction(node.node_id, input)) : undefined}
           />
           <NodeDataSection
             config={outputConfig}
@@ -892,7 +902,7 @@ function NodeExecutionCard({
 
         {actionError ? <p className="form-error">{actionError}</p> : null}
 
-        {isWaitingNode(node, snapshot) && !interactionConfig ? (
+        {isWaitingNode(node, snapshot) && !interactionConfig && !inputCanSubmit ? (
           <WaitingInteraction busy={busy} node={node} nodeSpec={nodeSpec} onSubmit={(output) => withBusy(() => onInteraction(node.node_id, output))} />
         ) : null}
 
@@ -924,6 +934,8 @@ function NodeDataSection({
   slot,
   imageAltPrefix,
   defaultOpen,
+  busy,
+  onSubmit,
 }: {
   title: string;
   value: unknown;
@@ -935,6 +947,8 @@ function NodeDataSection({
   slot: "input" | "output";
   imageAltPrefix: string;
   defaultOpen: boolean;
+  busy?: boolean;
+  onSubmit?: (input: Record<string, unknown>) => void;
 }) {
   const controlConfig = config ?? { control_id: "ui.display.value.v1", variant: "default", mode: "readonly" };
   const Control = getNodeUiControl(controlConfig.control_id);
@@ -952,6 +966,8 @@ function NodeDataSection({
         snapshot={snapshot}
         title={title}
         value={value}
+        busy={busy}
+        onSubmit={onSubmit}
       />
     </details>
   );
@@ -985,10 +1001,10 @@ function WaitingInteraction({
         </div>
         <label className="form-field">
           <span>{formatFieldLabel(answerKey)}</span>
-          <textarea aria-label={formatFieldLabel(answerKey)} value={text} onChange={(event) => setText(event.target.value)} />
+          <textarea aria-label={formatFieldLabel(answerKey)} readOnly={busy} value={text} onChange={(event) => setText(event.target.value)} />
         </label>
         <button className="primary-button" disabled={busy || !text.trim()} type="button" onClick={() => onSubmit({ [answerKey]: text.trim() })}>
-          提交并继续
+          {busy ? "提交中" : "提交并继续"}
         </button>
       </section>
     );
@@ -1003,10 +1019,10 @@ function WaitingInteraction({
         </div>
         <label className="form-field">
           <span>图片地址</span>
-          <textarea aria-label="图片地址" value={text} onChange={(event) => setText(event.target.value)} placeholder="每行一个公开图片地址" />
+          <textarea aria-label="图片地址" readOnly={busy} value={text} onChange={(event) => setText(event.target.value)} placeholder="每行一个公开图片地址" />
         </label>
         <button className="primary-button" disabled={busy || splitLines(text).length === 0} type="button" onClick={() => onSubmit({ [answerKey]: splitLines(text) })}>
-          提交图片并继续
+          {busy ? "提交中" : "提交图片并继续"}
         </button>
       </section>
     );
@@ -1020,11 +1036,11 @@ function WaitingInteraction({
       </div>
       <label className="form-field">
         <span>确认意见</span>
-        <textarea aria-label="确认意见" value={text} onChange={(event) => setText(event.target.value)} />
+        <textarea aria-label="确认意见" readOnly={busy} value={text} onChange={(event) => setText(event.target.value)} />
       </label>
       <div className="button-row">
         <button className="primary-button" disabled={busy} type="button" onClick={() => onSubmit({ decision: "approved", approved: true, comment: text })}>
-          同意并继续
+          {busy ? "提交中" : "同意并继续"}
         </button>
         <button className="secondary-button danger" disabled={busy} type="button" onClick={() => onSubmit({ decision: "rejected", approved: false, comment: text })}>
           拒绝
@@ -1412,10 +1428,41 @@ function workflowToTemplate(item: WorkflowListItem): WorkflowTemplate {
     version: item.workflow.version,
     name: item.workflow.name,
     description: item.workflow.description || "后端工作流模板",
-    inputSchema: item.workflow.input_schema,
+    inputSchema: firstUserInputSchema(item.nodes),
     contract: { workflow: item.workflow, nodes: item.nodes, edges: item.edges ?? [] },
     nodes: item.nodes.map((node) => node.id),
   };
+}
+
+function firstUserInputSchema(nodes: WorkflowNodeSpec[]): JsonSchema {
+  for (const node of nodes) {
+    const inputSpecs = recordValue(node.inputs);
+    if (!inputSpecs) continue;
+    const properties: Record<string, JsonSchema> = {};
+    const required: string[] = [];
+    for (const [name, specValue] of Object.entries(inputSpecs)) {
+      const spec = recordValue(specValue);
+      if (spec?.from_user !== true) continue;
+      properties[name] = isJsonSchema(spec.schema) ? spec.schema : {};
+      if (spec.required !== false) required.push(name);
+    }
+    if (Object.keys(properties).length) {
+      return { type: "object", required, properties, additionalProperties: false };
+    }
+  }
+  return { type: "object", properties: {}, additionalProperties: false };
+}
+
+function isJsonSchema(value: unknown): value is JsonSchema {
+  if (typeof value !== "object" || value === null) return false;
+  const record = value as Record<string, unknown>;
+  return record.type === undefined || typeof record.type === "string";
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
 }
 
 function orderNodes(detail: TaskDetailResponse | null): TaskNodeExecution[] {

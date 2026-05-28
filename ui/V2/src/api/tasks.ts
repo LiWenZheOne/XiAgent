@@ -9,7 +9,7 @@ export interface CreateTaskRequest {
 export interface SubmitInteractionRequest {
   project_id: string;
   node_id: string;
-  output: Record<string, unknown>;
+  input: Record<string, unknown>;
 }
 
 export async function listTasks(projectId: string): Promise<TaskRecord[]> {

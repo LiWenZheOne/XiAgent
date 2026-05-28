@@ -1,5 +1,7 @@
 # UI 任务交互实现计划
 
+> **输入语义更新提示：** 本历史实施计划中涉及创建任务 `input_data`、`workflow_input` 和 `$workflow.input.*` 的片段已被当前 runtime 节点输入规则取代。新 UI 任务交互必须通过节点 `from_user: true` 等待/提交路径处理业务参数，以 `docs/development/2026-05-28-02-runtime-node-input-cleanup-guidelines.md` 为准。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 实现 XiAgent 第一版 UI 任务交互垂直切片：工作流 `ui` 契约、任务快照、节点级 SSE、用户交互节点、节点重跑、`ui/V1/` 前端、控件注册表、任务详情节点块和真实前后端场景测试。

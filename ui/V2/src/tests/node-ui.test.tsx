@@ -87,15 +87,15 @@ describe("node-ui controls", () => {
     };
     const inputNode: TaskNodeExecution = {
       node_execution_id: "exec-input",
-      node_id: "collect_workflow_input",
-      node_ref: "system.workflow_input.v1",
+      node_id: "collect_user_input",
+      node_ref: "system.user_input.v1",
       status: "succeeded",
       input_snapshot: {},
       output_snapshot: { prompt: "neon city" },
     };
     const nodeSpec: WorkflowNodeSpec = {
-      id: "collect_workflow_input",
-      ref: "system.workflow_input.v1",
+      id: "collect_user_input",
+      ref: "system.user_input.v1",
       outputs: inputSchema,
       ui: {
         controls: {
@@ -127,7 +127,7 @@ describe("node-ui controls", () => {
     });
   });
 
-  it("renders workflow input through schema form and the reusable asset image picker", async () => {
+  it("renders node user input through schema form and the reusable asset image picker", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
       if (url.startsWith("/api/assets/collections")) {
@@ -167,16 +167,16 @@ describe("node-ui controls", () => {
     };
     const inputNode: TaskNodeExecution = {
       node_execution_id: "exec-input",
-      node_id: "collect_workflow_input",
-      node_ref: "system.workflow_input.v1",
+      node_id: "collect_user_input",
+      node_ref: "system.user_input.v1",
       status: "waiting",
       input_snapshot: {},
       output_snapshot: null,
       metadata: { input_schema: inputSchema, title: "启动参数" },
     };
     const nodeSpec: WorkflowNodeSpec = {
-      id: "collect_workflow_input",
-      ref: "system.workflow_input.v1",
+      id: "collect_user_input",
+      ref: "system.user_input.v1",
       outputs: inputSchema,
     };
     const schemaConfig: NodeUiControlConfig = {
@@ -238,8 +238,8 @@ describe("node-ui controls", () => {
     };
     const inputNode: TaskNodeExecution = {
       node_execution_id: "exec-input",
-      node_id: "collect_workflow_input",
-      node_ref: "system.workflow_input.v1",
+      node_id: "collect_user_input",
+      node_ref: "system.user_input.v1",
       status: "succeeded",
       input_snapshot: {},
       output_snapshot: {
@@ -342,8 +342,8 @@ describe("node-ui controls", () => {
     };
     const inputNode: TaskNodeExecution = {
       node_execution_id: "exec-input",
-      node_id: "collect_workflow_input",
-      node_ref: "system.workflow_input.v1",
+      node_id: "collect_user_input",
+      node_ref: "system.user_input.v1",
       status: "waiting",
       input_snapshot: {},
       output_snapshot: null,

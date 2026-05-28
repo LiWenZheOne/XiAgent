@@ -63,13 +63,15 @@ UI 配置分三层：
 
 工作流配置优先，节点默认保底。节点实现不应为了某个工作流写死 UI 展示方式。
 
-## Workflow 起始输入边界
+## 节点用户输入边界
 
-`workflow.input_schema` 只描述最终 `$workflow.input` 的数据契约，不是任务创建页表单定义。创建任务页不得根据 `input_schema` 渲染业务参数表单，也不得维护专用资产选择、上传或字段校验逻辑。
+runtime 不再支持 `system.workflow_input.v1`，工作流业务数据不得使用 `$workflow.input.*` 引用。创建任务页只创建任务，不提交业务 `input_data`，也不得维护专用资产选择、上传或字段校验逻辑。
 
-带业务入参的工作流必须显式声明首个输入节点，例如 `collect_workflow_input` / `system.workflow_input.v1`。该节点在任务创建后等待用户输入，提交后由运行时校验 payload 并固化为 `$workflow.input`，后续业务节点继续使用 `$workflow.input.<field>` 引用。
+初始参数和运行中补充参数都建模为普通节点输入。节点 input spec 使用 `from_user: true` 声明等待用户填写；运行时校验用户提交 payload 后写入该节点 `input_snapshot`，再执行节点并产生 `output_snapshot`。后续业务节点必须引用该节点输出，例如 `$nodes.collect_prompt.output.prompt`。
 
-起始输入节点、运行中等待输入节点和字段级控件必须复用同一套节点 UI 控件库。通用 schema 表单控件应使用 `ui.input.schema_form.v1` 一类中性命名，字段控件如资产图片选择应能在起始输入和普通输入场景中复用。交互节点提交成功后，任务详情应继续使用原交互控件的 `readonly` 模式展示已提交参数，不退回通用值展示或原始表单。
+泛用输入节点使用 `system.user_input.v1`。专用业务节点也可以直接声明 `from_user: true` 输入并等待填写后继续运行。用户输入节点、运行中等待输入节点和字段级控件必须复用同一套节点 UI 控件库。通用 schema 表单控件应使用 `ui.input.schema_form.v1` 一类中性命名，字段控件如资产图片选择应能在泛用输入和普通输入场景中复用。交互节点提交成功后，任务详情应继续使用原交互控件的 `readonly` 模式展示已提交参数，不退回通用值展示或原始表单。
+
+UI 控件绑定来源限定为当前节点 `input`、当前节点 `output`、当前节点等待 `metadata` 或上游节点输出；不再支持绑定 `workflow.input`。
 
 ## 控件解析优先级
 
@@ -104,12 +106,6 @@ workflow:
   version: "1.0.0"
   scope: global
   name: 图片三选一示例
-  input_schema:
-    type: object
-    required: ["prompt"]
-    properties:
-      prompt:
-        type: string
   ui:
     layout:
       task_detail: vertical_timeline
@@ -132,6 +128,26 @@ workflow:
 
 ```yaml
 nodes:
+  - id: collect_prompt
+    ref: system.user_input.v1
+    inputs:
+      prompt:
+        from_user: true
+        schema:
+          type: string
+    outputs:
+      type: object
+      required: ["prompt"]
+      properties:
+        prompt:
+          type: string
+    ui:
+      controls:
+        input:
+          control_id: ui.input.schema_form.v1
+          variant: default
+          mode: input
+
   - id: choose_cover
     ref: system.human_approval.v1
     inputs:
@@ -281,14 +297,13 @@ Manifest 字段规则：
 6. 绑定路径必须使用受支持路径格式：
 
 ```text
-$workflow.input.<field>
 $node.input.<field>
 $node.output.<field>
 $node.metadata.<field>
 $nodes.<node_id>.output.<field>
 ```
 
-7. 绑定路径必须能从工作流 input schema、当前节点 input schema、当前节点 output schema、当前节点等待 metadata schema 或上游节点 output schema 中解析。
+7. 绑定路径必须能从当前节点 input schema、当前节点 output schema、当前节点等待 metadata schema 或上游节点 output schema 中解析。
 8. 绑定目标 schema 必须满足控件 manifest 的约束，例如数组长度、元素类型、图片地址字段要求。
 9. 控件能力标签必须满足用途要求，例如 `interaction + image + select_one + candidates_3`。
 10. 用户交互提交的 payload 必须满足节点 `outputs` schema。
@@ -428,6 +443,7 @@ ui.choice.image_three.v1 / hover_focus
 - 高级单节点模式能在同一节点内生成候选图、进入 waiting，并在恢复后输出选择结果。
 - 交互提交 payload 不满足节点 output schema 时失败。
 - 节点 `ui_defaults` 能作为保底生效，工作流显式配置能覆盖默认值。
+- 需要用户业务输入的工作流通过等待/提交节点输入路径运行，不通过创建任务 `input_data` 注入参数。
 
 前端测试：
 

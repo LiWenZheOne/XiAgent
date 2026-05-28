@@ -210,7 +210,7 @@ def test_parse_input_data_prompts_required_schema_fields() -> None:
 
 
 def _echo_contract() -> dict:
-    return _with_workflow_input_node({
+    return _with_user_input_node({
         "workflow": {
             "id": "runner-echo",
             "version": "1.0.0",
@@ -226,7 +226,7 @@ def _echo_contract() -> dict:
             {
                 "id": "echo",
                 "ref": "tool.echo.v1",
-                "inputs": {"topic": {"from": "$workflow.input.topic"}},
+                "inputs": {"topic": {"from": "$nodes.collect_user_input.output.topic"}},
                 "outputs": {"type": "object"},
             }
         ],
@@ -244,18 +244,21 @@ def _echo_image_contract() -> dict:
             "image": {"type": "string"},
         },
     }
-    next(node for node in contract["nodes"] if node["id"] == "collect_workflow_input")[
+    next(node for node in contract["nodes"] if node["id"] == "collect_user_input")[
         "outputs"
     ] = contract["workflow"]["input_schema"]
+    next(node for node in contract["nodes"] if node["id"] == "collect_user_input")[
+        "inputs"
+    ] = _user_input_specs(contract["workflow"]["input_schema"])
     contract["nodes"][0]["inputs"] = {
-        "topic": {"from": "$workflow.input.topic"},
-        "image": {"from": "$workflow.input.image"},
+        "topic": {"from": "$nodes.collect_user_input.output.topic"},
+        "image": {"from": "$nodes.collect_user_input.output.image"},
     }
     return contract
 
 
 def _approval_contract() -> dict:
-    return _with_workflow_input_node({
+    return _with_user_input_node({
         "workflow": {
             "id": "runner-approval",
             "version": "1.0.0",
@@ -271,7 +274,7 @@ def _approval_contract() -> dict:
             {
                 "id": "review",
                 "ref": "system.human_approval.v1",
-                "inputs": {"topic": {"from": "$workflow.input.topic"}},
+                "inputs": {"topic": {"from": "$nodes.collect_user_input.output.topic"}},
                 "outputs": {
                     "type": "object",
                     "required": ["decision"],
@@ -297,23 +300,23 @@ def _approval_contract() -> dict:
     })
 
 
-def _with_workflow_input_node(contract: dict) -> dict:
+def _with_user_input_node(contract: dict) -> dict:
     input_schema = contract["workflow"].get("input_schema", {})
     if not input_schema.get("properties"):
         return contract
     contract["nodes"].append(
         {
-            "id": "collect_workflow_input",
-            "ref": "system.workflow_input.v1",
-            "inputs": {},
+            "id": "collect_user_input",
+            "ref": "system.user_input.v1",
+            "inputs": _user_input_specs(input_schema),
             "outputs": input_schema,
         }
     )
     contract["edges"] = [
-        {"from": "START", "to": "collect_workflow_input"},
+        {"from": "START", "to": "collect_user_input"},
         *[
             (
-                {"from": "collect_workflow_input", "to": edge["to"]}
+                {"from": "collect_user_input", "to": edge["to"]}
                 if edge["from"] == "START"
                 else edge
             )
@@ -321,6 +324,21 @@ def _with_workflow_input_node(contract: dict) -> dict:
         ],
     ]
     return contract
+
+
+def _user_input_specs(input_schema: dict) -> dict[str, dict]:
+    properties = input_schema.get("properties", {})
+    required = set(input_schema.get("required", []))
+    if not isinstance(properties, dict):
+        return {}
+    return {
+        name: {
+            "from_user": True,
+            "schema": dict(schema) if isinstance(schema, dict) else {},
+            "required": name in required,
+        }
+        for name, schema in properties.items()
+    }
 
 
 async def test_runner_executes_echo_contract_and_collects_events(tmp_path: Path) -> None:
@@ -355,7 +373,7 @@ async def test_runner_executes_echo_contract_and_collects_events(tmp_path: Path)
         "task_succeeded",
     ]
     assert [item.node_id for item in result.node_executions] == [
-        "collect_workflow_input",
+        "collect_user_input",
         "echo",
     ]
     assert result.node_executions[0].output_snapshot == {"topic": "hello"}
@@ -417,10 +435,13 @@ async def test_runner_returns_failed_task_for_missing_input_reference(tmp_path: 
         "type": "object",
         "properties": {"missing": {"type": "string"}},
     }
-    next(node for node in contract["nodes"] if node["id"] == "collect_workflow_input")[
+    next(node for node in contract["nodes"] if node["id"] == "collect_user_input")[
         "outputs"
     ] = contract["workflow"]["input_schema"]
-    contract["nodes"][0]["inputs"] = {"topic": {"from": "$workflow.input.missing"}}
+    next(node for node in contract["nodes"] if node["id"] == "collect_user_input")[
+        "inputs"
+    ] = _user_input_specs(contract["workflow"]["input_schema"])
+    contract["nodes"][0]["inputs"] = {"topic": {"from": "$nodes.collect_user_input.output.missing"}}
     session = await (
         WorkflowTestBuilder()
         .with_database_path(tmp_path / "workflow-test.sqlite3")
@@ -445,12 +466,15 @@ async def test_runner_returns_failed_task_when_resume_continuation_fails(
         "type": "object",
         "properties": {"optional_field": {"type": "string"}},
     }
-    next(node for node in contract["nodes"] if node["id"] == "collect_workflow_input")[
+    next(node for node in contract["nodes"] if node["id"] == "collect_user_input")[
         "outputs"
     ] = contract["workflow"]["input_schema"]
+    next(node for node in contract["nodes"] if node["id"] == "collect_user_input")[
+        "inputs"
+    ] = _user_input_specs(contract["workflow"]["input_schema"])
     contract["nodes"][0]["inputs"] = {}
     contract["nodes"][1]["inputs"] = {
-        "value": {"from": "$workflow.input.optional_field"},
+        "value": {"from": "$nodes.collect_user_input.output.optional_field"},
     }
     answers = iter(['{"decision":"approve"}'])
     console = ConsoleIO(input_func=lambda prompt: next(answers))
@@ -542,7 +566,7 @@ async def test_runner_resumes_waiting_task_from_console(tmp_path: Path) -> None:
 
     assert result.task.status == "succeeded"
     assert [item.node_id for item in result.node_executions] == [
-        "collect_workflow_input",
+        "collect_user_input",
         "review",
         "echo",
     ]
@@ -558,28 +582,32 @@ workflow:
   version: 1.0.0
   scope: global
   name: File Echo
-  input_schema: &workflow_input_schema
-    type: object
-    required: ["topic"]
-    properties:
-      topic:
-        type: string
 nodes:
-  - id: collect_workflow_input
-    ref: system.workflow_input.v1
-    inputs: {}
-    outputs: *workflow_input_schema
+  - id: collect_user_input
+    ref: system.user_input.v1
+    inputs:
+      topic:
+        from_user: true
+        schema:
+          type: string
+        required: true
+    outputs:
+      type: object
+      required: ["topic"]
+      properties:
+        topic:
+          type: string
   - id: echo
     ref: tool.echo.v1
     inputs:
       topic:
-        from: "$workflow.input.topic"
+        from: "$nodes.collect_user_input.output.topic"
     outputs:
       type: object
 edges:
   - from: START
-    to: collect_workflow_input
-  - from: collect_workflow_input
+    to: collect_user_input
+  - from: collect_user_input
     to: echo
   - from: echo
     to: END

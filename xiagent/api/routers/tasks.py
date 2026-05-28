@@ -27,7 +27,7 @@ class ResumeTaskRequest(BaseModel):
 
     project_id: str
     node_id: str
-    output: dict[str, Any]
+    input: dict[str, Any]
 
 
 class RerunNodeRequest(BaseModel):
@@ -147,7 +147,7 @@ async def resume_task(
         project_id=request.project_id,
         task_id=task_id,
         node_id=request.node_id,
-        output=request.output,
+        input=request.input,
     )
     return asdict(task)
 
@@ -164,7 +164,7 @@ async def create_task_interaction(
         project_id=request.project_id,
         task_id=task_id,
         node_id=request.node_id,
-        output=request.output,
+        input=request.input,
     )
     return asdict(task)
 

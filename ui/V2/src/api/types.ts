@@ -30,6 +30,7 @@ export interface JsonSchema {
   enum?: string[];
   default?: unknown;
   format?: string;
+  additionalProperties?: boolean | JsonSchema;
 }
 
 export type NodeUiControlMode = "readonly" | "interactive" | "input";
@@ -96,7 +97,7 @@ export interface WorkflowListItem {
     name: string;
     scope?: string;
     description?: string;
-    input_schema: JsonSchema;
+    input_schema?: JsonSchema;
     [key: string]: unknown;
   };
   nodes: WorkflowNodeSpec[];

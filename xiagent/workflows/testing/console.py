@@ -129,15 +129,15 @@ def _prompt_schema(input_schema: dict[str, Any], console: ConsoleIO) -> dict[str
     if isinstance(properties, dict) and required in (None, []):
         return {}
     if not isinstance(required, list) or not isinstance(properties, dict):
-        return console.ask_json("workflow input JSON: ")
+        return console.ask_json("node input JSON: ")
 
     value: dict[str, Any] = {}
     for field_name in required:
         if not isinstance(field_name, str):
-            return console.ask_json("workflow input JSON: ")
+            return console.ask_json("node input JSON: ")
         field_schema = properties.get(field_name)
         if not isinstance(field_schema, dict):
-            return console.ask_json("workflow input JSON: ")
+            return console.ask_json("node input JSON: ")
         value[field_name] = _prompt_field(field_name, field_schema, console)
     return value
 

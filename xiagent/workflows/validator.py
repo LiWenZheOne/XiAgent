@@ -13,7 +13,7 @@ from xiagent.ui_controls.validation import merge_ui_configs, validate_ui_config
 
 _START = "START"
 _END = "END"
-_REQUIRED_WORKFLOW_KEYS = {"id", "version", "scope", "name", "input_schema"}
+_REQUIRED_WORKFLOW_KEYS = {"id", "version", "scope", "name"}
 _NODE_ID_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
@@ -40,8 +40,9 @@ def validate_workflow_contract(
     if scope not in {"global", "project"}:
         _raise_contract_error("Workflow scope must be global or project", scope=scope)
 
-    input_schema = workflow["input_schema"]
-    _validate_schema_object(input_schema, "workflow.input_schema")
+    input_schema = workflow.get("input_schema")
+    if input_schema is not None:
+        _validate_schema_object(input_schema, "workflow.input_schema")
 
     nodes = contract.get("nodes")
     if not isinstance(nodes, list) or not nodes:
@@ -49,14 +50,12 @@ def validate_workflow_contract(
 
     node_outputs, node_descriptors = _validate_nodes(nodes, registry)
     node_ids = set(node_outputs)
-    input_properties = _schema_properties(input_schema)
 
     edges = contract.get("edges")
     if not isinstance(edges, list):
         _raise_contract_error("Workflow edges must be a list")
 
-    upstream_nodes = _validate_edges(edges, node_ids, input_properties, input_schema, node_outputs)
-    _validate_workflow_input_node(input_schema=input_schema, nodes=nodes, edges=edges)
+    upstream_nodes = _validate_edges(edges, node_ids, node_outputs)
 
     for node in nodes:
         inputs = node.get("inputs", {})
@@ -74,15 +73,12 @@ def validate_workflow_contract(
                 node_id=node["id"],
                 input_name=input_name,
                 node_ids=node_ids,
-                workflow_input_properties=input_properties,
-                workflow_input_schema=input_schema,
                 node_outputs=node_outputs,
                 available_node_refs=upstream_nodes[node["id"]],
             )
 
     _validate_workflow_ui(
         contract=contract,
-        workflow_input_schema=input_schema,
         node_outputs=node_outputs,
         node_descriptors=node_descriptors,
         upstream_nodes=upstream_nodes,
@@ -132,63 +128,10 @@ def _validate_nodes(
     return node_outputs, node_descriptors
 
 
-def _validate_workflow_input_node(
-    *,
-    input_schema: dict[str, Any],
-    nodes: list[Any],
-    edges: list[Any],
-) -> None:
-    input_properties = _schema_properties(input_schema) or set()
-    if not input_properties:
-        return
-
-    input_nodes = [
-        node
-        for node in nodes
-        if isinstance(node, Mapping) and node.get("ref") == "system.workflow_input.v1"
-    ]
-    if not input_nodes:
-        raise ValidationError(
-            code="missing_workflow_input_node",
-            message="带必填 workflow 入参的工作流必须显式声明起始输入节点",
-            details={"properties": sorted(input_properties)},
-        )
-    if len(input_nodes) != 1:
-        raise ValidationError(
-            code="invalid_workflow_input_node_count",
-            message="工作流只能声明一个起始输入节点",
-            details={"count": len(input_nodes)},
-        )
-
-    input_node = input_nodes[0]
-    input_node_id = input_node["id"]
-    if input_node.get("outputs") != input_schema:
-        raise ValidationError(
-            code="workflow_input_node_schema_mismatch",
-            message="起始输入节点 outputs 必须与 workflow.input_schema 保持一致",
-            details={"node_id": input_node_id},
-        )
-    if input_node.get("inputs", {}) not in ({}, None):
-        raise ValidationError(
-            code="invalid_workflow_input_node_inputs",
-            message="起始输入节点不得依赖其他节点输入",
-            details={"node_id": input_node_id},
-        )
-
-    start_targets = [edge.get("to") for edge in edges if isinstance(edge, Mapping) and edge.get("from") == _START]
-    if start_targets != [input_node_id]:
-        raise ValidationError(
-            code="invalid_workflow_input_node_position",
-            message="带必填 workflow 入参的工作流必须从 START 只进入起始输入节点",
-            details={"start_targets": start_targets, "input_node_id": input_node_id},
-        )
-
 
 def _validate_edges(
     edges: list[Any],
     node_ids: set[str],
-    workflow_input_properties: set[str] | None,
-    workflow_input_schema: dict[str, Any],
     node_outputs: dict[str, dict[str, Any]],
 ) -> dict[str, set[str]]:
     graph: dict[str, list[str]] = {node_id: [] for node_id in node_ids}
@@ -263,8 +206,6 @@ def _validate_edges(
             _validate_reference(
                 path,
                 node_ids=node_ids,
-                workflow_input_properties=workflow_input_properties,
-                workflow_input_schema=workflow_input_schema,
                 node_outputs=node_outputs,
                 available_node_refs=available_node_refs,
             )
@@ -322,8 +263,6 @@ def _validate_reference(
     reference: Any,
     *,
     node_ids: set[str],
-    workflow_input_properties: set[str] | None,
-    workflow_input_schema: dict[str, Any],
     node_outputs: dict[str, dict[str, Any]],
     available_node_refs: set[str] | None = None,
 ) -> None:
@@ -331,17 +270,7 @@ def _validate_reference(
         _raise_invalid_reference("Workflow reference must be a string", reference=reference)
 
     if reference.startswith("$workflow.input."):
-        field = reference.removeprefix("$workflow.input.")
-        if not field:
-            _raise_invalid_reference(
-                "Workflow input reference is missing a field",
-                reference=reference,
-            )
-        root_field = field.split(".", 1)[0]
-        if workflow_input_properties is not None and root_field not in workflow_input_properties:
-            _raise_invalid_reference("Workflow input reference is unknown", reference=reference)
-        _validate_output_field(workflow_input_schema, field.split("."), reference)
-        return
+        _raise_invalid_reference("Workflow input references are no longer supported", reference=reference)
 
     if reference.startswith("$nodes."):
         parts = reference.split(".")
@@ -368,21 +297,19 @@ def _validate_input_spec(
     node_id: str,
     input_name: str,
     node_ids: set[str],
-    workflow_input_properties: set[str] | None,
-    workflow_input_schema: dict[str, Any],
     node_outputs: dict[str, dict[str, Any]],
     available_node_refs: set[str] | None = None,
 ) -> None:
-    modes = [mode for mode in ("from", "value", "template") if mode in input_spec]
+    modes = [mode for mode in ("from", "value", "template", "from_user") if mode in input_spec]
     if len(modes) != 1:
         _raise_invalid_reference(
-            "Node input spec must define exactly one of from, value or template",
+            "Node input spec must define exactly one of from, value, template or from_user",
             node_id=node_id,
             input_name=input_name,
             keys=sorted(input_spec),
         )
 
-    unsupported_keys = set(input_spec).difference({"from", "value", "template", "vars"})
+    unsupported_keys = set(input_spec).difference({"from", "value", "template", "vars", "from_user", "schema", "required"})
     if unsupported_keys:
         _raise_invalid_reference(
             "Node input spec contains unsupported keys",
@@ -396,13 +323,40 @@ def _validate_input_spec(
             node_id=node_id,
             input_name=input_name,
         )
+    if "schema" in input_spec and "from_user" not in input_spec:
+        _raise_invalid_reference(
+            "Node input schema is only supported with from_user",
+            node_id=node_id,
+            input_name=input_name,
+        )
+    if "required" in input_spec and "from_user" not in input_spec:
+        _raise_invalid_reference(
+            "Node input required flag is only supported with from_user",
+            node_id=node_id,
+            input_name=input_name,
+        )
+
+    if "from_user" in input_spec:
+        if input_spec.get("from_user") is not True:
+            _raise_invalid_reference(
+                "Node input from_user must be true",
+                node_id=node_id,
+                input_name=input_name,
+            )
+        if "required" in input_spec and not isinstance(input_spec.get("required"), bool):
+            _raise_invalid_reference(
+                "Node input required flag must be a boolean",
+                node_id=node_id,
+                input_name=input_name,
+            )
+        if "schema" in input_spec:
+            _validate_schema_object(input_spec["schema"], f"nodes.{node_id}.inputs.{input_name}.schema")
+        return
 
     if "from" in input_spec:
         _validate_reference(
             input_spec.get("from"),
             node_ids=node_ids,
-            workflow_input_properties=workflow_input_properties,
-            workflow_input_schema=workflow_input_schema,
             node_outputs=node_outputs,
             available_node_refs=available_node_refs,
         )
@@ -444,8 +398,6 @@ def _validate_input_spec(
             node_id=node_id,
             input_name=f"{input_name}.{variable_name}",
             node_ids=node_ids,
-            workflow_input_properties=workflow_input_properties,
-            workflow_input_schema=workflow_input_schema,
             node_outputs=node_outputs,
             available_node_refs=available_node_refs,
         )
@@ -454,7 +406,6 @@ def _validate_input_spec(
 def _validate_workflow_ui(
     *,
     contract: dict[str, Any],
-    workflow_input_schema: dict[str, Any],
     node_outputs: dict[str, dict[str, Any]],
     node_descriptors: dict[str, NodeDescriptor],
     upstream_nodes: dict[str, set[str]],
@@ -508,7 +459,6 @@ def _validate_workflow_ui(
         validate_ui_config(
             effective_ui,
             catalog=ui_controls,
-            workflow_input_schema=workflow_input_schema,
             current_input_schema=descriptor.input_schema,
             current_output_schema=node_outputs[node_id],
             current_metadata_schema=metadata_schema if isinstance(metadata_schema, dict) else None,
@@ -612,15 +562,6 @@ def _validate_output_field(
                 details={"reference": reference, "field": field},
             )
         schema = properties[field]
-
-
-def _schema_properties(schema: dict[str, Any]) -> set[str] | None:
-    properties = schema.get("properties")
-    if properties is None:
-        return None
-    if not isinstance(properties, Mapping):
-        _raise_contract_error("Workflow input_schema.properties must be an object")
-    return set(properties)
 
 
 def _validate_schema_object(schema: Any, location: str) -> None:

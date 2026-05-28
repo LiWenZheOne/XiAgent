@@ -10,7 +10,7 @@ from xiagent.nodes.ai.deepseek_structured_json import DeepSeekStructuredJsonNode
 from xiagent.nodes.ai.runninghub_image import RunningHubImageToImageNode
 from xiagent.nodes.registry import NodeRegistry
 from xiagent.nodes.system.human_approval import HumanApprovalNode
-from xiagent.nodes.system.workflow_input import WorkflowInputNode
+from xiagent.nodes.system.user_input import SystemUserInputNode
 from xiagent.nodes.tools.assemble_segment_context import AssembleSegmentContextNode
 from xiagent.nodes.tools.script_split import ScriptSplitNode
 from xiagent.nodes.tools.storyboard_prompt import StoryboardPromptAssemblerNode
@@ -29,11 +29,12 @@ def test_storyboard_workflow_contract_is_serial_and_uses_expected_nodes(test_set
     assert contract["workflow"]["id"] == "storyboard_generation"
     assert contract["workflow"]["version"] == "1.0.1"
     assert contract["workflow"]["scope"] == "global"
-    assert contract["workflow"]["input_schema"]["required"] == ["script"]
+    nodes_by_id = {node["id"]: node for node in contract["nodes"]}
+    assert nodes_by_id["collect_storyboard_input"]["outputs"]["required"] == ["script"]
 
     nodes_by_id = {node["id"]: node for node in contract["nodes"]}
     assert list(nodes_by_id) == [
-        "collect_workflow_input",
+        "collect_storyboard_input",
         "split_script",
         "analyze_characters",
         "assemble_context",
@@ -44,7 +45,7 @@ def test_storyboard_workflow_contract_is_serial_and_uses_expected_nodes(test_set
         "generate_image",
     ]
     assert {node_id: node["ref"] for node_id, node in nodes_by_id.items()} == {
-        "collect_workflow_input": "system.workflow_input.v1",
+        "collect_storyboard_input": "system.user_input.v1",
         "split_script": "tool.script_split.v1",
         "analyze_characters": "ai.deepseek_structured_json.v1",
         "assemble_context": "tool.assemble_segment_context.v1",
@@ -55,8 +56,8 @@ def test_storyboard_workflow_contract_is_serial_and_uses_expected_nodes(test_set
         "generate_image": "ai.runninghub_image_to_image.v1",
     }
     assert contract["edges"] == [
-        {"from": "START", "to": "collect_workflow_input"},
-        {"from": "collect_workflow_input", "to": "split_script"},
+        {"from": "START", "to": "collect_storyboard_input"},
+        {"from": "collect_storyboard_input", "to": "split_script"},
         {"from": "split_script", "to": "analyze_characters"},
         {"from": "analyze_characters", "to": "assemble_context"},
         {"from": "assemble_context", "to": "describe_panels"},
@@ -68,7 +69,7 @@ def test_storyboard_workflow_contract_is_serial_and_uses_expected_nodes(test_set
     ]
 
     assert nodes_by_id["split_script"]["inputs"]["script"] == {
-        "from": "$workflow.input.script"
+        "from": "$nodes.collect_storyboard_input.output.script"
     }
     assert nodes_by_id["describe_panels"]["inputs"]["prompt"]["vars"]["segments_context"] == {
         "from": "$nodes.assemble_context.output.context_string"
@@ -291,7 +292,7 @@ async def test_storyboard_workflow_runs_with_manual_asset_input(
 
     assert result.task.status == "succeeded"
     assert [execution.node_id for execution in result.node_executions] == [
-        "collect_workflow_input",
+        "collect_storyboard_input",
         "split_script",
         "analyze_characters",
         "assemble_context",
@@ -358,7 +359,7 @@ class FakeStoryboardRouter(ChatModelRouter):
 
 def _storyboard_registry(router: FakeStoryboardRouter) -> NodeRegistry:
     registry = NodeRegistry()
-    registry.register(WorkflowInputNode())
+    registry.register(SystemUserInputNode())
     registry.register(HumanApprovalNode())
     registry.register(ScriptSplitNode())
     registry.register(AssembleSegmentContextNode())

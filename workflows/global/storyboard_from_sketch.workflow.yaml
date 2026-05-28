@@ -4,22 +4,6 @@ workflow:
   scope: global
   name: Storyboard from Sketch
   description: 从剧本中提取角色资产，人工上传分镜线稿，通过 Gemini 视觉分析生成中文分镜描述，再使用 RunningHub 生成最终图像。
-  input_schema: &workflow_input_schema
-    type: object
-    required: ["script", "background"]
-    properties:
-      script:
-        type: string
-        minLength: 1
-      background:
-        type: string
-        minLength: 1
-      generate_assets:
-        type: string
-        enum: ["手动上传", "自动生成"]
-      template_image_url:
-        type: string
-    additionalProperties: false
   output_schema:
     type: object
     required: ["decision"]
@@ -90,16 +74,52 @@ workflow:
               image_url_path: url
 
 nodes:
-  - id: collect_workflow_input
-    ref: system.workflow_input.v1
-    inputs: {}
-    outputs: *workflow_input_schema
+  - id: collect_sketch_storyboard_input
+    ref: system.user_input.v1
+    inputs:
+      script:
+        from_user: true
+        schema:
+          type: string
+          minLength: 1
+      background:
+        from_user: true
+        schema:
+          type: string
+          minLength: 1
+      generate_assets:
+        from_user: true
+        required: false
+        schema:
+          type: string
+          enum: ["手动上传", "自动生成"]
+      template_image_url:
+        from_user: true
+        required: false
+        schema:
+          type: string
+    outputs:
+      type: object
+      required: ["script", "background"]
+      properties:
+        script:
+          type: string
+          minLength: 1
+        background:
+          type: string
+          minLength: 1
+        generate_assets:
+          type: string
+          enum: ["手动上传", "自动生成"]
+        template_image_url:
+          type: string
+      additionalProperties: false
     config:
       title: 填写分镜输入
       description: 收集剧本、世界背景和生成方式。
     ui:
       controls:
-        interaction:
+        input:
           control_id: ui.input.schema_form.v1
           variant: default
           mode: input
@@ -129,7 +149,7 @@ nodes:
           排除条件：仅在对话中被提及、谈论、派遣、回忆的角色不收录。
         vars:
           background:
-            from: "$workflow.input.background"
+            from: "$nodes.collect_sketch_storyboard_input.output.background"
       prompt:
         template: |
           请从以下剧本中提取所有角色信息。
@@ -152,9 +172,9 @@ nodes:
           根层级除 reasoning、characters 和 character_names 外不得包含其他键。
         vars:
           script:
-            from: "$workflow.input.script"
+            from: "$nodes.collect_sketch_storyboard_input.output.script"
           background:
-            from: "$workflow.input.background"
+            from: "$nodes.collect_sketch_storyboard_input.output.background"
       max_attempts:
         value: 2
     outputs:
@@ -413,7 +433,7 @@ nodes:
           将你的完整分析过程写入 reasoning 字段。
         vars:
           background:
-            from: "$workflow.input.background"
+            from: "$nodes.collect_sketch_storyboard_input.output.background"
       prompt:
         template: |
           请从以下剧本中提取所有场景信息。
@@ -435,9 +455,9 @@ nodes:
           根层级除 reasoning、scenes 和 scene_names 外不得包含其他键。
         vars:
           script:
-            from: "$workflow.input.script"
+            from: "$nodes.collect_sketch_storyboard_input.output.script"
           background:
-            from: "$workflow.input.background"
+            from: "$nodes.collect_sketch_storyboard_input.output.background"
       max_attempts:
         value: 2
     outputs:
@@ -732,7 +752,7 @@ nodes:
           将你的分析过程写入 reasoning 字段。
         vars:
           background:
-            from: "$workflow.input.background"
+            from: "$nodes.collect_sketch_storyboard_input.output.background"
       prompt:
         template: |
           请从以下剧本中提取所有关键道具。
@@ -753,9 +773,9 @@ nodes:
           根层级除 reasoning、props 和 prop_names 外不得包含其他键。
         vars:
           script:
-            from: "$workflow.input.script"
+            from: "$nodes.collect_sketch_storyboard_input.output.script"
           background:
-            from: "$workflow.input.background"
+            from: "$nodes.collect_sketch_storyboard_input.output.background"
       max_attempts:
         value: 2
     outputs:
@@ -1076,7 +1096,7 @@ nodes:
           根层级除 prompt_results 外不得包含其他键。
         vars:
           script:
-            from: "$workflow.input.script"
+            from: "$nodes.collect_sketch_storyboard_input.output.script"
           characters:
             from: "$nodes.extract_characters.output.characters"
           variant_results:
@@ -1221,7 +1241,7 @@ nodes:
     ref: tool.script_split.v1
     inputs:
       script:
-        from: "$workflow.input.script"
+        from: "$nodes.collect_sketch_storyboard_input.output.script"
     outputs:
       type: object
       required: ["count", "segments"]
@@ -1348,7 +1368,7 @@ nodes:
           请根据上传的分镜线稿图片，按思维链逐步分析并输出描述。
         vars:
           background:
-            from: "$workflow.input.background"
+            from: "$nodes.collect_sketch_storyboard_input.output.background"
           segment_text:
             from: "$nodes.split_script.output.segments"
       image_urls:
@@ -1539,12 +1559,12 @@ nodes:
 
 edges:
   - from: START
-    to: collect_workflow_input
-  - from: collect_workflow_input
+    to: collect_sketch_storyboard_input
+  - from: collect_sketch_storyboard_input
     to: extract_characters
-  - from: collect_workflow_input
+  - from: collect_sketch_storyboard_input
     to: extract_scenes
-  - from: collect_workflow_input
+  - from: collect_sketch_storyboard_input
     to: extract_props
   - from: extract_characters
     to: lookup_existing_assets
@@ -1578,10 +1598,10 @@ edges:
     to: review_assets
   - from: review_assets
     to: upload_images
-    when: {path: "$workflow.input.generate_assets", equals: "手动上传"}
+    when: {path: "$nodes.collect_sketch_storyboard_input.output.generate_assets", equals: "手动上传"}
   - from: review_assets
     to: generate_prompt_v2
-    when: {path: "$workflow.input.generate_assets", equals: "自动生成"}
+    when: {path: "$nodes.collect_sketch_storyboard_input.output.generate_assets", equals: "自动生成"}
   - from: generate_prompt_v2
     to: generate_asset_images_v2
   - from: upload_images

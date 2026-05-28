@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
@@ -11,7 +11,7 @@ from xiagent.nodes.ai.runninghub_image import (
     RunningHubTextToImageNode,
 )
 from xiagent.nodes.registry import NodeRegistry
-from xiagent.nodes.system.workflow_input import WorkflowInputNode
+from xiagent.nodes.system.user_input import SystemUserInputNode
 from xiagent.workflows.testing import WorkflowTestBuilder
 from xiagent.workflows.testing.console import ConsoleIO
 from xiagent.workflows.testing.runner import WorkflowTestRunner
@@ -118,7 +118,7 @@ async def test_runninghub_image_to_image_workflow_runs_with_user_level_input(
 def _patch_runninghub_registry(monkeypatch, router: FakeRunningHubRouter) -> None:
     def build_test_registry(settings: Any) -> NodeRegistry:
         registry = NodeRegistry()
-        registry.register(WorkflowInputNode())
+        registry.register(SystemUserInputNode())
         registry.register(
             RunningHubTextToImageNode(
                 model_router=router,
@@ -166,7 +166,12 @@ def test_runninghub_workflow_image_parameters_expose_fixed_options() -> None:
 
     for workflow_path in workflow_paths:
         contract = load_workflow_file(workflow_path)
-        properties = contract["workflow"]["input_schema"]["properties"]
+        first_node = contract["nodes"][0]
+        properties = {
+            name: input_spec["schema"]
+            for name, input_spec in first_node["inputs"].items()
+            if input_spec.get("from_user") is True
+        }
         assert properties["aspect_ratio"]["enum"] == expected_aspect_ratios
         assert properties["resolution"]["enum"] == expected_resolutions
         assert properties["aspect_ratio"]["description"]

@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -21,8 +21,19 @@ const workflowContract = {
   },
   nodes: [
     {
-      id: "collect_workflow_input",
-      ref: "system.workflow_input.v1",
+      id: "collect_user_input",
+      ref: "system.user_input.v1",
+      inputs: {
+        topic: {
+          from_user: true,
+          schema: { type: "string", title: "创作主题" },
+        },
+        image_urls: {
+          from_user: true,
+          required: false,
+          schema: { type: "array", title: "参考图片", items: { type: "string" } },
+        },
+      },
       outputs: {
         type: "object",
         required: ["topic"],
@@ -210,7 +221,16 @@ function mockFetch() {
               description: "Developer-only workflow test",
               input_schema: { type: "object", properties: { prompt: { type: "string" } } },
             },
-            nodes: [{ id: "run", ref: "ai.runninghub_text_to_image.v1" }],
+            nodes: [{
+              id: "run",
+              ref: "ai.runninghub_text_to_image.v1",
+              inputs: {
+                prompt: {
+                  from_user: true,
+                  schema: { type: "string", title: "提示词" },
+                },
+              },
+            }],
             edges: [],
           },
         ],
@@ -355,7 +375,7 @@ describe("XiAgent V2 app", () => {
     expect(screen.getByRole("combobox")).toHaveValue("global");
   });
 
-  it("creates tasks from launch information and leaves workflow input to the first node", async () => {
+  it("creates tasks from launch information and leaves user input to the first node", async () => {
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
     render(<App />);
     await login();
@@ -470,7 +490,7 @@ describe("XiAgent V2 app", () => {
       expect(JSON.parse(String(post?.[1]?.body))).toMatchObject({
         project_id: "global",
         node_id: "choose_image",
-        output: {
+        input: {
           selected_id: "b",
           selected_index: 1,
           selected_image_url: "https://cdn.example.com/b.png",
@@ -502,6 +522,150 @@ describe("XiAgent V2 app", () => {
 
     expect(await screen.findByText(/数据不满足 JSON Schema/)).toBeInTheDocument();
     expect(screen.getByText(/字段 aspect_ratio/)).toBeInTheDocument();
+  });
+
+  it("locks schema input controls while a node input submission is in flight", async () => {
+    let resolveInteraction: (response: Response) => void = () => {};
+    const pendingInteraction = new Promise<Response>((resolve) => {
+      resolveInteraction = resolve;
+    });
+    const baseFetch = mockFetch();
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url === "/api/tasks?project_id=global" && method === "GET") {
+        return jsonResponse({
+          items: [{
+            task_id: "schema-task",
+            project_id: "global",
+            workflow_id: "runninghub_text_to_image_test",
+            workflow_name: "RunningHub Text To Image Test",
+            workflow_version: "1.0.0",
+            status: "waiting",
+            current_node_id: "generate_image",
+            created_at: "2026-05-27T10:00:00Z",
+          }],
+        });
+      }
+      if (url === "/api/tasks/schema-task?project_id=global" && method === "GET") {
+        return jsonResponse({
+          task: {
+            task_id: "schema-task",
+            project_id: "global",
+            workflow_id: "runninghub_text_to_image_test",
+            workflow_name: "RunningHub Text To Image Test",
+            workflow_version: "1.0.0",
+            status: "waiting",
+            current_node_id: "generate_image",
+            created_at: "2026-05-27T10:00:00Z",
+          },
+          workflow_snapshot: {
+            workflow: { id: "runninghub_text_to_image_test", version: "1.0.0", name: "RunningHub Text To Image Test" },
+            nodes: [{
+              id: "generate_image",
+              ref: "ai.runninghub_text_to_image.v1",
+              name: "生成图片",
+              inputs: {
+                prompt: {
+                  from_user: true,
+                  schema: { type: "string", minLength: 1, title: "提示词" },
+                },
+              },
+              ui: {
+                controls: {
+                  input: { control_id: "ui.input.schema_form.v1", variant: "default", mode: "input" },
+                },
+              },
+            }],
+            edges: [],
+          },
+          node_executions: [{
+            node_execution_id: "schema-exec",
+            node_id: "generate_image",
+            node_ref: "ai.runninghub_text_to_image.v1",
+            status: "waiting",
+            input_snapshot: {},
+            output_snapshot: {},
+            metadata: {
+              input_schema: {
+                type: "object",
+                required: ["prompt"],
+                properties: { prompt: { type: "string", minLength: 1, title: "提示词" } },
+                additionalProperties: false,
+              },
+            },
+            attempt: 1,
+          }],
+          node_attempts: {},
+          events: [{ event_id: "schema-event", event_type: "human_input_requested", node_id: "generate_image" }],
+        });
+      }
+      if (url === "/api/tasks/schema-task/interactions" && method === "POST") {
+        return pendingInteraction;
+      }
+      return baseFetch(input, init);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+    await login();
+    await userEvent.click(await screen.findByRole("button", { name: "打开 RunningHub Text To Image Test" }));
+    const detail = await screen.findByLabelText("任务运行详情");
+    await userEvent.click(within(detail).getByText("输入"));
+    const prompt = within(detail).getByLabelText("提示词");
+    await userEvent.type(prompt, "真实浏览器输入");
+    const submitButton = within(detail).getByRole("button", { name: "提交并继续" });
+    fireEvent.click(submitButton);
+    fireEvent.click(submitButton);
+
+    expect(within(detail).getByRole("button", { name: "提交中" })).toBeDisabled();
+    expect(prompt).toHaveAttribute("readonly");
+    expect(fetchMock.mock.calls.filter(([url, init]) =>
+      url === "/api/tasks/schema-task/interactions" && init?.method === "POST",
+    )).toHaveLength(1);
+
+    void jsonResponse({ task_id: "schema-task", project_id: "global", status: "running" }).then(resolveInteraction);
+  });
+
+  it("refreshes task detail after a failed interaction response", async () => {
+    const baseFetch = mockFetch();
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/tasks/task-1/interactions" && init?.method === "POST") {
+        return jsonResponse({
+          error: {
+            code: "runninghub_text_to_image_request_failed",
+            message: "RunningHub image request failed",
+            details: {},
+          },
+        }, 500);
+      }
+      return baseFetch(input, init);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+    await login();
+    await userEvent.click(await screen.findByRole("button", { name: "打开 故事板生成" }));
+
+    let detailReadCount = 0;
+    await waitFor(() => {
+      const detailReads = fetchMock.mock.calls.filter(([url, init]) =>
+        url === "/api/tasks/task-1?project_id=global" && (init?.method ?? "GET") === "GET",
+      );
+      expect(detailReads.length).toBeGreaterThan(0);
+      detailReadCount = detailReads.length;
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: "选择 第二张" }));
+
+    expect(await screen.findByText(/RunningHub image request failed/)).toBeInTheDocument();
+    await waitFor(() => {
+      const detailReads = fetchMock.mock.calls.filter(([url, init]) =>
+        url === "/api/tasks/task-1?project_id=global" && (init?.method ?? "GET") === "GET",
+      );
+      expect(detailReads.length).toBeGreaterThan(detailReadCount);
+    });
   });
 
   it("opens the control library tab and lists registered node controls", async () => {

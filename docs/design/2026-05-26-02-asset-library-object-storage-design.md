@@ -234,8 +234,8 @@ publish: true | false
 
 1. 创建测试用户和项目。
 2. 上传本地图片到资产库，后端保存本地资产记录并发布到七牛云，返回 `metadata.public_url`。
-3. 前端创建图生图任务，从资产选择器选择该图片。
-4. 提交任务时 `input_data.image_urls` 包含选中图片 URL。
+3. 前端创建图生图任务，进入任务详情中的用户输入节点。
+4. 在节点资产选择器中选择该图片，提交后该节点 `input_snapshot.image_urls` 包含选中图片 URL，并由节点输出供下游引用。
 5. 运行时执行 `ai.runninghub_image_to_image.v1`，返回结果 URL。
 6. 前端任务详情页展示图生图结果。
 

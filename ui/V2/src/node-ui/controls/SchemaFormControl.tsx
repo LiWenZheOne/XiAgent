@@ -1,18 +1,19 @@
 import { type ChangeEvent, useEffect, useMemo, useState } from "react";
 
 import { listAssetCollections, listAssetTags, searchAssets, uploadAsset } from "../../api/assets";
-import type { AssetCollection, AssetRecord, AssetScope, AssetTag, JsonSchema, NodeUiControlConfig } from "../../api/types";
+import type { AssetCollection, AssetRecord, AssetScope, AssetTag, JsonSchema, NodeUiControlConfig, WorkflowNodeSpec } from "../../api/types";
 import { buildSchemaFields, type SchemaField } from "../../utils/display";
 import type { NodeUiControlProps } from "../types";
 
 type FormValue = string | boolean | string[];
 
 export function SchemaFormControl({ busy, config, node, nodeSpec, projectId, snapshot, slot, value, onSubmit }: NodeUiControlProps) {
-  const inputSchema = resolveInputSchema(node, nodeSpec, snapshot);
+  const inputSchema = resolveInputSchema(node, nodeSpec, slot);
   const fields = useMemo(() => buildSchemaFields(inputSchema), [inputSchema]);
   const [values, setValues] = useState<Record<string, FormValue>>(() => initialValues(fields));
   const [error, setError] = useState("");
   const readonly = config.mode === "readonly" || !onSubmit;
+  const controlsReadonly = readonly || Boolean(busy);
   const renderedValues = readonly ? valuesFromPayload(fields, value ?? readonlySnapshotValue(node, slot)) : values;
   const fieldConfigs = fieldControlConfigs(config);
   const nodeConfig = recordValue(nodeSpec?.config);
@@ -25,6 +26,7 @@ export function SchemaFormControl({ busy, config, node, nodeSpec, projectId, sna
   }, [fields]);
 
   function submit() {
+    if (busy) return;
     const validation = validateFields(fields, values);
     if (validation) {
       setError(validation);
@@ -52,7 +54,7 @@ export function SchemaFormControl({ busy, config, node, nodeSpec, projectId, sna
                 field={field}
                 key={field.key}
                 projectId={projectId}
-                readonly={readonly}
+                readonly={controlsReadonly}
                 value={renderedValues[field.key]}
                 onChange={(value) => setValues((current) => ({ ...current, [field.key]: value }))}
               />
@@ -62,7 +64,7 @@ export function SchemaFormControl({ busy, config, node, nodeSpec, projectId, sna
             <SchemaValueField
               field={field}
               key={field.key}
-              readonly={readonly}
+              readonly={controlsReadonly}
               value={renderedValues[field.key]}
               onChange={(value) => setValues((current) => ({ ...current, [field.key]: value }))}
             />
@@ -73,7 +75,7 @@ export function SchemaFormControl({ busy, config, node, nodeSpec, projectId, sna
       {error ? <p className="form-error">{error}</p> : null}
       {!readonly ? (
         <button className="primary-button" disabled={busy || fields.length === 0} type="button" onClick={submit}>
-          提交并继续
+          {busy ? "提交中" : "提交并继续"}
         </button>
       ) : null}
     </section>
@@ -403,12 +405,35 @@ function AssetImagePickerDialog({
   );
 }
 
-function resolveInputSchema(node: NodeUiControlProps["node"], nodeSpec: NodeUiControlProps["nodeSpec"], snapshot: NodeUiControlProps["snapshot"]): JsonSchema | undefined {
+function resolveInputSchema(node: NodeUiControlProps["node"], nodeSpec: NodeUiControlProps["nodeSpec"], slot: NodeUiControlProps["slot"]): JsonSchema | undefined {
   const metadataSchema = node.metadata?.input_schema;
   if (isJsonSchema(metadataSchema)) return metadataSchema;
-  if (isJsonSchema(nodeSpec?.outputs)) return nodeSpec.outputs;
-  if (isJsonSchema(snapshot?.workflow?.input_schema)) return snapshot?.workflow?.input_schema;
+  if (slot === "input") {
+    const userInputSchema = schemaFromUserInputSpecs(nodeSpec?.inputs);
+    if (userInputSchema) return userInputSchema;
+  }
+  if (slot !== "input" && isJsonSchema(nodeSpec?.outputs)) return nodeSpec.outputs;
   return undefined;
+}
+
+function schemaFromUserInputSpecs(inputs: WorkflowNodeSpec["inputs"] | undefined): JsonSchema | undefined {
+  const inputSpecs = recordValue(inputs);
+  if (!inputSpecs) return undefined;
+  const properties: Record<string, JsonSchema> = {};
+  const required: string[] = [];
+  for (const [name, specValue] of Object.entries(inputSpecs)) {
+    const spec = recordValue(specValue);
+    if (spec?.from_user !== true) continue;
+    const schema = isJsonSchema(spec.schema) ? spec.schema : {};
+    properties[name] = schema;
+    if (spec.required !== false) required.push(name);
+  }
+  if (Object.keys(properties).length === 0) return undefined;
+  return {
+    type: "object",
+    required,
+    properties,
+  };
 }
 
 function fieldControlConfigs(config: NodeUiControlConfig): Record<string, NodeUiControlConfig> {

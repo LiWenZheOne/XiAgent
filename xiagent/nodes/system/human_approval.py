@@ -29,6 +29,22 @@ class HumanApprovalNode(BaseNode):
         )
 
     async def run(self, ctx: NodeContext | None, inputs: Mapping[str, Any]) -> NodeResult:
+        output_schema = ctx.output_schema if ctx is not None else {}
+        required = output_schema.get("required", [])
+        if (
+            isinstance(required, list)
+            and required
+            and all(isinstance(name, str) and name in inputs for name in required)
+        ):
+            return NodeResult(status="succeeded", output=dict(inputs))
+        decision = inputs.get("decision")
+        if isinstance(decision, str) and decision:
+            return NodeResult(status="succeeded", output=dict(inputs))
+        approved = inputs.get("approved")
+        if isinstance(approved, bool):
+            output = dict(inputs)
+            output["decision"] = "approved" if approved else "rejected"
+            return NodeResult(status="succeeded", output=output)
         return NodeResult(
             status="waiting",
             output={},

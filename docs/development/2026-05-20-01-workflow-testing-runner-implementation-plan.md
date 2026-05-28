@@ -1,5 +1,7 @@
 # Workflow Testing Runner Implementation Plan
 
+> **输入语义更新提示：** 本历史实施计划中涉及 `--input`、`input_data`、`parse_input_data`、`$workflow.input.*` 和 workflow 级业务输入的片段已被当前 runtime 节点输入规则取代。新测试路径必须使用等待/提交交互，以 `docs/design/2026-05-20-01-workflow-testing-runner-design.md` 和 `docs/development/2026-05-28-02-runtime-node-input-cleanup-guidelines.md` 为准。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 构建一个不依赖 UI 的工作流测试运行器，让开发者通过 CLI 执行 `workflows/` 下的工作流、观察节点过程、交互恢复等待节点，并预览图片产物。

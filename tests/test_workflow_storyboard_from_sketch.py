@@ -20,7 +20,7 @@ from xiagent.nodes.ai.runninghub_image import (
     RunningHubTextToImageNode,
 )
 from xiagent.nodes.registry import NodeRegistry
-from xiagent.nodes.system.workflow_input import WorkflowInputNode
+from xiagent.nodes.system.user_input import SystemUserInputNode
 from xiagent.nodes.system.human_approval import HumanApprovalNode
 from xiagent.nodes.tools.assemble_segment_context import AssembleSegmentContextNode
 from xiagent.nodes.tools.assemble_storyboard_context import AssembleStoryboardContextNode
@@ -57,7 +57,8 @@ def test_workflow_loads_and_validates(test_settings) -> None:
     assert contract["workflow"]["id"] == "storyboard_from_sketch"
     assert contract["workflow"]["version"] == "1.0.0"
     assert contract["workflow"]["scope"] == "global"
-    assert contract["workflow"]["input_schema"]["required"] == ["script", "background"]
+    nodes_by_id = {node["id"]: node for node in contract["nodes"]}
+    assert nodes_by_id["collect_sketch_storyboard_input"]["outputs"]["required"] == ["script", "background"]
 
     registry = build_node_registry(test_settings)
     # 不应抛出 ValidationError
@@ -234,7 +235,7 @@ def _registry_for_test(router: FakeRouter) -> NodeRegistry:
     """构建测试用 NodeRegistry，所有 AI 节点共用同一个 FakeRouter。"""
     registry = NodeRegistry()
     # system
-    registry.register(WorkflowInputNode())
+    registry.register(SystemUserInputNode())
     registry.register(HumanApprovalNode())
     # tools
     registry.register(EchoToolNode())
@@ -323,11 +324,14 @@ async def test_workflow_full_pipeline_with_mocks(tmp_path: Path, monkeypatch) ->
     _orig_resolve_input_spec = _input_resolver_mod.resolve_input_spec
 
     def _safe_resolve_input_spec(
-        input_spec, *, workflow_input, node_outputs,
+        input_spec, *, input_name, node_outputs, user_input=None,
     ):
         try:
             return _orig_resolve_input_spec(
-                input_spec, workflow_input=workflow_input, node_outputs=node_outputs,
+                input_spec,
+                input_name=input_name,
+                node_outputs=node_outputs,
+                user_input=user_input,
             )
         except _VE as exc:
             if exc.code == "workflow_reference_missing_node_output":
@@ -339,8 +343,9 @@ async def test_workflow_full_pipeline_with_mocks(tmp_path: Path, monkeypatch) ->
                     new_spec["from"] = new_ref
                     return _orig_resolve_input_spec(
                         new_spec,
-                        workflow_input=workflow_input,
+                        input_name=input_name,
                         node_outputs=node_outputs,
+                        user_input=user_input,
                     )
                 # Other missing references (e.g. generate_asset_images_v2 on manual path).
                 return []

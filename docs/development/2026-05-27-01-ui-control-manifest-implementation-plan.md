@@ -62,7 +62,7 @@ from typing import Any
 class UiControlBindingRequirement:
     name: str
     required: bool = True
-    accepted_sources: tuple[str, ...] = ("workflow.input", "node.input", "node.output", "node.metadata", "nodes.output")
+    accepted_sources: tuple[str, ...] = ("node.input", "node.output", "node.metadata", "nodes.output")
     schema_constraints: dict[str, Any] = field(default_factory=dict)
 
 
@@ -226,7 +226,6 @@ def _resolve_effective_node_ui(workflow: dict[str, Any], node_def: dict[str, Any
 校验以下路径：
 
 ```text
-$workflow.input.<field>
 $node.input.<field>
 $node.output.<field>
 $node.metadata.<field>
@@ -235,7 +234,6 @@ $nodes.<node_id>.output.<field>
 
 规则：
 
-- `$workflow.input` 从 workflow input schema 解析。
 - `$node.input` 从当前节点 `inputs` schema 解析。
 - `$node.output` 从当前节点 `outputs` schema 解析。
 - `$node.metadata` 从 UI 配置声明的 `metadata_schema` 或节点 descriptor 的 waiting metadata 约定解析。

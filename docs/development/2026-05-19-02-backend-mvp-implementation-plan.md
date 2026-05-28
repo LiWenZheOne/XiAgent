@@ -1,5 +1,7 @@
 # XiAgent 后端 MVP Implementation Plan
 
+> **输入语义更新提示：** 本历史实施计划中涉及 `input_data`、`$workflow.input.*` 和 workflow 级业务输入的片段已被当前 runtime 节点输入规则取代。新实现和评审以 `docs/development/2026-05-28-02-runtime-node-input-cleanup-guidelines.md` 为准，旧术语仅作为历史记录。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 实现 XiAgent 第一版后端闭环：用户和项目、资产库、工作流契约、节点注册、任务执行、人工等待与恢复、DeepSeek 测试 AI 节点、REST API。

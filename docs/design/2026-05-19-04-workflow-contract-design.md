@@ -10,7 +10,7 @@
 
 - 从项目目录加载 YAML/JSON 工作流模板。
 - 支持全局和项目作用域。
-- 使用 JSON Schema 描述工作流输入、节点输入和节点输出。
+- 使用 JSON Schema 描述节点输入和节点输出。
 - 支持 DAG。
 - 支持条件分支。
 - 使用长路径引用节点输入。
@@ -50,19 +50,27 @@ workflow:
   version: "1.0.0"
   scope: project
   name: 漫画脚本生成
-  input_schema:
-    type: object
-    required: ["topic"]
-    properties:
-      topic:
-        type: string
 
 nodes:
+  - id: collect_topic
+    ref: system.user_input.v1
+    inputs:
+      topic:
+        from_user: true
+        schema:
+          type: string
+    outputs:
+      type: object
+      required: ["topic"]
+      properties:
+        topic:
+          type: string
+
   - id: planner
     ref: ai.planner.v1
     inputs:
       topic:
-        from: "$workflow.input.topic"
+        from: "$nodes.collect_topic.output.topic"
     config:
       style: "comic"
     outputs:
@@ -103,6 +111,8 @@ nodes:
 
 edges:
   - from: START
+    to: collect_topic
+  - from: collect_topic
     to: planner
   - from: planner
     to: human_review
@@ -117,14 +127,25 @@ edges:
 
 ## 引用格式
 
-第一版只使用长路径引用：
+第一版只使用长路径引用。业务数据只能引用上游节点输出：
 
 ```text
-$workflow.input.<field>
 $nodes.<node_id>.output.<field>
 ```
 
-不使用短别名，避免调试和前端展示时含义不清。
+不使用短别名，避免调试和前端展示时含义不清。runtime 不再支持 `system.workflow_input.v1`，工作流业务数据不得使用 `$workflow.input.*` 引用。
+
+需要用户填写的字段写在具体节点 input spec 中：
+
+```yaml
+inputs:
+  prompt:
+    from_user: true
+    schema:
+      type: string
+```
+
+运行时等待该节点输入，校验用户 payload 后写入节点 `input_snapshot`，再执行节点并保存 `output_snapshot`。后续节点引用该节点输出。
 
 未来可以扩展执行版本引用：
 
@@ -139,12 +160,14 @@ $nodes.<node_id>.executions.<attempt>.output.<field>
 加载工作流模板时必须校验：
 
 - `workflow.id`、`workflow.version`、`workflow.scope` 必填。
-- `workflow.input_schema` 是合法 JSON Schema。
 - 每个节点 `id` 在模板内唯一。
 - 每个节点 `ref` 能在 `NodeRegistry` 找到。
 - 每个节点的 `outputs` 是合法 JSON Schema。
-- 所有输入引用使用长路径格式。
-- 输入引用指向的 workflow input 或上游节点存在。
+- 所有输入引用使用长路径格式，或使用 `from_user: true` 声明用户填写。
+- 输入引用指向的上游节点存在。
+- 带 `from_user: true` 的 input spec 必须声明可校验 schema。
+- 不允许节点 ref 使用 `system.workflow_input.v1`。
+- 不允许业务输入路径使用 `$workflow.input.*`。
 - 边中的节点存在。
 - 图是 DAG。
 - 条件分支引用的路径存在于条件节点输出中。
@@ -153,7 +176,8 @@ $nodes.<node_id>.executions.<attempt>.output.<field>
 
 - 用户有项目访问权限。
 - 模板作用域允许在当前项目使用。
-- 任务输入满足 `workflow.input_schema`。
+- 创建任务页不提交业务 `input_data`。
+- 用户提交的节点输入满足目标节点 input spec。
 
 ## LangGraph 边界
 
@@ -166,4 +190,3 @@ LangGraph 适配器负责：
 - 把等待、失败、完成状态交回 `RuntimeService`。
 
 如果未来替换执行引擎，工作流契约不需要变化。
-

@@ -13,7 +13,7 @@ description: Use when creating or modifying XiAgent workflow YAML/JSON contracts
 
 1. 先读项目约束：`AGENTS.md`、`workflows/AGENTS.md`、现有 `workflows/global/*.workflow.yaml`、`xiagent/nodes/**`、`tests/test_workflow_validator.py`、`tests/test_workflow_testing_*.py`。
 2. 从用户描述提炼工作流输入、目标输出、节点顺序、条件分支、人工交互、目标 UI 展示、所需节点控件、资产或图片输入输出。
-3. 如果工作流有业务入参，必须规划显式起始输入节点，例如 `collect_workflow_input` / `system.workflow_input.v1`。创建任务页不得收集这些参数，业务节点也不得顺手承担初始参数采集。
+3. 如果工作流需要用户业务入参，必须规划普通节点输入：泛用输入使用 `system.user_input.v1`，专用业务节点也可以直接在 input spec 中声明 `from_user: true`。创建任务页不得收集这些参数，也不得通过创建任务 `input_data` 传入。
 4. 写或改工作流前，先明确：需要新增哪些节点、可以复用哪些已有节点、使用哪些模型或模型节点、需要哪些 UI 节点控件、控件是否已存在、是否需要外部模型 API 或模型配置。
 5. 查找可用节点：优先看 `xiagent.nodes.build_node_registry()` 注册了什么，再读各节点的 `NodeDescriptor`、输入输出 schema 和测试。不要凭空写不存在的 `ref`。
 6. 如果现有节点不足，立即暂停工作流落盘，列出缺失节点规格：建议 `ref`、职责、输入 schema、输出 schema、错误语义、是否访问资产、是否需要外部凭据、建议测试。然后建议使用 `$xiagent-node-authoring` 先补节点。
@@ -29,10 +29,11 @@ description: Use when creating or modifying XiAgent workflow YAML/JSON contracts
 
 - 工作流模板由开发者维护的 YAML/JSON 契约定义，不做拖拽式或低代码编辑器。
 - 第一版只支持 DAG 和条件分支，不支持通用循环。
-- 节点输入使用长路径引用，例如 `$workflow.input.topic`、`$nodes.planner.output.plan`。
-- `workflow.input_schema` 是最终 `$workflow.input` 的数据契约，不是任务创建页表单定义。
-- 带业务入参的工作流必须显式声明首个输入节点，并从 `START` 指向该节点，再进入第一个业务节点。
-- 创建任务前不得收集 workflow 业务入参；起始输入节点提交后再固化 `$workflow.input`。
+- 节点业务输入使用长路径引用上游节点输出，例如 `$nodes.collect_input.output.topic`、`$nodes.planner.output.plan`。
+- runtime 不再支持 `system.workflow_input.v1`；工作流业务数据不得使用 `$workflow.input.*` 引用。
+- 新工作流不得把 `workflow.input_schema` 作为业务入参契约；需要用户填写的字段必须放在具体节点 input spec 中，并用 `from_user: true` 标记。
+- 创建任务前不得收集 workflow 业务入参；创建任务页只创建任务，不提交业务 `input_data`。
+- 运行时等待 `from_user: true` 输入，校验用户 payload 后写入该节点 `input_snapshot`，再执行节点并产生 `output_snapshot`。后续节点必须引用该节点输出。
 - 节点输出不覆盖全局状态；运行时必须保留每个节点的输入快照、输出快照、状态、错误和事件。
 - 不直接访问 SQLite、资产文件路径或其他模块内部实现；测试也要通过正式服务、运行时和构建器。
 - 任务、项目、资产、工作流必须挂到明确的 `user_id` 和 `project_id` 关系下；默认测试用户和项目由构建器创建。
@@ -53,7 +54,8 @@ description: Use when creating or modifying XiAgent workflow YAML/JSON contracts
 - 工作流可以分别指定 `controls.input`、`controls.output`、`controls.interaction`、`controls.detail`、`actions`、`sections` 和 `bindings`。只覆盖某一区域时，不应清空其他区域默认配置。
 - 新工作流需要定制展示时，优先在 `nodes[].ui` 指定 `control_id`、`variant`、`mode` 和 `bindings`；工作流级通用默认放在 `workflow.ui.defaults`。
 - 不得凭空发明控件 ID、variant、mode 或 binding 名称。必须对照 UI 控件 manifest、后端 `/api/ui/node-controls`（实现后）或 V2 控件注册表。
-- 起始输入节点应使用通用 schema 表单控件和字段控件；不得把资产选择、上传或字段校验复制到任务创建页。
+- 用户输入节点应使用通用 schema 表单控件和字段控件；不得把资产选择、上传或字段校验复制到任务创建页。
+- UI 控件统一绑定节点 `input`、`metadata`、`output` 或上游节点输出，不再绑定 `workflow.input`。
 - 三选一图片等控件必须让节点 `outputs` schema 和绑定路径满足控件 manifest：候选图数组数量、元素图片地址字段、选择结果字段都要可校验。
 - 默认推荐把模型生成候选图和用户三选一拆成两个节点；三选一交互节点负责等待选择并输出选择结果，便于跨工作流复用。
 - 保留高级单节点模式：复合节点可以生成候选图并等待用户选择，但仍必须使用标准 waiting/resume、output schema 校验和 UI 控件绑定规则。
@@ -84,13 +86,13 @@ description: Use when creating or modifying XiAgent workflow YAML/JSON contracts
 ```powershell
 python -m pytest tests/test_workflow_validator.py -q
 python -m pytest tests/test_workflow_testing_builder.py tests/test_workflow_testing_runner.py tests/test_workflow_testing_cli.py -q
-python -m xiagent.workflows.testing_cli workflows/global/<workflow-id>.workflow.yaml --input '{"topic":"测试"}'
+python -m xiagent.workflows.testing_cli workflows/global/<workflow-id>.workflow.yaml --interactive
 workflows/global/run_deepseek_echo_test.bat --auto
 ```
 
 涉及工作流、DeepSeek 结构化节点、工作流运行修复或最终交付前，自动验证必须执行并确认 `workflows/global/run_deepseek_echo_test.bat --auto` 通过；无参数 `run_deepseek_echo_test.bat` 保留给用户交互测试，必须等待用户输入。
 
-开发完成后的测试必须补齐真实用户路径，不能只跑局部 pytest、局部节点/schema 校验或其他 workflow 的 bat。尤其要覆盖无 UI/自动路径和用户手工等价路径，例如：无参数 bat -> 选择 `storyboard_generation.workflow.yaml` -> 选择 `Guided question test` -> 输入长脚本 -> 跑完整 DAG，确认下游节点 schema 和路径引用也通过。
+开发完成后的测试必须补齐真实用户路径，不能只跑局部 pytest、局部节点/schema 校验或其他 workflow 的 bat。尤其要覆盖无 UI/自动路径和用户手工等价路径，例如：无参数 bat -> 选择 `storyboard_generation.workflow.yaml` -> 选择 `Guided question test` -> 在等待节点提交长脚本 -> 跑完整 DAG，确认下游节点 schema 和路径引用也通过。
 
 真实用户等价路径验证必须使用可访问的真实输入资产或 URL；如果 URL 返回 403/404 或需要鉴权，不能作为通过证据。中文或其他非 ASCII 用户输入必须保真进入 CLI 和运行时快照；如果日志或快照中变成 `?` 或乱码，验证无效，需要改用 UTF-8 文件输入、JSON 文件或其他保真方式。真实路径成功证据必须同时包含 `task_succeeded`、关键节点成功、外部任务 id 或输出资产 URL，并说明输入来源。不能用“不同 workflow 成功”或“fake-router 端到端成功”替代真实用户路径。
 
@@ -99,7 +101,8 @@ workflows/global/run_deepseek_echo_test.bat --auto
 ## Common Mistakes
 
 - 直接写一个不存在的节点 `ref`：先暂停并补节点规格。
-- 把 workflow 起始参数放回创建任务页，或让第一个业务节点兼任参数采集。
+- 把 workflow 起始参数放回创建任务页，或把业务参数塞到创建任务 `input_data`。
+- 继续使用 `system.workflow_input.v1`、`workflow.input_schema` 或 `$workflow.input.*` 作为业务输入路径。
 - 第一轮方案只列节点缺口、不列 UI 控件缺口：必须同步检查控件库，缺控件时纳入同一计划。
 - 为了测试直接查 SQLite 或拼资产路径：使用 `WorkflowTestBuilder`、`RuntimeService` 和 `AssetService`。
 - 忘记工作流是 DAG：不要引入通用循环；需要循环能力时先提出引擎能力缺口。
