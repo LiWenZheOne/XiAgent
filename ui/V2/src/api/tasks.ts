@@ -4,7 +4,6 @@ import type { TaskDetailResponse, TaskEvent, TaskRecord } from "./types";
 export interface CreateTaskRequest {
   project_id: string;
   contract: Record<string, unknown>;
-  input_data: Record<string, unknown>;
 }
 
 export interface SubmitInteractionRequest {

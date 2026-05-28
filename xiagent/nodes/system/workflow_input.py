@@ -25,7 +25,7 @@ class WorkflowInputNode(BaseNode):
             ui_defaults={
                 "controls": {
                     "interaction": {
-                        "control_id": "ui.fallback.schema_form.v1",
+                        "control_id": "ui.input.schema_form.v1",
                         "variant": "default",
                         "mode": "input",
                     }

@@ -55,6 +55,8 @@ export async function uploadAsset(input: {
   project_id?: string;
   name?: string;
   publish?: boolean;
+  collection_ids?: string[];
+  tag_ids?: string[];
 }): Promise<AssetRecord> {
   const form = new FormData();
   form.set("file", input.file);
@@ -62,6 +64,8 @@ export async function uploadAsset(input: {
   form.set("publish", String(input.publish ?? true));
   if (input.project_id) form.set("project_id", input.project_id);
   if (input.name) form.set("name", input.name);
+  if (input.collection_ids?.length) form.set("collection_ids", input.collection_ids.join(","));
+  if (input.tag_ids?.length) form.set("tag_ids", input.tag_ids.join(","));
   return apiRequest<AssetRecord>("/api/assets/files", { method: "POST", body: form });
 }
 

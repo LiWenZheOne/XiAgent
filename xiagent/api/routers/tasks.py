@@ -20,7 +20,6 @@ class CreateTaskRequest(BaseModel):
 
     project_id: str
     contract: dict[str, Any]
-    input_data: dict[str, Any]
 
 
 class ResumeTaskRequest(BaseModel):
@@ -47,7 +46,7 @@ async def create_task(
         user_id=current_user.user_id,
         project_id=request.project_id,
         contract=request.contract,
-        input_data=request.input_data,
+        input_data={},
     )
     return asdict(task)
 

@@ -1,10 +1,11 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ImageChoiceThreeControl } from "../node-ui/controls/ImageChoiceThreeControl";
+import { SchemaFormControl } from "../node-ui/controls/SchemaFormControl";
 import { getNodeUiControl, resolveNodeInteractionConfig } from "../node-ui/registry";
-import type { NodeUiControlConfig, TaskNodeExecution } from "../api/types";
+import type { JsonSchema, NodeUiControlConfig, TaskNodeExecution, WorkflowNodeSpec } from "../api/types";
 
 const config: NodeUiControlConfig = {
   control_id: "ui.choice.image_three.v1",
@@ -32,7 +33,21 @@ const node: TaskNodeExecution = {
   },
 };
 
+function jsonResponse(body: unknown, status = 200) {
+  return Promise.resolve(
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
+}
+
 describe("node-ui controls", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
   it("renders image three choice candidates and submits selected payload", async () => {
     const onSubmit = vi.fn();
     render(<ImageChoiceThreeControl config={config} node={node} onSubmit={onSubmit} />);
@@ -68,6 +83,104 @@ describe("node-ui controls", () => {
 
     await waitFor(() => {
       expect(screen.getByText(/尚未在 V2 注册/)).toBeInTheDocument();
+    });
+  });
+
+  it("renders workflow input through schema form and the reusable asset image picker", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.startsWith("/api/assets/collections")) {
+        return jsonResponse({ items: [{ collection_id: "collection-1", name: "角色素材", asset_count: 1 }] });
+      }
+      if (url.startsWith("/api/assets/tags")) {
+        return jsonResponse({ items: [{ tag_id: "tag-1", name: "角色", scope: "project", asset_count: 1 }] });
+      }
+      if (url.startsWith("/api/assets/search")) {
+        return jsonResponse({
+          items: [
+            {
+              asset_id: "asset-1",
+              asset_type: "file",
+              name: "参考图",
+              scope: "project",
+              project_id: "project-1",
+              mime_type: "image/png",
+              size_bytes: 1024,
+              metadata: { public_url: "https://cdn.example.com/ref.png" },
+              created_at: "2026-05-28T09:00:00Z",
+            },
+          ],
+        });
+      }
+      return jsonResponse({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const onSubmit = vi.fn();
+    const inputSchema: JsonSchema = {
+      type: "object",
+      required: ["prompt"],
+      properties: {
+        prompt: { type: "string", title: "提示词" },
+        image_urls: { type: "array", title: "参考图", items: { type: "string" } },
+      },
+    };
+    const inputNode: TaskNodeExecution = {
+      node_execution_id: "exec-input",
+      node_id: "collect_workflow_input",
+      node_ref: "system.workflow_input.v1",
+      status: "waiting",
+      input_snapshot: {},
+      output_snapshot: null,
+      metadata: { input_schema: inputSchema, title: "启动参数" },
+    };
+    const nodeSpec: WorkflowNodeSpec = {
+      id: "collect_workflow_input",
+      ref: "system.workflow_input.v1",
+      outputs: inputSchema,
+    };
+    const schemaConfig: NodeUiControlConfig = {
+      control_id: "ui.input.schema_form.v1",
+      variant: "default",
+      mode: "input",
+      options: {
+        fields: {
+          image_urls: {
+            control_id: "ui.input.asset_image_picker.v1",
+            variant: "thumbnails",
+            mode: "input",
+            selection_mode: "multiple",
+            upload_scope: "project",
+          },
+        },
+      },
+    };
+
+    render(
+      <SchemaFormControl
+        config={schemaConfig}
+        node={inputNode}
+        nodeSpec={nodeSpec}
+        onSubmit={onSubmit}
+        projectId="project-1"
+        snapshot={{ workflow: { input_schema: inputSchema } }}
+      />,
+    );
+
+    await userEvent.type(screen.getByLabelText("提示词"), "蓝色机器人");
+    await userEvent.click(screen.getByRole("button", { name: "选择图片" }));
+    expect(await screen.findByRole("dialog", { name: "选择资产图片" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith("/api/assets/search?scope=combined&project_id=project-1"))).toBe(true);
+    });
+
+    const assetImage = await screen.findByRole("img", { name: "参考图" });
+    await userEvent.click(assetImage.closest("button") as HTMLButtonElement);
+    await userEvent.click(screen.getByRole("button", { name: "确认选择" }));
+    await userEvent.click(screen.getByRole("button", { name: "提交并继续" }));
+
+    expect(onSubmit).toHaveBeenCalledWith({
+      prompt: "蓝色机器人",
+      image_urls: ["https://cdn.example.com/ref.png"],
     });
   });
 });

@@ -4,7 +4,7 @@ workflow:
   scope: global
   name: Storyboard from Sketch
   description: 从剧本中提取角色资产，人工上传分镜线稿，通过 Gemini 视觉分析生成中文分镜描述，再使用 RunningHub 生成最终图像。
-  input_schema:
+  input_schema: &workflow_input_schema
     type: object
     required: ["script", "background"]
     properties:
@@ -90,6 +90,20 @@ workflow:
               image_url_path: url
 
 nodes:
+  - id: collect_workflow_input
+    ref: system.workflow_input.v1
+    inputs: {}
+    outputs: *workflow_input_schema
+    config:
+      title: 填写分镜输入
+      description: 收集剧本、世界背景和生成方式。
+    ui:
+      controls:
+        interaction:
+          control_id: ui.input.schema_form.v1
+          variant: default
+          mode: input
+
   # ===== P1: 角色资产提取与匹配 =====
 
   - id: extract_characters
@@ -1525,10 +1539,12 @@ nodes:
 
 edges:
   - from: START
+    to: collect_workflow_input
+  - from: collect_workflow_input
     to: extract_characters
-  - from: START
+  - from: collect_workflow_input
     to: extract_scenes
-  - from: START
+  - from: collect_workflow_input
     to: extract_props
   - from: extract_characters
     to: lookup_existing_assets

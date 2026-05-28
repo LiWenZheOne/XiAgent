@@ -198,7 +198,7 @@ def _validate_control_config(
             )
 
     if (
-        slot == "interaction"
+        slot in {"interaction", "input"}
         and variant.submit_schema is not None
         and current_output_schema is not None
     ):

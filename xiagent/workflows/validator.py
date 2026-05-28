@@ -56,6 +56,7 @@ def validate_workflow_contract(
         _raise_contract_error("Workflow edges must be a list")
 
     upstream_nodes = _validate_edges(edges, node_ids, input_properties, input_schema, node_outputs)
+    _validate_workflow_input_node(input_schema=input_schema, nodes=nodes, edges=edges)
 
     for node in nodes:
         inputs = node.get("inputs", {})
@@ -129,6 +130,58 @@ def _validate_nodes(
         node_descriptors[node_id] = descriptor
 
     return node_outputs, node_descriptors
+
+
+def _validate_workflow_input_node(
+    *,
+    input_schema: dict[str, Any],
+    nodes: list[Any],
+    edges: list[Any],
+) -> None:
+    input_properties = _schema_properties(input_schema) or set()
+    if not input_properties:
+        return
+
+    input_nodes = [
+        node
+        for node in nodes
+        if isinstance(node, Mapping) and node.get("ref") == "system.workflow_input.v1"
+    ]
+    if not input_nodes:
+        raise ValidationError(
+            code="missing_workflow_input_node",
+            message="带必填 workflow 入参的工作流必须显式声明起始输入节点",
+            details={"properties": sorted(input_properties)},
+        )
+    if len(input_nodes) != 1:
+        raise ValidationError(
+            code="invalid_workflow_input_node_count",
+            message="工作流只能声明一个起始输入节点",
+            details={"count": len(input_nodes)},
+        )
+
+    input_node = input_nodes[0]
+    input_node_id = input_node["id"]
+    if input_node.get("outputs") != input_schema:
+        raise ValidationError(
+            code="workflow_input_node_schema_mismatch",
+            message="起始输入节点 outputs 必须与 workflow.input_schema 保持一致",
+            details={"node_id": input_node_id},
+        )
+    if input_node.get("inputs", {}) not in ({}, None):
+        raise ValidationError(
+            code="invalid_workflow_input_node_inputs",
+            message="起始输入节点不得依赖其他节点输入",
+            details={"node_id": input_node_id},
+        )
+
+    start_targets = [edge.get("to") for edge in edges if isinstance(edge, Mapping) and edge.get("from") == _START]
+    if start_targets != [input_node_id]:
+        raise ValidationError(
+            code="invalid_workflow_input_node_position",
+            message="带必填 workflow 入参的工作流必须从 START 只进入起始输入节点",
+            details={"start_targets": start_targets, "input_node_id": input_node_id},
+        )
 
 
 def _validate_edges(

@@ -4,7 +4,7 @@ workflow:
   scope: global
   name: RunningHub 文生图调用测试
   description: 使用 RunningHub 文生图模型生成图片，并把结果 URL 暴露给测试运行器。
-  input_schema:
+  input_schema: &workflow_input_schema
     type: object
     required: ["prompt", "aspect_ratio", "resolution"]
     properties:
@@ -45,6 +45,20 @@ workflow:
               image_url_path: url
 
 nodes:
+  - id: collect_workflow_input
+    ref: system.workflow_input.v1
+    inputs: {}
+    outputs: *workflow_input_schema
+    config:
+      title: 填写运行输入
+      description: 收集 RunningHub 文生图调用参数。
+    ui:
+      controls:
+        interaction:
+          control_id: ui.input.schema_form.v1
+          variant: default
+          mode: input
+
   - id: generate_image
     ref: ai.runninghub_text_to_image.v1
     inputs:
@@ -87,6 +101,8 @@ nodes:
 
 edges:
   - from: START
+    to: collect_workflow_input
+  - from: collect_workflow_input
     to: generate_image
   - from: generate_image
     to: END

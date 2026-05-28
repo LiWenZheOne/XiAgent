@@ -20,6 +20,7 @@ from xiagent.nodes.ai.runninghub_image import (
     RunningHubTextToImageNode,
 )
 from xiagent.nodes.registry import NodeRegistry
+from xiagent.nodes.system.workflow_input import WorkflowInputNode
 from xiagent.nodes.system.human_approval import HumanApprovalNode
 from xiagent.nodes.tools.assemble_segment_context import AssembleSegmentContextNode
 from xiagent.nodes.tools.assemble_storyboard_context import AssembleStoryboardContextNode
@@ -233,6 +234,7 @@ def _registry_for_test(router: FakeRouter) -> NodeRegistry:
     """构建测试用 NodeRegistry，所有 AI 节点共用同一个 FakeRouter。"""
     registry = NodeRegistry()
     # system
+    registry.register(WorkflowInputNode())
     registry.register(HumanApprovalNode())
     # tools
     registry.register(EchoToolNode())

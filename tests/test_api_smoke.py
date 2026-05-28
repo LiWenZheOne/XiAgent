@@ -27,7 +27,7 @@ def _auth_headers(
 
 
 def _echo_contract() -> dict:
-    return {
+    return _with_workflow_input_node({
         "workflow": {
             "id": "api-echo",
             "version": "1.0.0",
@@ -48,11 +48,11 @@ def _echo_contract() -> dict:
             }
         ],
         "edges": [{"from": "START", "to": "echo"}, {"from": "echo", "to": "END"}],
-    }
+    })
 
 
 def _approval_contract() -> dict:
-    return {
+    return _with_workflow_input_node({
         "workflow": {
             "id": "api-approval",
             "version": "1.0.0",
@@ -91,7 +91,61 @@ def _approval_contract() -> dict:
             },
             {"from": "echo", "to": "END"},
         ],
-    }
+    })
+
+
+def _with_workflow_input_node(contract: dict) -> dict:
+    input_schema = contract["workflow"].get("input_schema", {})
+    if not input_schema.get("properties"):
+        return contract
+    contract["nodes"].append(
+        {
+            "id": "collect_workflow_input",
+            "ref": "system.workflow_input.v1",
+            "inputs": {},
+            "outputs": input_schema,
+        }
+    )
+    contract["edges"] = [
+        {"from": "START", "to": "collect_workflow_input"},
+        *[
+            (
+                {"from": "collect_workflow_input", "to": edge["to"]}
+                if edge["from"] == "START"
+                else edge
+            )
+            for edge in contract["edges"]
+        ],
+    ]
+    return contract
+
+
+def _create_task_with_workflow_input(
+    client: TestClient,
+    *,
+    headers: dict[str, str],
+    project_id: str,
+    contract: dict,
+    input_data: dict,
+) -> dict:
+    create_response = client.post(
+        "/api/tasks",
+        json={"project_id": project_id, "contract": contract},
+        headers=headers,
+    )
+    assert create_response.status_code == 200
+    task = create_response.json()
+    resume_response = client.post(
+        f"/api/tasks/{task['task_id']}/interactions",
+        json={
+            "project_id": project_id,
+            "node_id": "collect_workflow_input",
+            "output": input_data,
+        },
+        headers=headers,
+    )
+    assert resume_response.status_code == 200
+    return resume_response.json()
 
 
 def test_health_endpoint_returns_ok(test_settings) -> None:
@@ -174,14 +228,12 @@ def test_global_project_is_default_shared_project_and_supports_user_tasks(test_s
 
         alice_projects_response = client.get("/api/projects", headers=alice_headers)
         bob_projects_response = client.get("/api/projects", headers=bob_headers)
-        create_response = client.post(
-            "/api/tasks",
-            json={
-                "project_id": "global",
-                "contract": _echo_contract(),
-                "input_data": {"topic": "global task"},
-            },
+        task = _create_task_with_workflow_input(
+            client,
             headers=alice_headers,
+            project_id="global",
+            contract=_echo_contract(),
+            input_data={"topic": "global task"},
         )
         alice_tasks_response = client.get(
             "/api/tasks",
@@ -200,8 +252,6 @@ def test_global_project_is_default_shared_project_and_supports_user_tasks(test_s
     assert alice_projects_response.json()["items"][0]["name"] == "全局项目"
     assert bob_projects_response.json()["items"][0]["project_id"] == "global"
 
-    assert create_response.status_code == 200
-    task = create_response.json()
     assert task["project_id"] == "global"
     assert task["user_id"] == alice["user_id"]
 
@@ -348,17 +398,13 @@ def test_task_endpoints_create_succeeded_echo_task_and_read_it(test_settings) ->
             headers=headers,
         ).json()
 
-        create_response = client.post(
-            "/api/tasks",
-            json={
-                "project_id": project["project_id"],
-                "contract": _echo_contract(),
-                "input_data": {"topic": "API smoke"},
-            },
+        task = _create_task_with_workflow_input(
+            client,
             headers=headers,
+            project_id=project["project_id"],
+            contract=_echo_contract(),
+            input_data={"topic": "API smoke"},
         )
-        assert create_response.status_code == 200
-        task = create_response.json()
         assert task["status"] == "succeeded"
         assert task["user_id"] == user["user_id"]
 
@@ -372,6 +418,33 @@ def test_task_endpoints_create_succeeded_echo_task_and_read_it(test_settings) ->
     body = read_response.json()
     assert body["task"]["task_id"] == task["task_id"]
     assert body["task"]["status"] == "succeeded"
+
+
+def test_create_task_rejects_pre_task_workflow_input_data(test_settings) -> None:
+    app = create_app(settings=test_settings)
+    with TestClient(app) as client:
+        client.post(
+            "/api/auth/register",
+            json={"username": "task-input-blocked", "password": "secret-123"},
+        )
+        headers = _auth_headers(client, username="task-input-blocked")
+        project = client.post(
+            "/api/projects",
+            json={"name": "Task Input Block Project"},
+            headers=headers,
+        ).json()
+        response = client.post(
+            "/api/tasks",
+            json={
+                "project_id": project["project_id"],
+                "contract": _echo_contract(),
+                "input_data": {"topic": "blocked"},
+            },
+            headers=headers,
+        )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "request_validation_failed"
 
 
 def test_task_list_detail_and_stream_return_project_scoped_runtime_data(test_settings) -> None:
@@ -394,24 +467,20 @@ def test_task_list_detail_and_stream_return_project_scoped_runtime_data(test_set
         ).json()
         contract = _echo_contract()
 
-        first_task = client.post(
-            "/api/tasks",
-            json={
-                "project_id": first_project["project_id"],
-                "contract": contract,
-                "input_data": {"topic": "first"},
-            },
+        first_task = _create_task_with_workflow_input(
+            client,
             headers=headers,
-        ).json()
-        second_task = client.post(
-            "/api/tasks",
-            json={
-                "project_id": second_project["project_id"],
-                "contract": contract,
-                "input_data": {"topic": "second"},
-            },
+            project_id=first_project["project_id"],
+            contract=contract,
+            input_data={"topic": "first"},
+        )
+        second_task = _create_task_with_workflow_input(
+            client,
             headers=headers,
-        ).json()
+            project_id=second_project["project_id"],
+            contract=contract,
+            input_data={"topic": "second"},
+        )
 
         list_response = client.get(
             "/api/tasks",
@@ -440,6 +509,7 @@ def test_task_list_detail_and_stream_return_project_scoped_runtime_data(test_set
     assert detail_response.status_code == 200
     detail = detail_response.json()
     assert detail["workflow_snapshot"] == contract
+    assert detail["node_attempts"]["collect_workflow_input"][0]["attempt"] == 1
     assert detail["node_attempts"]["echo"][0]["attempt"] == 1
     assert detail["node_attempts"]["echo"][0]["node_execution_id"] == detail["task"][
         "current_view"
@@ -464,15 +534,13 @@ def test_task_interactions_endpoint_resumes_waiting_task(test_settings) -> None:
             json={"name": "Interaction Project"},
             headers=headers,
         ).json()
-        task = client.post(
-            "/api/tasks",
-            json={
-                "project_id": project["project_id"],
-                "contract": _approval_contract(),
-                "input_data": {"topic": "needs approval"},
-            },
+        task = _create_task_with_workflow_input(
+            client,
             headers=headers,
-        ).json()
+            project_id=project["project_id"],
+            contract=_approval_contract(),
+            input_data={"topic": "needs approval"},
+        )
 
         response = client.post(
             f"/api/tasks/{task['task_id']}/interactions",
@@ -549,15 +617,13 @@ def test_protected_get_routes_reject_query_user_id(test_settings) -> None:
             json={"name": "Query Project"},
             headers=headers,
         ).json()
-        task = client.post(
-            "/api/tasks",
-            json={
-                "project_id": project["project_id"],
-                "contract": _echo_contract(),
-                "input_data": {"topic": "query"},
-            },
+        task = _create_task_with_workflow_input(
+            client,
             headers=headers,
-        ).json()
+            project_id=project["project_id"],
+            contract=_echo_contract(),
+            input_data={"topic": "query"},
+        )
 
         projects_response = client.get(
             "/api/projects",
@@ -608,15 +674,13 @@ def test_wrong_project_access_uses_standard_error_shape(test_settings) -> None:
             headers=other_headers,
         ).json()
 
-        task = client.post(
-            "/api/tasks",
-            json={
-                "project_id": owner_project["project_id"],
-                "contract": _echo_contract(),
-                "input_data": {"topic": "private"},
-            },
+        task = _create_task_with_workflow_input(
+            client,
             headers=owner_headers,
-        ).json()
+            project_id=owner_project["project_id"],
+            contract=_echo_contract(),
+            input_data={"topic": "private"},
+        )
 
         response = client.get(
             f"/api/tasks/{task['task_id']}",
@@ -645,7 +709,7 @@ workflow:
   version: 1.0.0
   scope: global
   name: Nested Sample
-  input_schema:
+  input_schema: &workflow_input_schema
     type: object
     required:
       - topic
@@ -653,6 +717,10 @@ workflow:
       topic:
         type: string
 nodes:
+  - id: collect_workflow_input
+    ref: system.workflow_input.v1
+    inputs: {}
+    outputs: *workflow_input_schema
   - id: echo
     ref: tool.echo.v1
     inputs:
@@ -662,6 +730,8 @@ nodes:
       type: object
 edges:
   - from: START
+    to: collect_workflow_input
+  - from: collect_workflow_input
     to: echo
   - from: echo
     to: END
@@ -778,7 +848,7 @@ workflow:
   version: 1.0.0
   scope: {scope}
 {project_line}  name: {name}
-  input_schema:
+  input_schema: &workflow_input_schema
     type: object
     required:
       - topic
@@ -786,6 +856,10 @@ workflow:
       topic:
         type: string
 nodes:
+  - id: collect_workflow_input
+    ref: system.workflow_input.v1
+    inputs: {{}}
+    outputs: *workflow_input_schema
   - id: echo
     ref: tool.echo.v1
     inputs:
@@ -795,6 +869,8 @@ nodes:
       type: object
 edges:
   - from: START
+    to: collect_workflow_input
+  - from: collect_workflow_input
     to: echo
   - from: echo
     to: END

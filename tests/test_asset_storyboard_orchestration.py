@@ -22,6 +22,7 @@ from xiagent.nodes.ai.runninghub_image import (
 )
 from xiagent.nodes.registry import NodeRegistry
 from xiagent.nodes.system.human_approval import HumanApprovalNode
+from xiagent.nodes.system.workflow_input import WorkflowInputNode
 from xiagent.nodes.tools.assemble_storyboard_context import AssembleStoryboardContextNode
 from xiagent.nodes.tools.asset_lookup import AssetLookupNode
 from xiagent.nodes.tools.create_text_asset import CreateTextAssetNode
@@ -60,6 +61,7 @@ def test_orchestration_workflow_node_list(test_settings) -> None:
 
     nodes_by_id = {node["id"]: node for node in contract["nodes"]}
     assert list(nodes_by_id) == [
+        "collect_workflow_input",
         "extract_characters",
         "lookup_existing_assets",
         "match_by_name",
@@ -91,6 +93,7 @@ def test_orchestration_workflow_node_list(test_settings) -> None:
         "review_storyboard_image",
     ]
     assert {node_id: node["ref"] for node_id, node in nodes_by_id.items()} == {
+        "collect_workflow_input": "system.workflow_input.v1",
         "extract_characters": "ai.deepseek_structured_json.v1",
         "lookup_existing_assets": "tool.asset_lookup.v1",
         "match_by_name": "tool.asset_lookup.v1",
@@ -146,8 +149,9 @@ def test_orchestration_workflow_edges_are_dag(test_settings) -> None:
         },
     ]
     assert unconditional_edges == [
-        {"from": "START", "to": "extract_characters"},
-        {"from": "START", "to": "extract_props"},
+        {"from": "START", "to": "collect_workflow_input"},
+        {"from": "collect_workflow_input", "to": "extract_characters"},
+        {"from": "collect_workflow_input", "to": "extract_props"},
         {"from": "extract_characters", "to": "lookup_existing_assets"},
         {"from": "extract_props", "to": "lookup_prop_assets"},
         {"from": "lookup_prop_assets", "to": "match_props_by_name"},
@@ -171,7 +175,7 @@ def test_orchestration_workflow_edges_are_dag(test_settings) -> None:
         {"from": "extract_panel_image_urls", "to": "assemble_prompt_v2"},
         {"from": "assemble_prompt_v2", "to": "generate_image_v2"},
         {"from": "generate_image_v2", "to": "review_storyboard_image"},
-        {"from": "START", "to": "extract_scenes"},
+        {"from": "collect_workflow_input", "to": "extract_scenes"},
         {"from": "extract_scenes", "to": "lookup_scene_assets"},
         {"from": "lookup_scene_assets", "to": "match_scenes_by_name"},
         {"from": "match_scenes_by_name", "to": "enrich_scenes"},
@@ -381,6 +385,7 @@ def _orchestration_registry(router: FakeOrchestrationRouter) -> NodeRegistry:
     """Register all nodes needed for the orchestrated asset-storyboard workflow,
     with the fake router injected for DeepSeek and RunningHub calls."""
     registry = NodeRegistry()
+    registry.register(WorkflowInputNode())
     registry.register(HumanApprovalNode())
     registry.register(MergeAssetImagesNode())
     registry.register(ScriptSplitNode())

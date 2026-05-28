@@ -13,6 +13,8 @@ def test_builtin_ui_controls_have_unique_ids() -> None:
 
     assert len({control.control_id for control in controls}) == len(controls)
     assert "ui.choice.image_three.v1" in {control.control_id for control in controls}
+    assert "ui.input.schema_form.v1" in {control.control_id for control in controls}
+    assert "ui.input.asset_image_picker.v1" in {control.control_id for control in controls}
 
 
 def test_image_three_choice_control_declares_expected_variants() -> None:
@@ -33,6 +35,31 @@ def test_unknown_ui_control_raises_key_error() -> None:
 
     with pytest.raises(KeyError):
         catalog.get("ui.missing.v1")
+
+
+def test_schema_form_and_asset_image_picker_controls_are_registered() -> None:
+    catalog = build_builtin_ui_control_catalog()
+
+    schema_form = catalog.get("ui.input.schema_form.v1")
+    assert schema_form.kind == "input"
+    assert schema_form.variants[0].name == "default"
+    assert "input" in schema_form.variants[0].modes
+
+    asset_picker = catalog.get("ui.input.asset_image_picker.v1")
+    assert asset_picker.kind == "input"
+    assert asset_picker.variants[0].name == "thumbnails"
+    assert "input" in asset_picker.variants[0].modes
+    assert asset_picker.variants[0].submit_schema == {
+        "type": "object",
+        "required": ["value"],
+        "properties": {
+            "value": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1},
+            }
+        },
+        "additionalProperties": False,
+    }
 
 
 def test_ui_control_descriptor_is_api_serializable() -> None:

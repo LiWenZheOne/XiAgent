@@ -10,6 +10,7 @@ from xiagent.nodes.ai.deepseek_structured_json import DeepSeekStructuredJsonNode
 from xiagent.nodes.ai.runninghub_image import RunningHubImageToImageNode
 from xiagent.nodes.registry import NodeRegistry
 from xiagent.nodes.system.human_approval import HumanApprovalNode
+from xiagent.nodes.system.workflow_input import WorkflowInputNode
 from xiagent.nodes.tools.assemble_segment_context import AssembleSegmentContextNode
 from xiagent.nodes.tools.script_split import ScriptSplitNode
 from xiagent.nodes.tools.storyboard_prompt import StoryboardPromptAssemblerNode
@@ -32,6 +33,7 @@ def test_storyboard_workflow_contract_is_serial_and_uses_expected_nodes(test_set
 
     nodes_by_id = {node["id"]: node for node in contract["nodes"]}
     assert list(nodes_by_id) == [
+        "collect_workflow_input",
         "split_script",
         "analyze_characters",
         "assemble_context",
@@ -42,6 +44,7 @@ def test_storyboard_workflow_contract_is_serial_and_uses_expected_nodes(test_set
         "generate_image",
     ]
     assert {node_id: node["ref"] for node_id, node in nodes_by_id.items()} == {
+        "collect_workflow_input": "system.workflow_input.v1",
         "split_script": "tool.script_split.v1",
         "analyze_characters": "ai.deepseek_structured_json.v1",
         "assemble_context": "tool.assemble_segment_context.v1",
@@ -52,7 +55,8 @@ def test_storyboard_workflow_contract_is_serial_and_uses_expected_nodes(test_set
         "generate_image": "ai.runninghub_image_to_image.v1",
     }
     assert contract["edges"] == [
-        {"from": "START", "to": "split_script"},
+        {"from": "START", "to": "collect_workflow_input"},
+        {"from": "collect_workflow_input", "to": "split_script"},
         {"from": "split_script", "to": "analyze_characters"},
         {"from": "analyze_characters", "to": "assemble_context"},
         {"from": "assemble_context", "to": "describe_panels"},
@@ -287,6 +291,7 @@ async def test_storyboard_workflow_runs_with_manual_asset_input(
 
     assert result.task.status == "succeeded"
     assert [execution.node_id for execution in result.node_executions] == [
+        "collect_workflow_input",
         "split_script",
         "analyze_characters",
         "assemble_context",
@@ -353,6 +358,7 @@ class FakeStoryboardRouter(ChatModelRouter):
 
 def _storyboard_registry(router: FakeStoryboardRouter) -> NodeRegistry:
     registry = NodeRegistry()
+    registry.register(WorkflowInputNode())
     registry.register(HumanApprovalNode())
     registry.register(ScriptSplitNode())
     registry.register(AssembleSegmentContextNode())

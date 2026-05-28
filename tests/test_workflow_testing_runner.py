@@ -210,7 +210,7 @@ def test_parse_input_data_prompts_required_schema_fields() -> None:
 
 
 def _echo_contract() -> dict:
-    return {
+    return _with_workflow_input_node({
         "workflow": {
             "id": "runner-echo",
             "version": "1.0.0",
@@ -231,7 +231,7 @@ def _echo_contract() -> dict:
             }
         ],
         "edges": [{"from": "START", "to": "echo"}, {"from": "echo", "to": "END"}],
-    }
+    })
 
 
 def _echo_image_contract() -> dict:
@@ -244,6 +244,9 @@ def _echo_image_contract() -> dict:
             "image": {"type": "string"},
         },
     }
+    next(node for node in contract["nodes"] if node["id"] == "collect_workflow_input")[
+        "outputs"
+    ] = contract["workflow"]["input_schema"]
     contract["nodes"][0]["inputs"] = {
         "topic": {"from": "$workflow.input.topic"},
         "image": {"from": "$workflow.input.image"},
@@ -252,7 +255,7 @@ def _echo_image_contract() -> dict:
 
 
 def _approval_contract() -> dict:
-    return {
+    return _with_workflow_input_node({
         "workflow": {
             "id": "runner-approval",
             "version": "1.0.0",
@@ -291,7 +294,33 @@ def _approval_contract() -> dict:
             },
             {"from": "echo", "to": "END"},
         ],
-    }
+    })
+
+
+def _with_workflow_input_node(contract: dict) -> dict:
+    input_schema = contract["workflow"].get("input_schema", {})
+    if not input_schema.get("properties"):
+        return contract
+    contract["nodes"].append(
+        {
+            "id": "collect_workflow_input",
+            "ref": "system.workflow_input.v1",
+            "inputs": {},
+            "outputs": input_schema,
+        }
+    )
+    contract["edges"] = [
+        {"from": "START", "to": "collect_workflow_input"},
+        *[
+            (
+                {"from": "collect_workflow_input", "to": edge["to"]}
+                if edge["from"] == "START"
+                else edge
+            )
+            for edge in contract["edges"]
+        ],
+    ]
+    return contract
 
 
 async def test_runner_executes_echo_contract_and_collects_events(tmp_path: Path) -> None:
@@ -316,10 +345,21 @@ async def test_runner_executes_echo_contract_and_collects_events(tmp_path: Path)
         "task_created",
         "task_started",
         "node_started",
+        "node_waiting",
+        "human_input_requested",
+        "task_waiting",
+        "task_resumed",
+        "node_succeeded",
+        "node_started",
         "node_succeeded",
         "task_succeeded",
     ]
-    assert result.node_executions[0].output_snapshot == {"echo": {"topic": "hello"}}
+    assert [item.node_id for item in result.node_executions] == [
+        "collect_workflow_input",
+        "echo",
+    ]
+    assert result.node_executions[0].output_snapshot == {"topic": "hello"}
+    assert result.node_executions[1].output_snapshot == {"echo": {"topic": "hello"}}
     assert result.run_dir == tmp_path / "runs" / result.task.task_id
     assert "[01] 加载工作流 runner-echo 1.0.0" in output_lines
 
@@ -377,6 +417,9 @@ async def test_runner_returns_failed_task_for_missing_input_reference(tmp_path: 
         "type": "object",
         "properties": {"missing": {"type": "string"}},
     }
+    next(node for node in contract["nodes"] if node["id"] == "collect_workflow_input")[
+        "outputs"
+    ] = contract["workflow"]["input_schema"]
     contract["nodes"][0]["inputs"] = {"topic": {"from": "$workflow.input.missing"}}
     session = await (
         WorkflowTestBuilder()
@@ -402,6 +445,9 @@ async def test_runner_returns_failed_task_when_resume_continuation_fails(
         "type": "object",
         "properties": {"optional_field": {"type": "string"}},
     }
+    next(node for node in contract["nodes"] if node["id"] == "collect_workflow_input")[
+        "outputs"
+    ] = contract["workflow"]["input_schema"]
     contract["nodes"][0]["inputs"] = {}
     contract["nodes"][1]["inputs"] = {
         "value": {"from": "$workflow.input.optional_field"},
@@ -495,7 +541,11 @@ async def test_runner_resumes_waiting_task_from_console(tmp_path: Path) -> None:
     result = await runner.run_contract(_approval_contract(), input_data={"topic": "hello"})
 
     assert result.task.status == "succeeded"
-    assert [item.node_id for item in result.node_executions] == ["review", "echo"]
+    assert [item.node_id for item in result.node_executions] == [
+        "collect_workflow_input",
+        "review",
+        "echo",
+    ]
     assert any("[等待输入] 节点 review" in line for line in output_lines)
 
 
@@ -508,13 +558,17 @@ workflow:
   version: 1.0.0
   scope: global
   name: File Echo
-  input_schema:
+  input_schema: &workflow_input_schema
     type: object
     required: ["topic"]
     properties:
       topic:
         type: string
 nodes:
+  - id: collect_workflow_input
+    ref: system.workflow_input.v1
+    inputs: {}
+    outputs: *workflow_input_schema
   - id: echo
     ref: tool.echo.v1
     inputs:
@@ -524,6 +578,8 @@ nodes:
       type: object
 edges:
   - from: START
+    to: collect_workflow_input
+  - from: collect_workflow_input
     to: echo
   - from: echo
     to: END

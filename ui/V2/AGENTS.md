@@ -28,6 +28,8 @@
 | `ui.display.image_candidates.v1` | 图片候选列表展示 | `ImageCandidatesControl` |
 | `ui.choice.image_three.v1` | 图片三选一交互 | `ImageChoiceThreeControl` |
 | `ui.interaction.approval.v1` | 人工审批交互 | `ApprovalControl` |
+| `ui.input.schema_form.v1` | 起始输入和等待输入的 schema 表单 | `SchemaFormControl` |
+| `ui.input.asset_image_picker.v1` | schema 表单内的资产图片字段选择与上传 | `SchemaFormControl` 字段控件 |
 | `ui.fallback.schema_form.v1` | schema 表单 fallback | `SchemaFormControl` |
 
 `ui.choice.image_three.v1` 当前支持 `equal_grid`、`hero_list`、`hover_focus` 三个 V2 变体名称；工作流和节点默认配置必须使用后端 manifest 中存在的实际变体名。

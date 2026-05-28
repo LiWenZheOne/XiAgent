@@ -81,12 +81,13 @@ class WorkflowTestRunner:
     ) -> WorkflowTestRunResult:
         workflow = contract["workflow"]
         self._console.write(f"[01] 加载工作流 {workflow['id']} {workflow['version']}")
+        create_input_data = {} if _has_workflow_input_node(contract) else input_data
         try:
             task = await self._session.runtime.create_task_from_contract(
                 user_id=self._session.user.user_id,
                 project_id=self._session.project.project_id,
                 contract=contract,
-                input_data=input_data,
+                input_data=create_input_data,
             )
         except XiAgentError as exc:
             task = await self._task_from_persisted_failure(exc)
@@ -95,9 +96,18 @@ class WorkflowTestRunner:
             executions = await self._list_node_executions(task.task_id)
             waiting_execution = _latest_waiting_execution(executions)
             node_def = _node_by_id(contract, waiting_execution.node_id)
-            output_schema = node_def["outputs"]
+            is_workflow_input_node = _is_workflow_input_node(node_def)
+            output_schema = (
+                contract["workflow"]["input_schema"]
+                if is_workflow_input_node
+                else node_def["outputs"]
+            )
             self._console.write(f"[等待输入] 节点 {waiting_execution.node_id}")
-            output = self._console.prompt_resume_output(waiting_execution, output_schema)
+            output = (
+                input_data
+                if is_workflow_input_node
+                else self._console.prompt_resume_output(waiting_execution, output_schema)
+            )
             validate_json_value(output_schema, output)
             try:
                 task = await self._session.runtime.resume_task(
@@ -237,3 +247,11 @@ def _node_by_id(contract: dict[str, Any], node_id: str) -> dict[str, Any]:
         message="Workflow node was not found",
         details={"node_id": node_id},
     )
+
+
+def _has_workflow_input_node(contract: dict[str, Any]) -> bool:
+    return any(_is_workflow_input_node(node) for node in contract.get("nodes", []))
+
+
+def _is_workflow_input_node(node: dict[str, Any]) -> bool:
+    return node.get("ref") == "system.workflow_input.v1"

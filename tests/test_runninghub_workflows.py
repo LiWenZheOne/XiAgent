@@ -11,6 +11,7 @@ from xiagent.nodes.ai.runninghub_image import (
     RunningHubTextToImageNode,
 )
 from xiagent.nodes.registry import NodeRegistry
+from xiagent.nodes.system.workflow_input import WorkflowInputNode
 from xiagent.workflows.testing import WorkflowTestBuilder
 from xiagent.workflows.testing.console import ConsoleIO
 from xiagent.workflows.testing.runner import WorkflowTestRunner
@@ -61,8 +62,8 @@ async def test_runninghub_text_to_image_workflow_runs_with_user_level_input(
     )
 
     assert result.task.status == "succeeded"
-    assert result.node_executions[0].node_id == "generate_image"
-    assert result.node_executions[0].output_snapshot["image_url"] == (
+    executions = {execution.node_id: execution for execution in result.node_executions}
+    assert executions["generate_image"].output_snapshot["image_url"] == (
         "https://cdn.runninghub.test/generated.png"
     )
     assert router.requests[0].provider == "runninghub_text_to_image"
@@ -100,8 +101,8 @@ async def test_runninghub_image_to_image_workflow_runs_with_user_level_input(
     )
 
     assert result.task.status == "succeeded"
-    assert result.node_executions[0].node_id == "transform_image"
-    assert result.node_executions[0].output_snapshot["results"] == [
+    executions = {execution.node_id: execution for execution in result.node_executions}
+    assert executions["transform_image"].output_snapshot["results"] == [
         {"url": "https://cdn.runninghub.test/generated.png"}
     ]
     assert router.requests[0].provider == "runninghub_image"
@@ -117,6 +118,7 @@ async def test_runninghub_image_to_image_workflow_runs_with_user_level_input(
 def _patch_runninghub_registry(monkeypatch, router: FakeRunningHubRouter) -> None:
     def build_test_registry(settings: Any) -> NodeRegistry:
         registry = NodeRegistry()
+        registry.register(WorkflowInputNode())
         registry.register(
             RunningHubTextToImageNode(
                 model_router=router,

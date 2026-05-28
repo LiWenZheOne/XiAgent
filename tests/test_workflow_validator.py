@@ -9,6 +9,7 @@ from xiagent.nodes.ai.deepseek_chat import DeepSeekChatNode
 from xiagent.nodes.base import BaseNode, NodeContext, NodeDescriptor, NodeResult
 from xiagent.nodes.registry import NodeRegistry
 from xiagent.nodes.system.human_approval import HumanApprovalNode
+from xiagent.nodes.system.workflow_input import WorkflowInputNode
 from xiagent.nodes.system.user_choice import SystemUserChoiceNode
 from xiagent.nodes.tools.echo_tool import EchoToolNode
 from xiagent.workflows.loader import load_workflow_file
@@ -17,6 +18,46 @@ from xiagent.workflows.validator import validate_workflow_contract
 
 
 def test_valid_workflow_contract_is_accepted() -> None:
+    registry = NodeRegistry()
+    registry.register(WorkflowInputNode())
+    registry.register(EchoToolNode())
+    input_schema = {
+        "type": "object",
+        "required": ["topic"],
+        "properties": {"topic": {"type": "string"}},
+    }
+    contract = {
+        "workflow": {
+            "id": "echo",
+            "version": "1.0.0",
+            "scope": "global",
+            "name": "Echo",
+            "input_schema": input_schema,
+        },
+        "nodes": [
+            {
+                "id": "collect_workflow_input",
+                "ref": "system.workflow_input.v1",
+                "inputs": {},
+                "outputs": input_schema,
+            },
+            {
+                "id": "echo",
+                "ref": "tool.echo.v1",
+                "inputs": {"topic": {"from": "$workflow.input.topic"}},
+                "outputs": {"type": "object", "properties": {"echo": {"type": "object"}}},
+            }
+        ],
+        "edges": [
+            {"from": "START", "to": "collect_workflow_input"},
+            {"from": "collect_workflow_input", "to": "echo"},
+            {"from": "echo", "to": "END"},
+        ],
+    }
+    validate_workflow_contract(contract, registry)
+
+
+def test_required_workflow_input_must_start_with_explicit_input_node() -> None:
     registry = NodeRegistry()
     registry.register(EchoToolNode())
     contract = {
@@ -36,17 +77,60 @@ def test_valid_workflow_contract_is_accepted() -> None:
                 "id": "echo",
                 "ref": "tool.echo.v1",
                 "inputs": {"topic": {"from": "$workflow.input.topic"}},
-                "outputs": {"type": "object", "properties": {"echo": {"type": "object"}}},
+                "outputs": {"type": "object"},
             }
         ],
         "edges": [{"from": "START", "to": "echo"}, {"from": "echo", "to": "END"}],
     }
-    validate_workflow_contract(contract, registry)
+
+    with pytest.raises(ValidationError) as exc_info:
+        validate_workflow_contract(contract, registry)
+
+    assert exc_info.value.code == "missing_workflow_input_node"
+
+
+def test_workflow_input_node_must_be_the_only_start_node() -> None:
+    registry = NodeRegistry()
+    registry.register(WorkflowInputNode())
+    registry.register(EchoToolNode())
+    input_schema = {
+        "type": "object",
+        "required": ["topic"],
+        "properties": {"topic": {"type": "string"}},
+    }
+    contract = {
+        "workflow": {
+            "id": "echo",
+            "version": "1.0.0",
+            "scope": "global",
+            "name": "Echo",
+            "input_schema": input_schema,
+        },
+        "nodes": [
+            {
+                "id": "collect_workflow_input",
+                "ref": "system.workflow_input.v1",
+                "inputs": {},
+                "outputs": input_schema,
+            },
+            {"id": "echo", "ref": "tool.echo.v1", "inputs": {}, "outputs": {"type": "object"}},
+        ],
+        "edges": [
+            {"from": "START", "to": "collect_workflow_input"},
+            {"from": "START", "to": "echo"},
+            {"from": "collect_workflow_input", "to": "echo"},
+            {"from": "echo", "to": "END"},
+        ],
+    }
+
+    with pytest.raises(ValidationError) as exc_info:
+        validate_workflow_contract(contract, registry)
+
+    assert exc_info.value.code == "invalid_workflow_input_node_position"
 
 
 def test_literal_and_template_node_inputs_are_accepted() -> None:
-    registry = NodeRegistry()
-    registry.register(EchoToolNode())
+    registry = _registry()
     contract = _two_node_contract()
     contract["nodes"][0]["inputs"] = {"question": {"value": "你喜欢什么颜色？"}}
     contract["nodes"][1]["inputs"] = {
@@ -80,8 +164,7 @@ def test_unknown_node_ref_is_rejected() -> None:
 
 
 def test_duplicate_node_id_is_rejected() -> None:
-    registry = NodeRegistry()
-    registry.register(EchoToolNode())
+    registry = _registry()
     contract = _valid_contract()
     contract["nodes"].append(
         {"id": "echo", "ref": "tool.echo.v1", "inputs": {}, "outputs": {"type": "object"}}
@@ -94,8 +177,7 @@ def test_duplicate_node_id_is_rejected() -> None:
 
 
 def test_short_input_reference_is_rejected() -> None:
-    registry = NodeRegistry()
-    registry.register(EchoToolNode())
+    registry = _registry()
     contract = _valid_contract()
     contract["nodes"][0]["inputs"] = {"topic": {"from": "@planner.plan"}}
 
@@ -106,8 +188,7 @@ def test_short_input_reference_is_rejected() -> None:
 
 
 def test_edge_to_missing_node_is_rejected() -> None:
-    registry = NodeRegistry()
-    registry.register(EchoToolNode())
+    registry = _registry()
     contract = _valid_contract()
     contract["edges"] = [{"from": "START", "to": "echo"}, {"from": "echo", "to": "missing"}]
 
@@ -118,8 +199,7 @@ def test_edge_to_missing_node_is_rejected() -> None:
 
 
 def test_cycle_in_edges_is_rejected() -> None:
-    registry = NodeRegistry()
-    registry.register(EchoToolNode())
+    registry = _registry()
     contract = _valid_contract()
     contract["nodes"].append(
         {"id": "second", "ref": "tool.echo.v1", "inputs": {}, "outputs": {"type": "object"}}
@@ -148,8 +228,9 @@ def test_parallel_branches_can_converge_directly_at_end() -> None:
     contract = _two_node_contract()
     contract["nodes"][1]["inputs"] = {"topic": {"from": "$workflow.input.topic"}}
     contract["edges"] = [
-        {"from": "START", "to": "a"},
-        {"from": "START", "to": "b"},
+        {"from": "START", "to": "collect_workflow_input"},
+        {"from": "collect_workflow_input", "to": "a"},
+        {"from": "collect_workflow_input", "to": "b"},
         {"from": "a", "to": "END"},
         {"from": "b", "to": "END"},
     ]
@@ -175,7 +256,8 @@ def test_node_fanout_parallel_dag_is_accepted_when_branches_converge() -> None:
         }
     )
     contract["edges"] = [
-        {"from": "START", "to": "a"},
+        {"from": "START", "to": "collect_workflow_input"},
+        {"from": "collect_workflow_input", "to": "a"},
         {"from": "a", "to": "b"},
         {"from": "a", "to": "c"},
         {"from": "b", "to": "join"},
@@ -191,8 +273,9 @@ def test_start_fanout_branch_without_path_to_end_is_rejected() -> None:
     contract = _two_node_contract()
     contract["nodes"][1]["inputs"] = {"topic": {"from": "$workflow.input.topic"}}
     contract["edges"] = [
-        {"from": "START", "to": "a"},
-        {"from": "START", "to": "b"},
+        {"from": "START", "to": "collect_workflow_input"},
+        {"from": "collect_workflow_input", "to": "a"},
+        {"from": "collect_workflow_input", "to": "b"},
         {"from": "a", "to": "END"},
     ]
 
@@ -234,9 +317,10 @@ def test_join_node_rejects_output_reference_from_non_upstream_branch() -> None:
     join = next(node for node in contract["nodes"] if node["id"] == "join")
     join["inputs"]["outside"] = {"from": "$nodes.c.output.ok"}
     contract["edges"] = [
-        {"from": "START", "to": "a"},
-        {"from": "START", "to": "b"},
-        {"from": "START", "to": "c"},
+        {"from": "START", "to": "collect_workflow_input"},
+        {"from": "collect_workflow_input", "to": "a"},
+        {"from": "collect_workflow_input", "to": "b"},
+        {"from": "collect_workflow_input", "to": "c"},
         {"from": "a", "to": "join"},
         {"from": "b", "to": "join"},
         {"from": "c", "to": "final"},
@@ -251,12 +335,15 @@ def test_join_node_rejects_output_reference_from_non_upstream_branch() -> None:
 
 
 def test_condition_path_referencing_unknown_node_is_rejected() -> None:
-    registry = NodeRegistry()
-    registry.register(EchoToolNode())
+    registry = _registry()
     contract = _valid_contract()
     contract["edges"] = [
         {
             "from": "START",
+            "to": "collect_workflow_input",
+        },
+        {
+            "from": "collect_workflow_input",
             "to": "echo",
             "when": {"path": "$nodes.planner.output.approved", "equals": True},
         },
@@ -321,7 +408,11 @@ def test_self_input_reference_is_rejected() -> None:
     contract["nodes"][0]["id"] = "a"
     contract["nodes"][0]["inputs"] = {"value": {"from": "$nodes.a.output.ok"}}
     contract["nodes"][0]["outputs"] = _output_schema()
-    contract["edges"] = [{"from": "START", "to": "a"}, {"from": "a", "to": "END"}]
+    contract["edges"] = [
+        {"from": "START", "to": "collect_workflow_input"},
+        {"from": "collect_workflow_input", "to": "a"},
+        {"from": "a", "to": "END"},
+    ]
 
     with pytest.raises(ValidationError) as exc_info:
         validate_workflow_contract(contract, registry)
@@ -411,6 +502,9 @@ def test_workflow_input_reference_can_read_field_inside_array_items() -> None:
     registry = _registry()
     contract = _two_node_contract()
     contract["workflow"]["input_schema"] = _array_workflow_input_schema()
+    next(node for node in contract["nodes"] if node["id"] == "collect_workflow_input")[
+        "outputs"
+    ] = contract["workflow"]["input_schema"]
     contract["nodes"][0]["inputs"] = {
         "value": {"from": "$workflow.input.segments.0.description"}
     }
@@ -422,6 +516,9 @@ def test_workflow_input_reference_to_unknown_array_item_field_is_rejected() -> N
     registry = _registry()
     contract = _two_node_contract()
     contract["workflow"]["input_schema"] = _array_workflow_input_schema()
+    next(node for node in contract["nodes"] if node["id"] == "collect_workflow_input")[
+        "outputs"
+    ] = contract["workflow"]["input_schema"]
     contract["nodes"][0]["inputs"] = {
         "value": {"from": "$workflow.input.segments.0.missing"}
     }
@@ -446,7 +543,7 @@ def test_edge_condition_path_referencing_downstream_node_is_rejected() -> None:
 def test_edge_condition_path_referencing_unknown_output_field_is_rejected() -> None:
     registry = _registry()
     contract = _two_node_contract()
-    contract["edges"][1]["when"] = {"path": "$nodes.a.output.missing", "equals": "yes"}
+    contract["edges"][2]["when"] = {"path": "$nodes.a.output.missing", "equals": "yes"}
 
     with pytest.raises(ValidationError) as exc_info:
         validate_workflow_contract(contract, registry)
@@ -527,8 +624,7 @@ class PlainChoiceProbeNode(BaseNode):
 
 
 def test_workflow_node_ui_choice_control_is_accepted() -> None:
-    registry = NodeRegistry()
-    registry.register(EchoToolNode())
+    registry = _registry()
     registry.register(SystemUserChoiceNode())
     contract = _image_choice_contract()
 
@@ -536,8 +632,7 @@ def test_workflow_node_ui_choice_control_is_accepted() -> None:
 
 
 def test_workflow_node_ui_unknown_control_is_rejected() -> None:
-    registry = NodeRegistry()
-    registry.register(EchoToolNode())
+    registry = _registry()
     registry.register(SystemUserChoiceNode())
     contract = _image_choice_contract()
     choose_node = next(node for node in contract["nodes"] if node["id"] == "choose_image")
@@ -550,8 +645,7 @@ def test_workflow_node_ui_unknown_control_is_rejected() -> None:
 
 
 def test_workflow_node_ui_missing_binding_is_rejected() -> None:
-    registry = NodeRegistry()
-    registry.register(EchoToolNode())
+    registry = _registry()
     registry.register(PlainChoiceProbeNode())
     contract = _image_choice_contract(choice_ref="test.plain_choice_probe.v1")
     choose_node = next(node for node in contract["nodes"] if node["id"] == "choose_image")
@@ -564,8 +658,7 @@ def test_workflow_node_ui_missing_binding_is_rejected() -> None:
 
 
 def test_workflow_node_ui_binding_to_non_array_candidates_is_rejected() -> None:
-    registry = NodeRegistry()
-    registry.register(EchoToolNode())
+    registry = _registry()
     registry.register(BadChoiceInputProbeNode())
     contract = _image_choice_contract(choice_ref="test.bad_choice_input_probe.v1")
 
@@ -576,8 +669,7 @@ def test_workflow_node_ui_binding_to_non_array_candidates_is_rejected() -> None:
 
 
 def test_workflow_node_ui_binding_to_missing_image_field_is_rejected() -> None:
-    registry = NodeRegistry()
-    registry.register(EchoToolNode())
+    registry = _registry()
     registry.register(SystemUserChoiceNode())
     contract = _image_choice_contract()
     choose_node = next(node for node in contract["nodes"] if node["id"] == "choose_image")
@@ -591,8 +683,9 @@ def test_workflow_node_ui_binding_to_missing_image_field_is_rejected() -> None:
 
 def test_workflow_node_ui_can_bind_waiting_metadata_for_compound_node() -> None:
     registry = NodeRegistry()
+    registry.register(WorkflowInputNode())
     registry.register(MetadataChoiceProbeNode())
-    contract = {
+    contract = _with_workflow_input_node({
         "workflow": {
             "id": "compound-choice",
             "version": "1.0.0",
@@ -638,7 +731,7 @@ def test_workflow_node_ui_can_bind_waiting_metadata_for_compound_node() -> None:
             {"from": "START", "to": "generate_and_choose"},
             {"from": "generate_and_choose", "to": "END"},
         ],
-    }
+    })
 
     validate_workflow_contract(contract, registry)
 
@@ -794,7 +887,7 @@ def test_load_workflow_file_rejects_yaml_list(tmp_path) -> None:
 
 
 def _valid_contract() -> dict:
-    return {
+    return _with_workflow_input_node({
         "workflow": {
             "id": "echo",
             "version": "1.0.0",
@@ -811,11 +904,11 @@ def _valid_contract() -> dict:
             }
         ],
         "edges": [{"from": "START", "to": "echo"}, {"from": "echo", "to": "END"}],
-    }
+    })
 
 
 def _two_node_contract() -> dict:
-    return {
+    return _with_workflow_input_node({
         "workflow": {
             "id": "echo",
             "version": "1.0.0",
@@ -842,11 +935,11 @@ def _two_node_contract() -> dict:
             {"from": "a", "to": "b"},
             {"from": "b", "to": "END"},
         ],
-    }
+    })
 
 
 def _parallel_join_contract() -> dict:
-    return {
+    return _with_workflow_input_node({
         "workflow": {
             "id": "parallel_join",
             "version": "1.0.0",
@@ -884,7 +977,35 @@ def _parallel_join_contract() -> dict:
             {"from": "b", "to": "join"},
             {"from": "join", "to": "END"},
         ],
-    }
+    })
+
+
+def _with_workflow_input_node(contract: dict) -> dict:
+    input_schema = contract["workflow"].get("input_schema", {})
+    if not input_schema.get("properties"):
+        return contract
+    start_targets = [edge["to"] for edge in contract["edges"] if edge["from"] == "START"]
+    contract["nodes"].append(
+        {
+            "id": "collect_workflow_input",
+            "ref": "system.workflow_input.v1",
+            "inputs": {},
+            "outputs": input_schema,
+        }
+    )
+    contract["edges"] = [
+        {"from": "START", "to": "collect_workflow_input"},
+        *[
+            (
+                {"from": "collect_workflow_input", "to": edge["to"]}
+                if edge["from"] == "START"
+                else edge
+            )
+            for edge in contract["edges"]
+        ],
+    ]
+    assert start_targets
+    return contract
 
 
 def _output_schema() -> dict:
@@ -953,7 +1074,7 @@ def _image_generation_output_schema() -> dict:
 
 
 def _image_choice_contract(*, choice_ref: str = "system.user_choice.v1") -> dict:
-    return {
+    return _with_workflow_input_node({
         "workflow": {
             "id": "image-choice",
             "version": "1.0.0",
@@ -1006,11 +1127,12 @@ def _image_choice_contract(*, choice_ref: str = "system.user_choice.v1") -> dict
             {"from": "generate_images", "to": "choose_image"},
             {"from": "choose_image", "to": "END"},
         ],
-    }
+    })
 
 
 def _registry() -> NodeRegistry:
     registry = NodeRegistry()
+    registry.register(WorkflowInputNode())
     registry.register(EchoToolNode())
     return registry
 
@@ -1029,6 +1151,14 @@ workflow:
       topic:
         type: string
 nodes:
+  - id: collect_workflow_input
+    ref: system.workflow_input.v1
+    inputs: {{}}
+    outputs:
+      type: object
+      properties:
+        topic:
+          type: string
   - id: echo
     ref: tool.echo.v1
     inputs:
@@ -1041,6 +1171,8 @@ nodes:
           type: string
 edges:
   - from: START
+    to: collect_workflow_input
+  - from: collect_workflow_input
     to: echo
   - from: echo
     to: END

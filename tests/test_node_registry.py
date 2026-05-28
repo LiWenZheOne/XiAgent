@@ -224,12 +224,19 @@ async def test_workflow_input_node_waits_with_output_schema_metadata() -> None:
     )
 
     result = await WorkflowInputNode().run(ctx, {})
+    descriptor = WorkflowInputNode().describe()
 
     assert result.status == "waiting"
     assert result.output == {}
+    assert descriptor.ui_defaults["controls"]["interaction"] == {
+        "control_id": "ui.input.schema_form.v1",
+        "variant": "default",
+        "mode": "input",
+    }
     assert result.metadata["input_schema"] == output_schema
     assert result.metadata["title"] == "填写运行输入"
     assert result.metadata["description"] == "提供图生图参数"
+    assert result.metadata["requested_inputs"] == {}
 
 
 def test_build_node_registry_uses_settings_deepseek_model(test_settings) -> None:

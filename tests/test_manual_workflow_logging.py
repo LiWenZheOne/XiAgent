@@ -23,13 +23,27 @@ def _echo_contract() -> dict[str, Any]:
         },
         "nodes": [
             {
+                "id": "collect_workflow_input",
+                "ref": "system.workflow_input.v1",
+                "inputs": {},
+                "outputs": {
+                    "type": "object",
+                    "required": ["topic"],
+                    "properties": {"topic": {"type": "string"}},
+                },
+            },
+            {
                 "id": "echo",
                 "ref": "tool.echo.v1",
                 "inputs": {"topic": {"from": "$workflow.input.topic"}},
                 "outputs": {"type": "object"},
             }
         ],
-        "edges": [{"from": "START", "to": "echo"}, {"from": "echo", "to": "END"}],
+        "edges": [
+            {"from": "START", "to": "collect_workflow_input"},
+            {"from": "collect_workflow_input", "to": "echo"},
+            {"from": "echo", "to": "END"},
+        ],
     }
 
 
@@ -116,13 +130,28 @@ def test_logged_echo_workflow_process(test_settings) -> None:
                 json={
                     "project_id": project_id,
                     "contract": contract,
-                    "input_data": {"topic": "观察一次完整工作流执行过程"},
                 },
             ),
             step=7,
             title="创建并执行工作流任务",
         )
-        assert task["status"] == "succeeded"
+        assert task["status"] == "waiting"
+        assert "collect_workflow_input" in task["current_view"]["active_node_outputs"]
+
+        resumed = _assert_ok(
+            client.post(
+                f"/api/tasks/{task['task_id']}/interactions",
+                headers=headers,
+                json={
+                    "project_id": project_id,
+                    "node_id": "collect_workflow_input",
+                    "output": {"topic": "观察一次完整工作流执行过程"},
+                },
+            ),
+            step=8,
+            title="提交起始输入节点",
+        )
+        assert resumed["status"] == "succeeded"
 
         detail = _assert_ok(
             client.get(
@@ -130,22 +159,31 @@ def test_logged_echo_workflow_process(test_settings) -> None:
                 headers=headers,
                 params={"project_id": project_id},
             ),
-            step=8,
+            step=9,
             title="读取任务完整状态",
         )
 
-    _log_step(9, "任务事件时间线", detail["events"])
-    _log_step(10, "节点执行快照", detail["node_executions"])
+    _log_step(10, "任务事件时间线", detail["events"])
+    _log_step(11, "节点执行快照", detail["node_executions"])
 
     assert detail["task"]["status"] == "succeeded"
-    assert detail["node_executions"][0]["node_id"] == "echo"
-    assert detail["node_executions"][0]["status"] == "succeeded"
-    assert detail["node_executions"][0]["output_snapshot"] == {
+    assert [execution["node_id"] for execution in detail["node_executions"]] == [
+        "collect_workflow_input",
+        "echo",
+    ]
+    assert detail["node_executions"][1]["status"] == "succeeded"
+    assert detail["node_executions"][1]["output_snapshot"] == {
         "echo": {"topic": "观察一次完整工作流执行过程"}
     }
     assert [event["event_type"] for event in detail["events"]] == [
         "task_created",
         "task_started",
+        "node_started",
+        "node_waiting",
+        "human_input_requested",
+        "task_waiting",
+        "task_resumed",
+        "node_succeeded",
         "node_started",
         "node_succeeded",
         "task_succeeded",

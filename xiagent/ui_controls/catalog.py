@@ -147,6 +147,48 @@ def build_builtin_ui_control_catalog() -> UiControlCatalog:
                 description="人工审批交互控件。",
             ),
             UiControlDescriptor(
+                control_id="ui.input.schema_form.v1",
+                version="1.0.0",
+                name="Schema Input Form",
+                kind="input",
+                tags=("schema", "input", "form", "interactive"),
+                variants=(
+                    UiControlVariant(
+                        name="default",
+                        label="通用 schema 输入表单",
+                        modes=("input",),
+                        submit_schema={"type": "object", "additionalProperties": True},
+                    ),
+                ),
+                description="在输入节点中按 schema 收集用户提交的结构化参数。",
+            ),
+            UiControlDescriptor(
+                control_id="ui.input.asset_image_picker.v1",
+                version="1.0.0",
+                name="Asset Image Picker",
+                kind="input",
+                tags=("asset", "image", "picker", "upload", "single", "multiple"),
+                variants=(
+                    UiControlVariant(
+                        name="thumbnails",
+                        label="缩略图资产图片选择",
+                        modes=("input", "readonly"),
+                        submit_schema={
+                            "type": "object",
+                            "required": ["value"],
+                            "properties": {
+                                "value": {
+                                    "type": "array",
+                                    "items": {"type": "string", "minLength": 1},
+                                }
+                            },
+                            "additionalProperties": False,
+                        },
+                    ),
+                ),
+                description="从资产库选择或上传图片，最终输出图片 URL 数组。",
+            ),
+            UiControlDescriptor(
                 control_id="ui.fallback.schema_form.v1",
                 version="1.0.0",
                 name="Schema Form",

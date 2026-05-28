@@ -17,6 +17,7 @@ from xiagent.nodes.ai.parallel_deepseek_structured_json import (
 from xiagent.nodes.ai.runninghub_image import RunningHubImageToImageNode
 from xiagent.nodes.registry import NodeRegistry
 from xiagent.nodes.system.human_approval import HumanApprovalNode
+from xiagent.nodes.system.workflow_input import WorkflowInputNode
 from xiagent.nodes.tools.asset_lookup import AssetLookupNode
 from xiagent.nodes.tools.create_text_asset import CreateTextAssetNode
 from xiagent.nodes.tools.enrich_characters import EnrichCharactersNode
@@ -62,6 +63,7 @@ def test_asset_catalog_workflow_contract_structure(test_settings) -> None:
 
     nodes_by_id = {node["id"]: node for node in contract["nodes"]}
     assert list(nodes_by_id) == [
+        "collect_workflow_input",
         "extract_characters",
         "lookup_existing_assets",
         "match_by_name",
@@ -75,6 +77,7 @@ def test_asset_catalog_workflow_contract_structure(test_settings) -> None:
         "upload_images",
     ]
     assert {node_id: node["ref"] for node_id, node in nodes_by_id.items()} == {
+        "collect_workflow_input": "system.workflow_input.v1",
         "extract_characters": "ai.deepseek_structured_json.v1",
         "lookup_existing_assets": "tool.asset_lookup.v1",
         "match_by_name": "tool.asset_lookup.v1",
@@ -111,7 +114,8 @@ def test_asset_catalog_workflow_has_conditional_edges(test_settings) -> None:
     } in conditional_edges
 
     assert unconditional_edges == [
-        {"from": "START", "to": "extract_characters"},
+        {"from": "START", "to": "collect_workflow_input"},
+        {"from": "collect_workflow_input", "to": "extract_characters"},
         {"from": "extract_characters", "to": "lookup_existing_assets"},
         {"from": "lookup_existing_assets", "to": "match_by_name"},
         {"from": "match_by_name", "to": "semantic_match_characters"},
@@ -472,6 +476,7 @@ class FakeAssetCatalogRouter(ChatModelRouter):
 
 def _asset_catalog_registry(router: FakeAssetCatalogRouter) -> NodeRegistry:
     registry = NodeRegistry()
+    registry.register(WorkflowInputNode())
     registry.register(HumanApprovalNode())
     registry.register(AssetLookupNode())
     registry.register(CreateTextAssetNode())

@@ -560,6 +560,140 @@ dd {
   height: auto;
 }
 
+.workflow-field-summary {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-soft);
+}
+
+.workflow-field-summary span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.schema-form-control {
+  align-items: stretch;
+}
+
+.schema-form-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.selected-thumbnails {
+  display: flex;
+  max-height: 82px;
+  gap: 8px;
+  overflow: hidden;
+}
+
+.selected-thumbnails.expanded {
+  max-height: none;
+  flex-wrap: wrap;
+}
+
+.selected-thumbnail {
+  width: 72px;
+  height: 72px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.selected-thumbnail img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 6px;
+}
+
+.asset-picker-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.modal-scrim {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: rgb(15 23 42 / 0.46);
+}
+
+.asset-picker-dialog,
+.asset-preview-dialog {
+  position: relative;
+  z-index: 1;
+  width: min(980px, 100%);
+  max-height: min(760px, 92vh);
+  overflow: auto;
+  padding: 18px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: 0 24px 60px rgb(15 23 42 / 0.24);
+}
+
+.asset-preview-dialog {
+  width: min(860px, 100%);
+  display: grid;
+  gap: 12px;
+}
+
+.asset-preview-dialog img {
+  width: 100%;
+  max-height: 72vh;
+  object-fit: contain;
+}
+
+.asset-picker-header,
+.asset-picker-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.asset-picker-body {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.asset-picker-tree,
+.asset-picker-results,
+.asset-upload-panel {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.asset-picker-tree button {
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-soft);
+  text-align: left;
+}
+
+.asset-picker-tree button.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.asset-picker-footer {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
 .task-summary-panel,
 .node-header {
   display: flex;

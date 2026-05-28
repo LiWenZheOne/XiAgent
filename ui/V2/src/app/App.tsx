@@ -35,7 +35,6 @@ import {
   statusTone,
   taskTime,
   taskTitle,
-  type SchemaField,
 } from "../utils/display";
 
 type Route = "workbench" | "assets" | "projects" | "controls";
@@ -450,7 +449,7 @@ function WorkbenchPage({
           </div>
           <button className={creatingTask ? "task-row create active" : "task-row create"} type="button" onClick={onCreateTask}>
             <strong>创建任务</strong>
-            <span>选择工作流并填写运行输入</span>
+            <span>选择工作流并创建任务</span>
           </button>
           {taskLoading ? <p className="muted">正在加载任务...</p> : null}
           {taskError ? <p className="form-error">{taskError}</p> : null}
@@ -524,8 +523,6 @@ function WorkbenchPage({
 function CreateTaskPanel({ project, onTaskCreated }: { project: ProjectRecord; onTaskCreated: (task: TaskRecord) => void }) {
   const [templates, setTemplates] = useState<WorkflowTemplate[]>([]);
   const [selectedWorkflowId, setSelectedWorkflowId] = useState("");
-  const [values, setValues] = useState<Record<string, string | boolean | string[]>>({});
-  const [imageAssets, setImageAssets] = useState<AssetRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -534,17 +531,12 @@ function CreateTaskPanel({ project, onTaskCreated }: { project: ProjectRecord; o
     let active = true;
     setLoading(true);
     setError("");
-    Promise.all([
-      listWorkflows(project.project_id),
-      searchAssets({ scope: "combined", project_id: project.project_id, mime_type: "image/*" }),
-    ])
-      .then(([workflowItems, assetItems]) => {
+    listWorkflows(project.project_id)
+      .then((workflowItems) => {
         if (!active) return;
         const nextTemplates = workflowItems.map(workflowToTemplate);
         setTemplates(nextTemplates);
-        setImageAssets(assetItems.filter((asset) => asset.metadata.public_url));
         setSelectedWorkflowId(nextTemplates[0]?.id ?? "");
-        setValues(initialValues(nextTemplates[0]?.inputSchema));
         if (!nextTemplates.length) setError("后端没有返回可运行的工作流。");
       })
       .catch((nextError) => {
@@ -562,26 +554,18 @@ function CreateTaskPanel({ project, onTaskCreated }: { project: ProjectRecord; o
   const fields = useMemo(() => buildSchemaFields(selectedTemplate?.inputSchema), [selectedTemplate]);
 
   function handleSelectWorkflow(workflowId: string) {
-    const template = templates.find((item) => item.id === workflowId);
     setSelectedWorkflowId(workflowId);
-    setValues(initialValues(template?.inputSchema));
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selectedTemplate) return;
-    const validation = validateFields(fields, values);
-    if (validation) {
-      setError(validation);
-      return;
-    }
     setSaving(true);
     setError("");
     try {
       const task = await createTask({
         project_id: project.project_id,
         contract: selectedTemplate.contract,
-        input_data: buildInputData(fields, values),
       });
       onTaskCreated(task);
     } catch (nextError) {
@@ -597,11 +581,11 @@ function CreateTaskPanel({ project, onTaskCreated }: { project: ProjectRecord; o
         <div>
           <p className="eyebrow">{project.name} / 创建任务</p>
           <h1>新建任务</h1>
-          <p>选择后端工作流模板，填写用户输入，系统会保存工作流快照并进入运行详情。</p>
+          <p>选择后端工作流模板，查看启动说明和输入项摘要。任务创建后进入详情，由第一个输入节点收集参数。</p>
         </div>
       </div>
 
-      {loading ? <p className="muted">正在读取工作流和可用图片资产...</p> : null}
+      {loading ? <p className="muted">正在读取工作流模板...</p> : null}
       {error ? <p className="form-error">{error}</p> : null}
 
       {!loading && selectedTemplate ? (
@@ -623,17 +607,15 @@ function CreateTaskPanel({ project, onTaskCreated }: { project: ProjectRecord; o
           </aside>
 
           <section className="workflow-form">
-            <h2>运行输入</h2>
-            {fields.length === 0 ? <p className="empty-box">这个工作流不需要初始输入。</p> : null}
+            <h2>启动信息</h2>
+            {fields.length === 0 ? <p className="empty-box">这个工作流不需要起始输入。</p> : null}
             {fields.map((field) => (
-              <WorkflowInputField
-                field={field}
-                imageAssets={imageAssets}
-                key={field.key}
-                value={values[field.key]}
-                onChange={(value) => setValues((current) => ({ ...current, [field.key]: value }))}
-              />
+              <div className="workflow-field-summary" key={field.key}>
+                <strong>{field.label}{field.required ? " *" : ""}</strong>
+                <span>{field.description || field.type}</span>
+              </div>
             ))}
+            {fields.length ? <p className="muted">这些参数将在任务详情的第一个输入节点中填写。</p> : null}
             <button className="primary-button full-width" disabled={saving} type="submit">
               {saving ? "创建中" : "创建并运行"}
             </button>
@@ -641,100 +623,6 @@ function CreateTaskPanel({ project, onTaskCreated }: { project: ProjectRecord; o
         </form>
       ) : null}
     </section>
-  );
-}
-
-function WorkflowInputField({
-  field,
-  value,
-  imageAssets,
-  onChange,
-}: {
-  field: SchemaField;
-  value: string | boolean | string[] | undefined;
-  imageAssets: AssetRecord[];
-  onChange: (value: string | boolean | string[]) => void;
-}) {
-  if (field.control === "asset_images") {
-    const selected = Array.isArray(value) ? value : value ? [String(value)] : [];
-    return (
-      <fieldset className="asset-choice-field">
-        <legend>{field.label}{field.required ? " *" : ""}</legend>
-        {field.description ? <p>{field.description}</p> : null}
-        {imageAssets.length === 0 ? <p className="muted">当前项目没有已发布图片资产，也可以粘贴公开图片地址。</p> : null}
-        <div className="asset-check-grid">
-          {imageAssets.map((asset) => {
-            const url = asset.metadata.public_url ?? "";
-            const checked = selected.includes(url);
-            return (
-              <label className={checked ? "asset-check-card active" : "asset-check-card"} key={asset.asset_id}>
-                <input
-                  aria-label={`选择资产 ${asset.name}`}
-                  checked={checked}
-                  type="checkbox"
-                  onChange={(event) => {
-                    const next = event.target.checked ? [...selected, url] : selected.filter((item) => item !== url);
-                    onChange(field.type === "string" ? next[0] ?? "" : next);
-                  }}
-                />
-                <img src={url} alt={asset.name} />
-                <span>{asset.name}</span>
-              </label>
-            );
-          })}
-        </div>
-        <label className="compact-field">
-          <span>公开图片地址</span>
-          <input
-            value={Array.isArray(value) ? "" : String(value ?? "")}
-            placeholder="https://..."
-            onChange={(event) => onChange(field.type === "array" ? splitLines(event.target.value) : event.target.value)}
-          />
-        </label>
-      </fieldset>
-    );
-  }
-
-  if (field.control === "select") {
-    return (
-      <label className="form-field">
-        <span>{field.label}{field.required ? " *" : ""}</span>
-        <select value={String(value ?? "")} onChange={(event) => onChange(event.target.value)} aria-label={field.label}>
-          <option value="">请选择</option>
-          {field.enumValues?.map((item) => (
-            <option key={item} value={item}>
-              {item}
-            </option>
-          ))}
-        </select>
-      </label>
-    );
-  }
-
-  if (field.control === "checkbox") {
-    return (
-      <label className="check-field">
-        <input checked={Boolean(value)} type="checkbox" onChange={(event) => onChange(event.target.checked)} />
-        <span>{field.label}{field.required ? " *" : ""}</span>
-      </label>
-    );
-  }
-
-  return (
-    <label className="form-field">
-      <span>{field.label}{field.required ? " *" : ""}</span>
-      {field.control === "textarea" ? (
-        <textarea aria-label={field.label} value={String(value ?? "")} onChange={(event) => onChange(event.target.value)} />
-      ) : (
-        <input
-          aria-label={field.label}
-          type={field.control === "number" ? "number" : "text"}
-          value={String(value ?? "")}
-          onChange={(event) => onChange(event.target.value)}
-        />
-      )}
-      {field.description ? <small>{field.description}</small> : null}
-    </label>
   );
 }
 
@@ -830,6 +718,7 @@ function TaskDetailPanel({
                 index={index}
                 key={node.node_execution_id ?? `${node.node_id}-${index}`}
                 node={node}
+                projectId={projectId}
                 snapshot={detail.workflow_snapshot}
                 onInteraction={handleInteraction}
                 onRerun={handleRerun}
@@ -847,6 +736,7 @@ function NodeExecutionCard({
   node,
   index,
   events,
+  projectId,
   snapshot,
   onInteraction,
   onRerun,
@@ -854,6 +744,7 @@ function NodeExecutionCard({
   node: TaskNodeExecution;
   index: number;
   events: TaskEvent[];
+  projectId: string;
   snapshot?: WorkflowSnapshot | null;
   onInteraction: (nodeId: string, output: Record<string, unknown>) => Promise<void>;
   onRerun: (nodeId: string) => Promise<void>;
@@ -908,6 +799,7 @@ function NodeExecutionCard({
             imageAltPrefix={`${displayTitle} 输入图片`}
             node={node}
             nodeSpec={nodeSpec}
+            projectId={projectId}
             slot="input"
             snapshot={snapshot}
             title="输入"
@@ -919,6 +811,7 @@ function NodeExecutionCard({
             imageAltPrefix={`${displayTitle} 输出图片`}
             node={node}
             nodeSpec={nodeSpec}
+            projectId={projectId}
             slot="output"
             snapshot={snapshot}
             title={node.error ? "错误" : "输出"}
@@ -932,6 +825,7 @@ function NodeExecutionCard({
             config={interactionConfig}
             node={node}
             nodeSpec={nodeSpec}
+            projectId={projectId}
             snapshot={snapshot}
             onSubmit={(output) => withBusy(() => onInteraction(node.node_id, output))}
           />
@@ -963,6 +857,7 @@ function NodeDataSection({
   value,
   node,
   nodeSpec,
+  projectId,
   snapshot,
   config,
   slot,
@@ -973,6 +868,7 @@ function NodeDataSection({
   value: unknown;
   node: TaskNodeExecution;
   nodeSpec?: WorkflowNodeSpec;
+  projectId?: string;
   snapshot?: WorkflowSnapshot | null;
   config: ReturnType<typeof resolveNodeControlConfig>;
   slot: "input" | "output";
@@ -990,6 +886,7 @@ function NodeDataSection({
         imageAltPrefix={imageAltPrefix}
         node={node}
         nodeSpec={nodeSpec}
+        projectId={projectId}
         slot={slot}
         snapshot={snapshot}
         title={title}
@@ -1458,47 +1355,6 @@ function workflowToTemplate(item: WorkflowListItem): WorkflowTemplate {
     contract: { workflow: item.workflow, nodes: item.nodes, edges: item.edges ?? [] },
     nodes: item.nodes.map((node) => node.id),
   };
-}
-
-function initialValues(schema?: JsonSchema): Record<string, string | boolean | string[]> {
-  const values: Record<string, string | boolean | string[]> = {};
-  for (const field of buildSchemaFields(schema)) {
-    if (field.control === "checkbox") values[field.key] = Boolean(field.defaultValue);
-    else if (field.control === "asset_images" && field.type === "array") values[field.key] = [];
-    else values[field.key] = field.defaultValue === undefined ? "" : String(field.defaultValue);
-  }
-  return values;
-}
-
-function validateFields(fields: SchemaField[], values: Record<string, string | boolean | string[]>): string {
-  for (const field of fields) {
-    const value = values[field.key];
-    const emptyArray = Array.isArray(value) && value.length === 0;
-    if (field.required && (value === undefined || value === "" || emptyArray)) {
-      return `请填写${field.label}。`;
-    }
-  }
-  return "";
-}
-
-function buildInputData(fields: SchemaField[], values: Record<string, string | boolean | string[]>): Record<string, unknown> {
-  const data: Record<string, unknown> = {};
-  for (const field of fields) {
-    const value = values[field.key];
-    if (field.control === "asset_images") {
-      if (field.type === "string") data[field.key] = Array.isArray(value) ? value[0] ?? "" : value ?? "";
-      else data[field.key] = Array.isArray(value) ? value : splitLines(String(value ?? ""));
-    } else if (field.type === "number" || field.type === "integer") {
-      data[field.key] = value === "" || value === undefined ? null : Number(value);
-    } else if (field.type === "boolean") {
-      data[field.key] = Boolean(value);
-    } else if (field.type === "array") {
-      data[field.key] = Array.isArray(value) ? value : splitLines(String(value ?? ""));
-    } else {
-      data[field.key] = value ?? "";
-    }
-  }
-  return data;
 }
 
 function orderNodes(detail: TaskDetailResponse | null): TaskNodeExecution[] {

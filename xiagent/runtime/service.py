@@ -61,7 +61,16 @@ class SqliteRuntimeService:
         )
         validate_workflow_contract(contract, self._node_registry)
         _validate_workflow_project_scope(contract["workflow"], project_id=project_id)
-        validate_json_value(contract["workflow"]["input_schema"], input_data)
+        has_workflow_input_node = _has_workflow_input_node(contract)
+        if has_workflow_input_node and input_data:
+            raise ValidationError(
+                code="workflow_input_must_use_start_node",
+                message="Workflow input must be submitted through the start input node",
+                details={"workflow_id": contract["workflow"]["id"]},
+            )
+        if not has_workflow_input_node:
+            validate_json_value(contract["workflow"]["input_schema"], input_data)
+        stored_input = {} if has_workflow_input_node else input_data
 
         workflow = contract["workflow"]
         now = _utc_now()
@@ -89,7 +98,7 @@ class SqliteRuntimeService:
                     workflow["version"],
                     user_id,
                     project_id,
-                    dump_json(input_data),
+                    dump_json(stored_input),
                     "running",
                     dump_json(build_current_view("running", [])),
                     now,
@@ -119,7 +128,7 @@ class SqliteRuntimeService:
                 user_id=user_id,
                 project_id=project_id,
                 contract=contract,
-                workflow_input=input_data,
+                workflow_input=stored_input,
                 start_node_id=_START,
             )
         except XiAgentError as exc:
@@ -163,7 +172,12 @@ class SqliteRuntimeService:
             )
 
         node_def = _node_by_id(contract, node_id)
-        validate_json_value(node_def["outputs"], output)
+        is_workflow_input_node = _is_workflow_input_node(node_def)
+        if is_workflow_input_node:
+            validate_json_value(contract["workflow"]["input_schema"], output)
+        else:
+            validate_json_value(node_def["outputs"], output)
+        next_workflow_input = output if is_workflow_input_node else task.input_data
         now = _utc_now()
         async with connect_db(self._database_path) as db:
             cursor = await db.execute(
@@ -188,14 +202,30 @@ class SqliteRuntimeService:
                 node_id=node_id,
                 status="succeeded",
             )
-            await db.execute(
-                """
-                update tasks
-                set status = ?, current_view_json = ?, updated_at = ?
-                where task_id = ?
-                """,
-                ("running", dump_json(task.current_view | {"status": "running"}), now, task_id),
-            )
+            if is_workflow_input_node:
+                await db.execute(
+                    """
+                    update tasks
+                    set input_json = ?, status = ?, current_view_json = ?, updated_at = ?
+                    where task_id = ?
+                    """,
+                    (
+                        dump_json(next_workflow_input),
+                        "running",
+                        dump_json(task.current_view | {"status": "running"}),
+                        now,
+                        task_id,
+                    ),
+                )
+            else:
+                await db.execute(
+                    """
+                    update tasks
+                    set status = ?, current_view_json = ?, updated_at = ?
+                    where task_id = ?
+                    """,
+                    ("running", dump_json(task.current_view | {"status": "running"}), now, task_id),
+                )
             await insert_event(
                 db,
                 task_id=task_id,
@@ -220,7 +250,7 @@ class SqliteRuntimeService:
                 user_id=user_id,
                 project_id=project_id,
                 contract=contract,
-                workflow_input=task.input_data,
+                workflow_input=next_workflow_input,
                 start_node_id=node_id,
             )
         except XiAgentError as exc:
@@ -911,6 +941,14 @@ def _validate_workflow_project_scope(workflow: dict[str, Any], *, project_id: st
             message="Workflow project_id does not match the task project scope",
             details={"contract_project_id": contract_project_id, "project_id": project_id},
         )
+
+
+def _has_workflow_input_node(contract: dict[str, Any]) -> bool:
+    return any(_is_workflow_input_node(node) for node in contract.get("nodes", []))
+
+
+def _is_workflow_input_node(node: Mapping[str, Any]) -> bool:
+    return node.get("ref") == "system.workflow_input.v1"
 
 
 def _node_by_id(contract: dict[str, Any], node_id: str) -> dict[str, Any]:

@@ -4,7 +4,7 @@ workflow:
   scope: global
   name: Storyboard Generation
   description: Generate one storyboard image prompt from the first script segment.
-  input_schema:
+  input_schema: &workflow_input_schema
     type: object
     required: ["script"]
     properties:
@@ -59,6 +59,20 @@ workflow:
               image_url_path: url
 
 nodes:
+  - id: collect_workflow_input
+    ref: system.workflow_input.v1
+    inputs: {}
+    outputs: *workflow_input_schema
+    config:
+      title: 填写剧本输入
+      description: 收集分镜生成所需的剧本文本。
+    ui:
+      controls:
+        interaction:
+          control_id: ui.input.schema_form.v1
+          variant: default
+          mode: input
+
   - id: split_script
     ref: tool.script_split.v1
     inputs:
@@ -517,6 +531,8 @@ nodes:
 
 edges:
   - from: START
+    to: collect_workflow_input
+  - from: collect_workflow_input
     to: split_script
   - from: split_script
     to: analyze_characters

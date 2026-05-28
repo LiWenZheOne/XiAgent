@@ -11,6 +11,7 @@ export const nodeUiRegistry: Record<string, NodeUiComponent> = {
   "ui.display.image_candidates.v1": ImageCandidatesControl,
   "ui.choice.image_three.v1": ImageChoiceThreeControl,
   "ui.interaction.approval.v1": ApprovalControl,
+  "ui.input.schema_form.v1": SchemaFormControl,
   "ui.fallback.schema_form.v1": SchemaFormControl,
 };
 

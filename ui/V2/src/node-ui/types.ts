@@ -10,6 +10,7 @@ export interface NodeUiControlProps {
   value?: unknown;
   title?: string;
   imageAltPrefix?: string;
+  projectId?: string;
   busy?: boolean;
   preview?: boolean;
   onSubmit?: (output: Record<string, unknown>) => void;

@@ -152,13 +152,17 @@ workflow:
   version: 1.0.0
   scope: global
   name: CLI Echo
-  input_schema:
+  input_schema: &workflow_input_schema
     type: object
     required: ["topic"]
     properties:
       topic:
         type: string
 nodes:
+  - id: collect_workflow_input
+    ref: system.workflow_input.v1
+    inputs: {{}}
+    outputs: *workflow_input_schema
   - id: echo
     ref: tool.echo.v1
     inputs:
@@ -168,6 +172,8 @@ nodes:
       type: object
 edges:
   - from: START
+    to: collect_workflow_input
+  - from: collect_workflow_input
     to: echo
   - from: echo
     to: END

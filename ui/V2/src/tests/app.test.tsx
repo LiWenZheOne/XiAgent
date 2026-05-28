@@ -20,6 +20,27 @@ const workflowContract = {
     },
   },
   nodes: [
+    {
+      id: "collect_workflow_input",
+      ref: "system.workflow_input.v1",
+      outputs: {
+        type: "object",
+        required: ["topic"],
+        properties: {
+          topic: { type: "string", title: "创作主题" },
+          image_urls: { type: "array", title: "参考图", items: { type: "string" } },
+        },
+      },
+      ui: {
+        controls: {
+          interaction: {
+            control_id: "ui.input.schema_form.v1",
+            variant: "default",
+            mode: "input",
+          },
+        },
+      },
+    },
     { id: "prepare_prompt", ref: "tools.storyboard_prompt.v1" },
     {
       id: "choose_image",
@@ -329,7 +350,7 @@ describe("XiAgent V2 app", () => {
     expect(screen.getByRole("combobox")).toHaveValue("global");
   });
 
-  it("creates tasks through a readable workflow form without showing JSON schema", async () => {
+  it("creates tasks from launch information and leaves workflow input to the first node", async () => {
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
     render(<App />);
     await login();
@@ -337,28 +358,25 @@ describe("XiAgent V2 app", () => {
     await userEvent.click(screen.getByRole("button", { name: "创建任务" }));
     await screen.findByRole("heading", { name: "新建任务" });
 
-    expect(screen.getByLabelText("创作主题")).toBeInTheDocument();
     await waitFor(() => {
       expect(fetchMock.mock.calls.some(([url]) => url === "/api/workflows?project_id=global")).toBe(true);
     });
     expect(screen.getByText(/RunningHub Text To Image Test/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "启动信息" })).toBeInTheDocument();
+    expect(screen.getByText(/创作主题/)).toBeInTheDocument();
+    expect(screen.getByText(/这些参数将在任务详情的第一个输入节点中填写/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("创作主题")).not.toBeInTheDocument();
     expect(screen.queryByText(/input_schema/)).not.toBeInTheDocument();
     expect(screen.queryByText(/\"type\"/)).not.toBeInTheDocument();
 
-    await userEvent.type(screen.getByLabelText("创作主题"), "雨夜城市");
-    await userEvent.click(screen.getByRole("checkbox", { name: "选择资产 参考图" }));
     await userEvent.click(screen.getByRole("button", { name: "创建并运行" }));
 
     await waitFor(() => {
       const post = fetchMock.mock.calls.find(([url, init]) => url === "/api/tasks" && init?.method === "POST");
       expect(post).toBeTruthy();
-      expect(JSON.parse(String(post?.[1]?.body))).toMatchObject({
-        project_id: "global",
-        input_data: {
-          topic: "雨夜城市",
-          image_urls: ["https://cdn.example.com/ref.png"],
-        },
-      });
+      const body = JSON.parse(String(post?.[1]?.body));
+      expect(body).toMatchObject({ project_id: "global" });
+      expect(body).not.toHaveProperty("input_data");
     });
     const detail = await screen.findByLabelText("任务运行详情");
     expect(detail).toBeInTheDocument();
@@ -388,16 +406,16 @@ describe("XiAgent V2 app", () => {
     });
 
     await userEvent.click(screen.getByRole("button", { name: /RunningHub Text To Image Test/ }));
-    await userEvent.type(screen.getByLabelText("提示词"), "蓝色机器人");
+    expect(screen.getByText(/提示词/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("提示词")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "创建并运行" }));
 
     await waitFor(() => {
       const post = [...fetchMock.mock.calls].reverse().find(([url, init]) => url === "/api/tasks" && init?.method === "POST");
       expect(post).toBeTruthy();
-      expect(JSON.parse(String(post?.[1]?.body))).toMatchObject({
-        project_id: "project-2",
-        input_data: { prompt: "蓝色机器人" },
-      });
+      const body = JSON.parse(String(post?.[1]?.body));
+      expect(body).toMatchObject({ project_id: "project-2" });
+      expect(body).not.toHaveProperty("input_data");
     });
   });
 

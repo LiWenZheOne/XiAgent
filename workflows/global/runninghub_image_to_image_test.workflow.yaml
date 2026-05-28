@@ -4,7 +4,7 @@ workflow:
   scope: global
   name: RunningHub 图生图调用测试
   description: 使用 RunningHub 图生图模型转换输入图片，并把结果 URL 暴露给测试运行器。
-  input_schema:
+  input_schema: &workflow_input_schema
     type: object
     required: ["prompt", "image_urls", "aspect_ratio", "resolution"]
     properties:
@@ -51,6 +51,29 @@ workflow:
               image_url_path: url
 
 nodes:
+  - id: collect_workflow_input
+    ref: system.workflow_input.v1
+    inputs: {}
+    outputs: *workflow_input_schema
+    config:
+      title: 填写运行输入
+      description: 从资产库选择参考图并填写 RunningHub 图生图调用参数。
+    ui:
+      controls:
+        interaction:
+          control_id: ui.input.schema_form.v1
+          variant: default
+          mode: input
+          options:
+            fields:
+              image_urls:
+                control_id: ui.input.asset_image_picker.v1
+                variant: thumbnails
+                mode: input
+                selection_mode: multiple
+                upload_scope: project
+                collapsed_rows: 1
+
   - id: transform_image
     ref: ai.runninghub_image_to_image.v1
     inputs:
@@ -95,6 +118,8 @@ nodes:
 
 edges:
   - from: START
+    to: collect_workflow_input
+  - from: collect_workflow_input
     to: transform_image
   - from: transform_image
     to: END
