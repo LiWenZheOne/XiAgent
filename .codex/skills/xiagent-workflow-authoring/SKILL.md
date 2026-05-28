@@ -7,21 +7,22 @@ description: Use when creating or modifying XiAgent workflow YAML/JSON contracts
 
 ## Overview
 
-把用户需求转成 XiAgent 工作流契约时，先匹配现有节点，再创建或修改 `workflows/global/*.workflow.yaml`。默认用 `WorkflowTestBuilder` 或 `python -m xiagent.workflows.testing_cli` 验证无 UI 执行体验。
+把用户需求转成 XiAgent 工作流契约时，先匹配现有节点和 UI 节点控件，再创建或修改 `workflows/global/*.workflow.yaml`。默认用 `WorkflowTestBuilder` 或 `python -m xiagent.workflows.testing_cli` 验证无 UI 执行体验。
 
 ## Core Workflow
 
 1. 先读项目约束：`AGENTS.md`、`workflows/AGENTS.md`、现有 `workflows/global/*.workflow.yaml`、`xiagent/nodes/**`、`tests/test_workflow_validator.py`、`tests/test_workflow_testing_*.py`。
-2. 从用户描述提炼工作流输入、目标输出、节点顺序、条件分支、人工交互、资产或图片输入输出。
-3. 写或改工作流前，先明确：需要新增哪些节点、可以复用哪些已有节点、使用哪些模型或模型节点、是否需要外部模型 API 或模型配置。
+2. 从用户描述提炼工作流输入、目标输出、节点顺序、条件分支、人工交互、目标 UI 展示、所需节点控件、资产或图片输入输出。
+3. 写或改工作流前，先明确：需要新增哪些节点、可以复用哪些已有节点、使用哪些模型或模型节点、需要哪些 UI 节点控件、控件是否已存在、是否需要外部模型 API 或模型配置。
 4. 查找可用节点：优先看 `xiagent.nodes.build_node_registry()` 注册了什么，再读各节点的 `NodeDescriptor`、输入输出 schema 和测试。不要凭空写不存在的 `ref`。
 5. 如果现有节点不足，立即暂停工作流落盘，列出缺失节点规格：建议 `ref`、职责、输入 schema、输出 schema、错误语义、是否访问资产、是否需要外部凭据、建议测试。然后建议使用 `$xiagent-node-authoring` 先补节点。
-6. 如果缺少模型 API、模型密钥或模型配置，必须暂停并让用户提供配置；不得用 mock、跳过或“假通过”替代真实验证。
-7. 节点能力满足后再创建或修改工作流。默认路径是 `workflows/global/<workflow-id>.workflow.yaml`，默认 `scope: global`，除非用户明确要求其他位置或 scope。
-8. 如果工作流需要定制 UI 展示，优先在工作流契约中声明 `workflow.ui` 和 `nodes[].ui`；不要把工作流特定展示塞进节点实现或节点默认 UI。
-9. 用现有加载与校验逻辑验证契约，不绕过运行时或注册表。至少覆盖 schema、节点 ref、边、条件分支、输入路径引用和 UI 控件绑定。
-10. 用工作流测试构建器验证执行：优先 `WorkflowTestBuilder`；CLI 场景用 `python -m xiagent.workflows.testing_cli <workflow>`。需要交互输入时使用 CLI 交互能力；有图片输出时使用 preview 或图片路径输出。
-11. 汇报时给出工作流文件、用到的节点、UI 控件配置、测试命令和结果；如果暂停在节点缺口、控件缺口或模型配置缺口，汇报缺口而不是提交半成品工作流。
+6. 如果首次需求方案确认时发现缺少对应 UI 节点控件，把控件新增或修改一并列入计划：建议 `control_id`、variant、mode、bindings、依赖的输出 schema、后端 manifest、V2 控件实现、预览/校验测试和目标工作流接入点。然后建议使用 `$xiagent-ui-control-library-authoring` 补控件，不要用虚构控件 ID 继续落工作流。
+7. 如果缺少模型 API、模型密钥或模型配置，必须暂停并让用户提供配置；不得用 mock、跳过或“假通过”替代真实验证。
+8. 节点能力和 UI 控件能力满足后再创建或修改工作流。默认路径是 `workflows/global/<workflow-id>.workflow.yaml`，默认 `scope: global`，除非用户明确要求其他位置或 scope。
+9. 如果工作流需要定制 UI 展示，优先在工作流契约中声明 `workflow.ui` 和 `nodes[].ui`；不要把工作流特定展示塞进节点实现或节点默认 UI。
+10. 用现有加载与校验逻辑验证契约，不绕过运行时或注册表。至少覆盖 schema、节点 ref、边、条件分支、输入路径引用和 UI 控件绑定。
+11. 用工作流测试构建器验证执行：优先 `WorkflowTestBuilder`；CLI 场景用 `python -m xiagent.workflows.testing_cli <workflow>`。需要交互输入时使用 CLI 交互能力；有图片输出时使用 preview 或图片路径输出。
+12. 汇报时给出工作流文件、用到的节点、UI 控件配置、测试命令和结果；如果暂停在节点缺口、控件缺口或模型配置缺口，汇报缺口而不是提交半成品工作流。
 
 ## Project Constraints
 
@@ -43,6 +44,7 @@ description: Use when creating or modifying XiAgent workflow YAML/JSON contracts
 ## UI Control Manifest Boundary
 
 - UI 控件规则以 `docs/design/2026-05-27-01-ui-control-manifest-design.md` 为准。
+- 第一轮需求方案确认必须核对目标体验需要的 UI 节点控件是否已经存在；缺控件时，把控件 manifest、后端暴露、V2 控件实现、绑定校验和测试纳入同一轮新增/修改计划。
 - 控件选择遵循工作流优先、节点默认保底：`nodes[].ui` 高于 `workflow.ui.defaults`，`workflow.ui.defaults` 高于 `NodeDescriptor.ui_defaults`，最后才使用系统 fallback。
 - 工作流可以分别指定 `controls.input`、`controls.output`、`controls.interaction`、`controls.detail`、`actions`、`sections` 和 `bindings`。只覆盖某一区域时，不应清空其他区域默认配置。
 - 新工作流需要定制展示时，优先在 `nodes[].ui` 指定 `control_id`、`variant`、`mode` 和 `bindings`；工作流级通用默认放在 `workflow.ui.defaults`。
@@ -68,6 +70,7 @@ description: Use when creating or modifying XiAgent workflow YAML/JSON contracts
 | 需要人工确认吗？ | 优先使用已有 human approval 节点和 CLI 交互。 |
 | 需要图片或文件吗？ | 通过资产服务和测试构建器的图片预览能力处理。 |
 | 缺节点吗？ | 停止创建工作流，给出节点规格，转 `$xiagent-node-authoring`。 |
+| 缺 UI 节点控件吗？ | 停止虚构控件配置，给出控件规格和接入计划，转 `$xiagent-ui-control-library-authoring`。 |
 
 ## Validation
 
@@ -91,6 +94,7 @@ workflows/global/run_deepseek_echo_test.bat --auto
 ## Common Mistakes
 
 - 直接写一个不存在的节点 `ref`：先暂停并补节点规格。
+- 第一轮方案只列节点缺口、不列 UI 控件缺口：必须同步检查控件库，缺控件时纳入同一计划。
 - 为了测试直接查 SQLite 或拼资产路径：使用 `WorkflowTestBuilder`、`RuntimeService` 和 `AssetService`。
 - 忘记工作流是 DAG：不要引入通用循环；需要循环能力时先提出引擎能力缺口。
 - 只校验 YAML 能读：还要跑构建器或 CLI，确认事件、快照和交互路径可用。

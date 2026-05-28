@@ -6,7 +6,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from xiagent.api.dependencies import ApiServices, get_services
+from xiagent.api.dependencies import ApiServices, get_current_user, get_services
+from xiagent.users.models import UserRecord
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -36,3 +37,10 @@ async def login(
         "access_token": services.issue_access_token(user_id=result.user.user_id),
         "token_type": "bearer",
     }
+
+
+@router.get("/me")
+async def current_user(
+    user: Annotated[UserRecord, Depends(get_current_user)],
+) -> dict:
+    return asdict(user)

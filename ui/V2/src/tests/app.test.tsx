@@ -61,7 +61,28 @@ const uiControlsResponse = {
       kind: "interaction",
       tags: ["image", "choice", "select_one", "candidates_3"],
       variants: [
-        { name: "equal_grid", label: "三图等宽", tags: [], modes: ["interactive"], required_bindings: [] },
+        {
+          name: "equal_grid",
+          label: "三图等宽",
+          tags: [],
+          modes: ["interactive"],
+          required_bindings: [
+            {
+              name: "items_path",
+              binding_kind: "schema_path",
+              accepted_sources: ["node.input", "node.output"],
+              schema_constraints: { type: "array", minItems: 1 },
+            },
+          ],
+          submit_schema: {
+            type: "object",
+            required: ["selected_id", "selected_item"],
+            properties: {
+              selected_id: { type: "string" },
+              selected_item: { type: "object" },
+            },
+          },
+        },
         { name: "hero_list", label: "首图大列表", tags: [], modes: ["interactive"], required_bindings: [] },
         { name: "hover_focus", label: "悬停放大", tags: [], modes: ["interactive"], required_bindings: [] },
       ],
@@ -342,6 +363,9 @@ describe("XiAgent V2 app", () => {
     const detail = await screen.findByLabelText("任务运行详情");
     expect(detail).toBeInTheDocument();
     expect(await within(detail).findByRole("heading", { name: "故事板生成", level: 1 })).toBeInTheDocument();
+    const context = document.querySelector(".context-panel") as HTMLElement;
+    expect(within(context).getByText("选择图片")).toBeInTheDocument();
+    expect(within(context).queryByText("未记录")).not.toBeInTheDocument();
   });
 
   it("switches task and workflow creation data to the selected project", async () => {
@@ -422,5 +446,10 @@ describe("XiAgent V2 app", () => {
     expect(await screen.findByRole("heading", { name: "控件库" })).toBeInTheDocument();
     expect(screen.getByText("ui.choice.image_three.v1")).toBeInTheDocument();
     expect(screen.getByText("悬停放大")).toBeInTheDocument();
+    expect(screen.getByText("items_path")).toBeInTheDocument();
+    expect(screen.getByText(/node\.input/)).toBeInTheDocument();
+    expect(screen.getByText(/minItems: 1/)).toBeInTheDocument();
+    expect(screen.getByText("selected_id")).toBeInTheDocument();
+    expect(screen.getByText("selected_item")).toBeInTheDocument();
   });
 });

@@ -196,7 +196,7 @@ export function nodeDisplayTitle(node: TaskNodeExecution, snapshot?: WorkflowSna
 export function nodeDisplayKind(node: TaskNodeExecution, snapshot?: WorkflowSnapshot | null): string {
   const spec = snapshot?.nodes?.find((item) => item.id === node.node_id);
   const outputKeys = schemaKeys(spec?.outputs);
-  if (isWaitingNode(node, snapshot)) {
+  if (isWaitingNode(node, snapshot) || isHumanInteractionRef(nodeRef(node, snapshot))) {
     if (outputKeys.includes("answer")) return "用户输入";
     if (outputKeys.includes("image_urls")) return "图片补充";
     if (outputKeys.some((key) => key.startsWith("selected_"))) return "用户选择";
@@ -234,6 +234,10 @@ function isGenericEnglishTitle(key: string, title: string): boolean {
 function readableEventType(type?: string): string {
   const label = statusLabel(type);
   return label.includes("_") ? "状态更新" : label;
+}
+
+function isHumanInteractionRef(ref: string): boolean {
+  return ref.includes("human_approval") || ref.includes("user_approval") || ref.includes("user_choice");
 }
 
 function controlForField(key: string, property: JsonSchema): FieldControl {

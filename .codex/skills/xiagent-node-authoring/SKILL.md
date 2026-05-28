@@ -7,20 +7,21 @@ description: Use when creating or modifying XiAgent BaseNode implementations, no
 
 ## Overview
 
-新增或修改节点时，先按需求检查现有节点是否已经满足；存在候选节点时暂停并让用户确认复用还是继续新建。确需开发时，必须先用 TDD 固化行为，再实现 `BaseNode` 节点并注册到节点注册表。
+新增或修改节点时，先按需求检查现有节点和对应 UI 节点控件是否已经满足；存在候选节点时暂停并让用户确认复用还是继续新建。确需开发时，必须先用 TDD 固化行为，再实现 `BaseNode` 节点并注册到节点注册表。
 
 ## Core Workflow
 
-1. 明确节点规格：`ref`、职责、输入 schema、输出 schema、错误语义、资产访问、外部服务或凭据、是否需要人工交互、是否需要通用 `ui_defaults`。
+1. 明确节点规格：`ref`、职责、输入 schema、输出 schema、错误语义、资产访问、外部服务或凭据、是否需要人工交互、是否需要通用 `ui_defaults`、目标 UI 节点控件是否已存在。
 2. 检查现有节点是否满足需求：读取 `build_node_registry(settings)`、现有节点 `NodeDescriptor`、相近节点实现和测试，按职责、输入输出 schema、错误语义和依赖能力判断可复用性。
 3. 如果找到一个或多个候选节点，暂停开发新节点，向用户列出候选 `ref`、匹配点、差距和复用影响，并等待用户确认“复用现有节点”还是“继续开发新节点”。用户未确认前不要写新节点代码或测试。
-4. 只有确认需要新建或修改节点后，先读现有模式：`AGENTS.md`、`xiagent/nodes/AGENTS.md`、`xiagent/nodes/base.py`、`xiagent/nodes/registry.py`、`xiagent/nodes/__init__.py`、相近节点实现和测试。
-5. RED：先写失败测试。节点行为测试通常放在 `tests/test_node_registry.py`、现有节点测试文件，或新建聚焦测试文件。测试应直接执行节点或验证注册表行为。
-6. 运行目标测试，确认失败原因是节点能力缺失，而不是测试拼写、导入错误或夹具错误。
-7. GREEN：实现最小节点代码。正式节点必须继承 `BaseNode`，实现 `describe()` 和 `execute()`，返回 `NodeResult`。
-8. 注册节点：按现有模式更新 `xiagent/nodes/__init__.py` 的 `build_node_registry(settings)`，必要时更新包导出。
-9. REFACTOR：只在测试为绿后整理命名、抽取小函数或压缩重复。
-10. 回接工作流：如果节点是为某个工作流缺口创建的，返回节点 `ref`、输入输出 schema、示例工作流片段，并用 `WorkflowTestBuilder` 或 CLI 验证目标工作流。
+4. 第一轮需求方案确认时，同步核对目标节点体验需要的 UI 节点控件。如果缺少对应控件，把控件新增或修改列入同一计划：建议 `control_id`、variant、mode、bindings、依赖的输出 schema、manifest、V2 控件实现、预览/校验测试和目标工作流接入点。然后建议使用 `$xiagent-ui-control-library-authoring` 补控件。
+5. 只有确认需要新建或修改节点后，先读现有模式：`AGENTS.md`、`xiagent/nodes/AGENTS.md`、`xiagent/nodes/base.py`、`xiagent/nodes/registry.py`、`xiagent/nodes/__init__.py`、相近节点实现和测试。
+6. RED：先写失败测试。节点行为测试通常放在 `tests/test_node_registry.py`、现有节点测试文件，或新建聚焦测试文件。测试应直接执行节点或验证注册表行为。
+7. 运行目标测试，确认失败原因是节点能力缺失，而不是测试拼写、导入错误或夹具错误。
+8. GREEN：实现最小节点代码。正式节点必须继承 `BaseNode`，实现 `describe()` 和 `execute()`，返回 `NodeResult`。
+9. 注册节点：按现有模式更新 `xiagent/nodes/__init__.py` 的 `build_node_registry(settings)`，必要时更新包导出。
+10. REFACTOR：只在测试为绿后整理命名、抽取小函数或压缩重复。
+11. 回接工作流：如果节点是为某个工作流缺口创建的，返回节点 `ref`、输入输出 schema、示例工作流片段、UI 控件配置或控件缺口处理结果，并用 `WorkflowTestBuilder` 或 CLI 验证目标工作流。
 
 ## Project Constraints
 
@@ -42,6 +43,7 @@ description: Use when creating or modifying XiAgent BaseNode implementations, no
 ## UI Defaults Boundary
 
 - 节点 UI 规则以 `docs/design/2026-05-27-01-ui-control-manifest-design.md` 为准。
+- 第一轮需求方案确认必须核对目标体验需要的 UI 节点控件是否已经存在；缺控件时，把控件 manifest、后端暴露、V2 控件实现、绑定校验和测试纳入同一轮新增/修改计划。
 - 节点可以在 `NodeDescriptor.ui_defaults` 中提供通用默认展示建议，但不得把某个工作流的具体体验写死到节点里。
 - 控件选择优先级是 `nodes[].ui` > `workflow.ui.defaults` > `NodeDescriptor.ui_defaults` > 系统 fallback；节点默认只负责保底。
 - `ui_defaults` 只能引用后端 UI 控件 manifest 中存在的 `control_id`、`variant`、`mode` 和 `bindings`。不要引用 V2 React 组件路径或前端内部实现。
@@ -62,6 +64,7 @@ description: Use when creating or modifying XiAgent BaseNode implementations, no
 | Phase | Required Evidence |
 | --- | --- |
 | Reuse Check | 已检查现有节点，并在存在候选节点时取得用户确认。 |
+| UI Control Plan | 已检查目标 UI 节点控件是否存在；缺控件时已列入控件库新增/修改计划。 |
 | RED | 新测试已运行并按预期失败。 |
 | GREEN | 最小节点实现后目标测试通过。 |
 | Registry | 注册表能列出并获取新节点 ref。 |
@@ -99,6 +102,7 @@ python -m xiagent.workflows.testing_cli workflows/global/<workflow-id>.workflow.
 ## Common Mistakes
 
 - 先写节点再补测试：违反 TDD，回到 RED 阶段。
+- 第一轮方案只列节点代码、不列 UI 控件缺口：必须同步检查控件库，缺控件时纳入同一计划。
 - 没查现有节点就新建：先列出现有候选节点，等待用户确认复用或继续开发。
 - 注册了节点但没测试注册表：工作流可能仍找不到 `ref`。
 - 节点直接访问数据库或资产路径：改为通过正式服务接口。

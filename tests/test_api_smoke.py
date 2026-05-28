@@ -142,6 +142,22 @@ def test_auth_and_project_endpoints_create_and_list_projects(test_settings) -> N
         ]
 
 
+def test_auth_me_endpoint_returns_current_user(test_settings) -> None:
+    app = create_app(settings=test_settings)
+    with TestClient(app) as client:
+        user = client.post(
+            "/api/auth/register",
+            json={"username": "session-user", "password": "secret-123"},
+        ).json()
+        headers = _auth_headers(client, username="session-user")
+
+        response = client.get("/api/auth/me", headers=headers)
+
+    assert response.status_code == 200
+    assert response.json()["user_id"] == user["user_id"]
+    assert response.json()["username"] == "session-user"
+
+
 def test_global_project_is_default_shared_project_and_supports_user_tasks(test_settings) -> None:
     app = create_app(settings=test_settings)
     with TestClient(app) as client:

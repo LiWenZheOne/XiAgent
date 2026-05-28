@@ -5,6 +5,7 @@ import {
   extractImageUrls,
   formatFieldLabel,
   humanizeValue,
+  nodeDisplayKind,
   statusLabel,
 } from "../utils/display";
 
@@ -67,5 +68,30 @@ describe("display helpers", () => {
 
     expect(fields.map((field) => field.label)).toEqual(["剧本", "生成方式", "模板图片地址"]);
     expect(fields.find((field) => field.key === "template_image_url")?.control).toBe("asset_images");
+  });
+
+  it("keeps completed human input nodes labeled as user input", () => {
+    expect(
+      nodeDisplayKind(
+        {
+          node_id: "ask_color",
+          node_ref: "system.human_approval.v1",
+          status: "succeeded",
+        },
+        {
+          nodes: [
+            {
+              id: "ask_color",
+              ref: "system.human_approval.v1",
+              outputs: {
+                type: "object",
+                required: ["answer"],
+                properties: { answer: { type: "string" } },
+              },
+            },
+          ],
+        },
+      ),
+    ).toBe("用户输入");
   });
 });

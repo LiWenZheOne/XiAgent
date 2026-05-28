@@ -18,3 +18,7 @@ export async function register(username: string, password: string): Promise<User
     body: JSON.stringify({ username, password }),
   });
 }
+
+export async function getCurrentUser(): Promise<UserRecord> {
+  return apiRequest<UserRecord>("/api/auth/me");
+}

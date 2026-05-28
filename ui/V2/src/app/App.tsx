@@ -1,7 +1,7 @@
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 
 import { createTextAsset, deleteAsset, downloadAssetContent, listAssetCollections, listAssetTags, searchAssets, uploadAsset } from "../api/assets";
-import { login, register } from "../api/auth";
+import { getCurrentUser, login, register } from "../api/auth";
 import { ApiError, clearAccessToken, getAccessToken } from "../api/client";
 import { createProject, listProjects } from "../api/projects";
 import { createTask, getTask, listTasks, rerunNode, streamTaskEvents, submitInteraction } from "../api/tasks";
@@ -44,6 +44,11 @@ interface SessionState {
   username: string;
 }
 
+interface TaskRuntimeContext {
+  status: string;
+  currentNodeLabel: string;
+}
+
 interface WorkflowTemplate {
   id: string;
   version: string;
@@ -55,7 +60,8 @@ interface WorkflowTemplate {
 }
 
 export function App() {
-  const [session, setSession] = useState<SessionState | null>(() => (getAccessToken() ? { username: "已登录用户" } : null));
+  const [session, setSession] = useState<SessionState | null>(null);
+  const [recoveringSession, setRecoveringSession] = useState(() => Boolean(getAccessToken()));
   const [route, setRoute] = useState<Route>("workbench");
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState("");
@@ -73,6 +79,33 @@ export function App() {
     () => projects.find((project) => project.project_id === selectedProjectId) ?? null,
     [projects, selectedProjectId],
   );
+
+  useEffect(() => {
+    if (!getAccessToken()) {
+      setRecoveringSession(false);
+      return;
+    }
+    let active = true;
+    setRecoveringSession(true);
+    getCurrentUser()
+      .then((user) => {
+        if (active) setSession({ username: user.username });
+      })
+      .catch((error) => {
+        if (!active) return;
+        if (error instanceof ApiError && error.status === 401) {
+          handleLogout();
+          return;
+        }
+        handleLogout();
+      })
+      .finally(() => {
+        if (active) setRecoveringSession(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   function handleUnauthorized(error: unknown): boolean {
     if (error instanceof ApiError && error.status === 401) {
@@ -142,12 +175,26 @@ export function App() {
   function handleLogout() {
     clearAccessToken();
     setSession(null);
+    setRecoveringSession(false);
     setProjects([]);
     setTasks([]);
     setSelectedProjectId("");
     setSelectedTaskId("");
     setProjectError("");
     setTaskError("");
+  }
+
+  if (recoveringSession) {
+    return (
+      <main className="auth-page">
+        <section className="auth-card">
+          <div className="brand-mark large">X</div>
+          <p className="eyebrow">XiAgent V2</p>
+          <h1>恢复登录</h1>
+          <p>正在确认当前账号。</p>
+        </section>
+      </main>
+    );
   }
 
   if (!session) {
@@ -345,6 +392,15 @@ function WorkbenchPage({
   onRefreshTasks: () => void;
 }) {
   const selectedTask = tasks.find((task) => task.task_id === selectedTaskId) ?? null;
+  const [runtimeContext, setRuntimeContext] = useState<TaskRuntimeContext | null>(null);
+
+  useEffect(() => {
+    setRuntimeContext(null);
+  }, [selectedTaskId, selectedProject?.project_id]);
+
+  const contextStatus = runtimeContext?.status ?? selectedTask?.status ?? "";
+  const contextCurrentNode = runtimeContext?.currentNodeLabel
+    ?? (selectedTask?.current_node_id ? formatFieldLabel(selectedTask.current_node_id) : "未记录");
 
   return (
     <main className="workspace-grid">
@@ -420,7 +476,12 @@ function WorkbenchPage({
       <section className="workspace-main">
         {creatingTask && selectedProject ? <CreateTaskPanel project={selectedProject} onTaskCreated={onTaskCreated} /> : null}
         {!creatingTask && selectedProject && selectedTask ? (
-          <TaskDetailPanel projectId={selectedProject.project_id} taskId={selectedTask.task_id} onTaskChanged={onRefreshTasks} />
+          <TaskDetailPanel
+            projectId={selectedProject.project_id}
+            taskId={selectedTask.task_id}
+            onRuntimeContextChange={setRuntimeContext}
+            onTaskChanged={onRefreshTasks}
+          />
         ) : null}
         {!creatingTask && !selectedTask ? (
           <section className="empty-workbench">
@@ -444,11 +505,11 @@ function WorkbenchPage({
           </div>
           <div>
             <dt>任务状态</dt>
-            <dd>{selectedTask ? statusLabel(selectedTask.status) : "无"}</dd>
+            <dd>{contextStatus ? statusLabel(contextStatus) : "无"}</dd>
           </div>
           <div>
             <dt>当前节点</dt>
-            <dd>{selectedTask?.current_node_id ? formatFieldLabel(selectedTask.current_node_id) : "未记录"}</dd>
+            <dd>{selectedTask ? contextCurrentNode : "未记录"}</dd>
           </div>
         </dl>
         <div className="hint-card">
@@ -677,7 +738,17 @@ function WorkflowInputField({
   );
 }
 
-function TaskDetailPanel({ projectId, taskId, onTaskChanged }: { projectId: string; taskId: string; onTaskChanged: () => void }) {
+function TaskDetailPanel({
+  projectId,
+  taskId,
+  onRuntimeContextChange,
+  onTaskChanged,
+}: {
+  projectId: string;
+  taskId: string;
+  onRuntimeContextChange: (context: TaskRuntimeContext | null) => void;
+  onTaskChanged: () => void;
+}) {
   const [detail, setDetail] = useState<TaskDetailResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -689,7 +760,9 @@ function TaskDetailPanel({ projectId, taskId, onTaskChanged }: { projectId: stri
     setError("");
     getTask(projectId, taskId)
       .then((nextDetail) => {
-        if (active) setDetail(nextDetail);
+        if (!active) return;
+        onRuntimeContextChange(taskRuntimeContext(nextDetail, orderNodes(nextDetail)));
+        setDetail(nextDetail);
       })
       .catch((nextError) => {
         if (active) setError(readableError(nextError, "任务详情接口不可用，请重试。"));
@@ -1435,6 +1508,32 @@ function orderNodes(detail: TaskDetailResponse | null): TaskNodeExecution[] {
   if (!ordered?.length) return detail.node_executions;
   const extras = detail.node_executions.filter((node) => !ordered.some((orderedNode) => orderedNode.node_id === node.node_id));
   return [...ordered, ...extras];
+}
+
+function taskRuntimeContext(detail: TaskDetailResponse, orderedNodes: TaskNodeExecution[]): TaskRuntimeContext {
+  const status = detail.task.status;
+  const activeNode =
+    orderedNodes.find((node) => statusLabel(node.status) === "等待用户") ??
+    orderedNodes.find((node) => statusLabel(node.status) === "运行中") ??
+    orderedNodes.find((node) => statusLabel(node.status) === "失败") ??
+    null;
+  if (activeNode) {
+    return {
+      status,
+      currentNodeLabel: nodeDisplayTitle(activeNode, detail.workflow_snapshot),
+    };
+  }
+  if (statusLabel(status) === "成功") {
+    return { status, currentNodeLabel: "已完成" };
+  }
+  if (detail.task.current_node_id) {
+    const node = orderedNodes.find((item) => item.node_id === detail.task.current_node_id);
+    return {
+      status,
+      currentNodeLabel: node ? nodeDisplayTitle(node, detail.workflow_snapshot) : formatFieldLabel(detail.task.current_node_id),
+    };
+  }
+  return { status, currentNodeLabel: "未记录" };
 }
 
 function nodeSectionDefaultOpen(snapshot: WorkflowSnapshot | null | undefined, section: "input" | "output" | "events", fallback: boolean): boolean {

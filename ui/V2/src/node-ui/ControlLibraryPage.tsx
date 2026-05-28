@@ -5,6 +5,9 @@ import type { UiControlDescriptor } from "../api/types";
 import { imageChoicePreviewNode } from "./fixtures/imageChoiceThree";
 import { getNodeUiControl } from "./registry";
 
+type UiControlVariantDescriptor = UiControlDescriptor["variants"][number];
+type JsonRecord = Record<string, unknown>;
+
 const imageChoiceConfig = {
   control_id: "ui.choice.image_three.v1",
   mode: "interactive",
@@ -95,12 +98,95 @@ function ControlCard({ control }: { control: UiControlDescriptor }) {
             <p>
               <code>{variant.name}</code> · {variant.modes.join(" / ")}
             </p>
+            <ControlVariantRequirements variant={variant} />
           </section>
         ))}
       </div>
       {control.control_id === "ui.choice.image_three.v1" ? <ImageChoicePreview /> : null}
     </article>
   );
+}
+
+function ControlVariantRequirements({ variant }: { variant: UiControlVariantDescriptor }) {
+  const bindings = variant.required_bindings.map(normalizeBindingRequirement).filter((binding) => binding.name);
+  const payloadFields = getSubmitSchemaFields(variant.submit_schema);
+
+  if (bindings.length === 0 && payloadFields.length === 0) return null;
+
+  return (
+    <div className="control-requirements">
+      {bindings.length > 0 ? (
+        <div>
+          <h4>绑定要求</h4>
+          <ul>
+            {bindings.map((binding) => (
+              <li key={binding.name}>
+                <code>{binding.name}</code>
+                <span>{binding.required ? "必填" : "可选"}</span>
+                {binding.bindingKind ? <span>{binding.bindingKind}</span> : null}
+                {binding.sources.length > 0 ? <span>来源 {binding.sources.join(" / ")}</span> : null}
+                {binding.constraints.map((constraint) => (
+                  <span key={constraint}>{constraint}</span>
+                ))}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {payloadFields.length > 0 ? (
+        <div>
+          <h4>Payload 要求</h4>
+          <ul>
+            {payloadFields.map((field) => (
+              <li key={field.name}>
+                <code>{field.name}</code>
+                <span>{field.required ? "必填" : "可选"}</span>
+                {field.type ? <span>{field.type}</span> : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function normalizeBindingRequirement(requirement: unknown) {
+  const record = asRecord(requirement);
+  const constraints = asRecord(record.schema_constraints);
+  return {
+    name: typeof record.name === "string" ? record.name : "",
+    required: typeof record.required === "boolean" ? record.required : true,
+    bindingKind: typeof record.binding_kind === "string" ? record.binding_kind : "",
+    sources: toStringList(record.accepted_sources),
+    constraints: Object.entries(constraints).map(([key, value]) => `${key}: ${formatConstraintValue(value)}`),
+  };
+}
+
+function getSubmitSchemaFields(schema: Record<string, unknown> | undefined) {
+  const schemaRecord = asRecord(schema);
+  const required = new Set(toStringList(schemaRecord.required));
+  const properties = asRecord(schemaRecord.properties);
+  return Object.entries(properties).map(([name, property]) => ({
+    name,
+    required: required.has(name),
+    type: typeof asRecord(property).type === "string" ? String(asRecord(property).type) : "",
+  }));
+}
+
+function asRecord(value: unknown): JsonRecord {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
+}
+
+function toStringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function formatConstraintValue(value: unknown): string {
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) return value.map(formatConstraintValue).join(" / ");
+  return "object";
 }
 
 function ImageChoicePreview() {
