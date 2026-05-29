@@ -32,6 +32,7 @@ import type {
   TaskEvent,
   TaskNodeExecution,
   TaskRecord,
+  WorkflowUiStage,
   WorkflowListItem,
   WorkflowNodeSpec,
   WorkflowSnapshot,
@@ -45,7 +46,6 @@ import {
   formatDate,
   formatFieldLabel,
   isWaitingNode,
-  nodeDisplayKind,
   nodeDisplayTitle,
   statusLabel,
   statusTone,
@@ -77,7 +77,7 @@ interface WorkflowTemplate {
 export function App() {
   const [session, setSession] = useState<SessionState | null>(null);
   const [recoveringSession, setRecoveringSession] = useState(() => Boolean(getAccessToken()));
-  const [route, setRoute] = useState<Route>("workbench");
+  const [route, setRoute] = useState<Route>("projects");
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
@@ -227,14 +227,14 @@ export function App() {
           </div>
         </div>
         <nav className="topnav" aria-label="主导航">
+          <button className={route === "projects" ? "nav-button active" : "nav-button"} type="button" onClick={() => setRoute("projects")}>
+            项目
+          </button>
           <button className={route === "workbench" ? "nav-button active" : "nav-button"} type="button" onClick={() => setRoute("workbench")}>
             任务工作台
           </button>
           <button className={route === "assets" ? "nav-button active" : "nav-button"} type="button" onClick={() => setRoute("assets")}>
             资产库
-          </button>
-          <button className={route === "projects" ? "nav-button active" : "nav-button"} type="button" onClick={() => setRoute("projects")}>
-            项目
           </button>
           <button className={route === "controls" ? "nav-button active" : "nav-button"} type="button" onClick={() => setRoute("controls")}>
             控件库
@@ -251,22 +251,13 @@ export function App() {
 
       {route === "workbench" ? (
         <WorkbenchPage
-          projects={projects}
           tasks={tasks}
           selectedProject={selectedProject}
           selectedTaskId={selectedTaskId}
           creatingTask={creatingTask}
-          projectLoading={projectLoading}
           taskLoading={taskLoading}
-          projectError={projectError}
           taskError={taskError}
-          onSelectProject={(projectId) => {
-            setSelectedProjectId(projectId);
-            setSelectedTaskId("");
-            setTasks([]);
-            setCreatingTask(false);
-          }}
-          onCreateProject={() => setRoute("projects")}
+          onBackToProjects={() => setRoute("projects")}
           onCreateTask={() => {
             setCreatingTask(true);
             setSelectedTaskId("");
@@ -308,6 +299,7 @@ export function App() {
             setSelectedTaskId("");
             setTasks([]);
             setCreatingTask(false);
+            setReloadTasksKey((current) => current + 1);
             setRoute("workbench");
           }}
           onReload={() => setReloadProjectsKey((current) => current + 1)}
@@ -383,17 +375,13 @@ function AuthPage({ onAuthenticated }: { onAuthenticated: (result: AuthResponse)
 }
 
 function WorkbenchPage({
-  projects,
   tasks,
   selectedProject,
   selectedTaskId,
   creatingTask,
-  projectLoading,
   taskLoading,
-  projectError,
   taskError,
-  onSelectProject,
-  onCreateProject,
+  onBackToProjects,
   onCreateTask,
   onSelectTask,
   onTaskCreated,
@@ -401,17 +389,13 @@ function WorkbenchPage({
   onDeleteTask,
   onRefreshTasks,
 }: {
-  projects: ProjectRecord[];
   tasks: TaskRecord[];
   selectedProject: ProjectRecord | null;
   selectedTaskId: string;
   creatingTask: boolean;
-  projectLoading: boolean;
   taskLoading: boolean;
-  projectError: string;
   taskError: string;
-  onSelectProject: (projectId: string) => void;
-  onCreateProject: () => void;
+  onBackToProjects: () => void;
   onCreateTask: () => void;
   onSelectTask: (taskId: string) => void;
   onTaskCreated: (task: TaskRecord) => void;
@@ -453,31 +437,29 @@ function WorkbenchPage({
         <section className="sidebar-section">
           <div className="section-title-row">
             <div>
-              <p className="eyebrow">项目空间</p>
-              <h2>任务工作台</h2>
+              <p className="eyebrow">当前项目</p>
+              <h2>{selectedProject?.name ?? "未选择项目"}</h2>
             </div>
-            <button className="icon-button" type="button" onClick={onCreateProject} aria-label="新建项目">
-              +
+            <button className="secondary-button compact" type="button" onClick={onBackToProjects}>
+              返回项目
             </button>
           </div>
-          {projectLoading ? <p className="muted">正在加载项目...</p> : null}
-          {projectError ? <p className="form-error">{projectError}</p> : null}
-          {projects.length ? (
-            <label className="compact-field">
-              <span>当前项目</span>
-              <select value={selectedProject?.project_id ?? ""} onChange={(event) => onSelectProject(event.target.value)}>
-                {projects.map((project) => (
-                  <option key={project.project_id} value={project.project_id}>
-                    {project.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+          {selectedProject ? (
+            <dl className="project-summary-list">
+              <div>
+                <dt>说明</dt>
+                <dd>{selectedProject.description || "项目工作空间"}</dd>
+              </div>
+              <div>
+                <dt>创建时间</dt>
+                <dd>{formatDate(selectedProject.created_at)}</dd>
+              </div>
+            </dl>
           ) : (
             <div className="empty-box">
-              <strong>还没有项目</strong>
-              <button className="secondary-button" type="button" onClick={onCreateProject}>
-                创建项目
+              <strong>先选择项目</strong>
+              <button className="secondary-button" type="button" onClick={onBackToProjects}>
+                返回项目页
               </button>
             </div>
           )}
@@ -720,6 +702,99 @@ function TaskDetailPanel({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
+  const [rerunCandidateNodeId, setRerunCandidateNodeId] = useState<string | null>(null);
+  const [rerunningNodeId, setRerunningNodeId] = useState("");
+  const [rerunError, setRerunError] = useState("");
+  const [liveEvents, setLiveEvents] = useState<TaskEvent[]>([]);
+  const [revealedNodeOrder, setRevealedNodeOrder] = useState<Record<string, number>>({});
+  const revealSequenceRef = useRef(0);
+  const revealedNodeOrderRef = useRef<Record<string, number>>({});
+  const stepRevealModeRef = useRef(false);
+  const liveRevealDelayRef = useRef(0);
+  const scheduledRevealIdsRef = useRef<Set<string>>(new Set());
+  const baselineEventIdsRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    setLiveEvents([]);
+    setRevealedNodeOrder({});
+    revealSequenceRef.current = 0;
+    revealedNodeOrderRef.current = {};
+    stepRevealModeRef.current = false;
+    liveRevealDelayRef.current = 0;
+    scheduledRevealIdsRef.current = new Set();
+    baselineEventIdsRef.current = new Set();
+  }, [projectId, taskId]);
+
+  function revealNodeStep(nodeId: string | null | undefined, delayMs = 0) {
+    if (!nodeId) return;
+    if (delayMs > 0) {
+      window.setTimeout(() => revealNodeStep(nodeId), delayMs);
+      return;
+    }
+    setRevealedNodeOrder((current) => {
+      if (current[nodeId] !== undefined) return current;
+      const next = { ...current, [nodeId]: revealSequenceRef.current++ };
+      revealedNodeOrderRef.current = next;
+      return next;
+    });
+  }
+
+  function scheduleNodeStepReveal(nodeId: string | null | undefined) {
+    if (!nodeId || revealedNodeOrderRef.current[nodeId] !== undefined || scheduledRevealIdsRef.current.has(nodeId)) return;
+    scheduledRevealIdsRef.current.add(nodeId);
+    const delay = liveRevealDelayRef.current;
+    liveRevealDelayRef.current = Math.min(delay + 180, 2200);
+    revealNodeStep(nodeId, delay);
+  }
+
+  function clearRevealedNodeSteps(nodeIds: Set<string>) {
+    if (!nodeIds.size) return;
+    scheduledRevealIdsRef.current = new Set([...scheduledRevealIdsRef.current].filter((nodeId) => !nodeIds.has(nodeId)));
+    const next = { ...revealedNodeOrderRef.current };
+    let changed = false;
+    for (const nodeId of nodeIds) {
+      if (next[nodeId] === undefined) continue;
+      delete next[nodeId];
+      changed = true;
+    }
+    if (!changed) return;
+    revealedNodeOrderRef.current = next;
+    setRevealedNodeOrder(next);
+  }
+
+  function rememberCurrentEventsAsBaseline() {
+    baselineEventIdsRef.current = new Set([
+      ...baselineEventIdsRef.current,
+      ...mergeTaskEvents(detail?.events ?? [], liveEvents).map(taskEventIdentity),
+    ]);
+  }
+
+  function revealNodesFromDetail(nextDetail: TaskDetailResponse) {
+    const ordered = orderNodes(nextDetail).filter((node) => Boolean(node.node_execution_id));
+    setRevealedNodeOrder((current) => {
+      const next = { ...current };
+      const addNode = (nodeId: string | null | undefined) => {
+        if (!nodeId || next[nodeId] !== undefined) return;
+        next[nodeId] = revealSequenceRef.current++;
+      };
+      const firstDetailLoad = Object.keys(next).length === 0;
+      if (firstDetailLoad || !stepRevealModeRef.current) {
+        for (const node of ordered) addNode(node.node_id);
+      } else {
+        addNode(nextDetail.task.current_node_id);
+        for (const node of ordered) {
+          const label = statusLabel(node.status);
+          if (label === "运行中" || label === "等待用户" || label === "失败") addNode(node.node_id);
+        }
+      }
+      const changed = Object.keys(next).length !== Object.keys(current).length;
+      if (changed) revealedNodeOrderRef.current = next;
+      return changed ? next : current;
+    });
+    if (!stepRevealModeRef.current) {
+      baselineEventIdsRef.current = new Set(nextDetail.events.map(taskEventIdentity));
+    }
+  }
 
   useEffect(() => {
     let active = true;
@@ -731,6 +806,7 @@ function TaskDetailPanel({
         onRuntimeContextChange(taskRuntimeContext(nextDetail, orderNodes(nextDetail)));
         onTaskUpdated(nextDetail.task);
         setDetail(nextDetail);
+        revealNodesFromDetail(nextDetail);
       })
       .catch((nextError) => {
         if (active) setError(readableError(nextError, "任务详情接口不可用，请重试。"));
@@ -747,31 +823,72 @@ function TaskDetailPanel({
     return streamTaskEvents(
       projectId,
       taskId,
-      () => setRefreshKey((current) => current + 1),
+      (event) => {
+        const liveEvent = normalizeLiveTaskEvent(event);
+        const eventKey = taskEventIdentity(liveEvent);
+        setLiveEvents((current) => mergeTaskEvents(current, [liveEvent]));
+        if (stepRevealModeRef.current && !baselineEventIdsRef.current.has(eventKey) && taskEventRevealsNode(liveEvent)) {
+          scheduleNodeStepReveal(nodeIdFromTaskEvent(liveEvent));
+        }
+        baselineEventIdsRef.current.add(eventKey);
+        setRefreshKey((current) => current + 1);
+      },
       (nextError) => setError(readableError(nextError, "任务事件连接失败，请刷新后重试。")),
     );
   }, [projectId, taskId]);
 
   const eventsByNode = useMemo(() => {
     const grouped = new Map<string, TaskEvent[]>();
-    for (const event of detail?.events ?? []) {
-      const nodeId = event.node_id || (typeof event.payload?.node_id === "string" ? event.payload.node_id : "");
+    for (const event of mergeTaskEvents(detail?.events ?? [], liveEvents)) {
+      const nodeId = nodeIdFromTaskEvent(event);
       if (!nodeId) continue;
       grouped.set(nodeId, [...(grouped.get(nodeId) ?? []), event]);
     }
     return grouped;
-  }, [detail]);
+  }, [detail, liveEvents]);
 
   const orderedNodes = useMemo(() => orderNodes(detail), [detail]);
+  const rerunCandidateNode = useMemo(
+    () => orderedNodes.find((node) => node.node_id === rerunCandidateNodeId) ?? null,
+    [orderedNodes, rerunCandidateNodeId],
+  );
 
   async function handleRerun(nodeId: string) {
-    await rerunNode(taskId, nodeId, projectId);
-    onTaskChanged();
-    setRefreshKey((current) => current + 1);
+    setRerunError("");
+    setRerunCandidateNodeId(nodeId);
+  }
+
+  async function handleConfirmRerun() {
+    if (!rerunCandidateNodeId) return;
+    const nodeId = rerunCandidateNodeId;
+    const affectedNodeIds = workflowDownstreamNodeIds(detail?.workflow_snapshot, nodeId);
+    setRerunningNodeId(nodeId);
+    setRerunError("");
+    rememberCurrentEventsAsBaseline();
+    stepRevealModeRef.current = true;
+    liveRevealDelayRef.current = 0;
+    scheduledRevealIdsRef.current = new Set();
+    clearRevealedNodeSteps(affectedNodeIds);
+    revealNodeStep(nodeId);
+    try {
+      await rerunNode(taskId, nodeId, projectId);
+      setRerunCandidateNodeId(null);
+      onTaskChanged();
+      setRefreshKey((current) => current + 1);
+    } catch (nextError) {
+      setRerunError(readableError(nextError, "重新运行失败，请检查任务状态后重试。"));
+    } finally {
+      setRerunningNodeId("");
+    }
   }
 
   function markInteractionRunning(nodeId: string) {
     if (!detail) return;
+    rememberCurrentEventsAsBaseline();
+    stepRevealModeRef.current = true;
+    liveRevealDelayRef.current = 0;
+    scheduledRevealIdsRef.current = new Set();
+    revealNodeStep(nodeId);
     const nextDetail = {
       ...detail,
       task: { ...detail.task, status: "running", current_node_id: nodeId },
@@ -811,24 +928,273 @@ function TaskDetailPanel({
             <span className={`status-badge ${statusTone(detail.task.status)}`}>{statusLabel(detail.task.status)}</span>
           </section>
 
-          <section className="node-timeline">
-            {orderedNodes.map((node, index) => (
-              <NodeExecutionCard
-                events={eventsByNode.get(node.node_id) ?? []}
-                index={index}
-                key={node.node_execution_id ?? `${node.node_id}-${index}`}
-                node={node}
-                projectId={projectId}
-                snapshot={detail.workflow_snapshot}
-                onInteraction={handleInteraction}
-                onRerun={handleRerun}
-              />
-            ))}
-            {orderedNodes.length === 0 ? <section className="panel">任务还没有节点执行记录。</section> : null}
-          </section>
+          <WorkflowProgressView
+            eventsByNode={eventsByNode}
+            nodes={orderedNodes}
+            projectId={projectId}
+            revealedNodeOrder={revealedNodeOrder}
+            snapshot={detail.workflow_snapshot}
+            onInteraction={handleInteraction}
+            onRerun={handleRerun}
+          />
+          {rerunCandidateNode ? (
+            <div className="confirm-backdrop" role="presentation">
+              <section className="confirm-dialog" role="dialog" aria-modal="true" aria-label="确认重新运行步骤">
+                <h2>确认重新运行步骤</h2>
+                <p>重新运行此步骤会使该步骤及其下游已完成结果失效，并从这里重新执行。历史记录会保留。</p>
+                <strong>{nodeDisplayTitle(rerunCandidateNode, detail.workflow_snapshot)}</strong>
+                {rerunError ? <p className="form-error">{rerunError}</p> : null}
+                <div className="button-row end">
+                  <button className="secondary-button" type="button" onClick={() => setRerunCandidateNodeId(null)} disabled={Boolean(rerunningNodeId)}>
+                    取消
+                  </button>
+                  <button className="primary-button danger" type="button" onClick={() => void handleConfirmRerun()} disabled={Boolean(rerunningNodeId)}>
+                    {rerunningNodeId ? "重新运行中" : "确认重新运行"}
+                  </button>
+                </div>
+              </section>
+            </div>
+          ) : null}
         </>
       ) : null}
     </section>
+  );
+}
+
+function WorkflowProgressView({
+  nodes,
+  eventsByNode,
+  projectId,
+  revealedNodeOrder,
+  snapshot,
+  onInteraction,
+  onRerun,
+}: {
+  nodes: TaskNodeExecution[];
+  eventsByNode: Map<string, TaskEvent[]>;
+  projectId: string;
+  revealedNodeOrder: Record<string, number>;
+  snapshot?: WorkflowSnapshot | null;
+  onInteraction: (nodeId: string, input: Record<string, unknown>) => Promise<void>;
+  onRerun: (nodeId: string) => Promise<void>;
+}) {
+  const stages = workflowStages(snapshot);
+  const stepOrdinalByNodeId = useMemo(() => {
+    const ordinals = new Map<string, number>();
+    let ordinal = 1;
+    for (const node of nodes
+      .filter((item) => Boolean(item.node_execution_id) && revealedNodeOrder[item.node_id] !== undefined)
+      .sort((left, right) => (revealedNodeOrder[left.node_id] ?? 0) - (revealedNodeOrder[right.node_id] ?? 0))) {
+      ordinals.set(node.node_id, ordinal++);
+    }
+    return ordinals;
+  }, [nodes, revealedNodeOrder]);
+  if (!stages.length) {
+    return (
+      <section className="node-timeline">
+        {nodes.map((node, index) => (
+          <NodeExecutionCard
+            events={eventsByNode.get(node.node_id) ?? []}
+            index={index}
+            key={node.node_execution_id ?? `${node.node_id}-${index}`}
+            node={node}
+            projectId={projectId}
+            snapshot={snapshot}
+            onInteraction={onInteraction}
+            onRerun={onRerun}
+          />
+        ))}
+        {nodes.length === 0 ? <section className="panel">任务还没有节点执行记录。</section> : null}
+      </section>
+    );
+  }
+
+  return (
+    <section className="workflow-stage-list">
+      {stages.map((stage, index) => (
+        <WorkflowStageCard
+          eventsByNode={eventsByNode}
+          index={index}
+          key={stage.id}
+          nodes={stage.nodes.map((nodeId) => nodes.find((node) => node.node_id === nodeId)).filter(Boolean) as TaskNodeExecution[]}
+          projectId={projectId}
+          revealedNodeOrder={revealedNodeOrder}
+          snapshot={snapshot}
+          stage={stage}
+          stepOrdinalByNodeId={stepOrdinalByNodeId}
+          onInteraction={onInteraction}
+          onRerun={onRerun}
+        />
+      ))}
+    </section>
+  );
+}
+
+function WorkflowStageCard({
+  stage,
+  nodes,
+  index,
+  eventsByNode,
+  projectId,
+  revealedNodeOrder,
+  snapshot,
+  onInteraction,
+  onRerun,
+  stepOrdinalByNodeId,
+}: {
+  stage: WorkflowUiStage;
+  nodes: TaskNodeExecution[];
+  index: number;
+  eventsByNode: Map<string, TaskEvent[]>;
+  projectId: string;
+  revealedNodeOrder: Record<string, number>;
+  snapshot?: WorkflowSnapshot | null;
+  stepOrdinalByNodeId: Map<string, number>;
+  onInteraction: (nodeId: string, input: Record<string, unknown>) => Promise<void>;
+  onRerun: (nodeId: string) => Promise<void>;
+}) {
+  const visibleNodes = nodes
+    .filter((node) => Boolean(node.node_execution_id) && revealedNodeOrder[node.node_id] !== undefined)
+    .sort((left, right) => (revealedNodeOrder[left.node_id] ?? 0) - (revealedNodeOrder[right.node_id] ?? 0));
+  const [expanded, setExpanded] = useState(() => visibleNodes.some(nodeShouldDefaultExpand) || (index === 0 && visibleNodes.length > 0));
+  const [expandedNodeId, setExpandedNodeId] = useState<string | null>(() => defaultExpandedStageNodeId(visibleNodes, snapshot));
+  const stageStatus = stageStatusLabel(visibleNodes);
+
+  useEffect(() => {
+    if (visibleNodes.some(nodeShouldDefaultExpand) || (index === 0 && visibleNodes.length > 0)) setExpanded(true);
+    const defaultNodeId = defaultExpandedStageNodeId(visibleNodes, snapshot);
+    if (defaultNodeId) setExpandedNodeId((current) => current ?? defaultNodeId);
+  }, [snapshot, visibleNodes.map((node) => `${node.node_id}:${node.status}`).join("|")]);
+
+  return (
+    <article className="workflow-stage-card">
+      <header
+        className="workflow-stage-header"
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
+        onClick={() => setExpanded((current) => !current)}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          setExpanded((current) => !current);
+        }}
+      >
+        <div>
+          <h2>{stage.name}</h2>
+          {stage.description ? <p>{stage.description}</p> : null}
+        </div>
+        <div className="node-actions">
+          <span className={`status-badge ${stageTone(visibleNodes)}`}>{stageStatus}</span>
+        </div>
+      </header>
+      {!expanded ? (
+        <StageProgressRail
+          nodes={visibleNodes}
+          snapshot={snapshot}
+          stepOrdinalByNodeId={stepOrdinalByNodeId}
+        />
+      ) : null}
+      {expanded ? (
+        <div className="stage-step-list">
+          {visibleNodes.length ? visibleNodes.map((node, nodeIndex) => {
+            const isOpen = expandedNodeId === node.node_id;
+            const nodeEvents = eventsByNode.get(node.node_id) ?? [];
+            const progress = nodeProgressValue(node);
+            const showSubmit = nodeUsesStageHeaderSubmit(node, snapshot);
+            const showRerun = !showSubmit && nodeCanRerun(node, snapshot);
+            return (
+              <div className="stage-step-entry" key={node.node_execution_id ?? `${node.node_id}-${nodeIndex}`}>
+                <div
+                  className={`stage-step-row ${nodeIsInMotion(node) ? "in-motion" : ""}`}
+                  aria-expanded={isOpen}
+                  onClick={(event) => {
+                    if ((event.target as HTMLElement).closest("button")) return;
+                    setExpandedNodeId((current) => (current === node.node_id ? null : node.node_id));
+                  }}
+                >
+                  <button
+                    className="stage-step-toggle"
+                    type="button"
+                    aria-expanded={isOpen}
+                    onClick={() => setExpandedNodeId((current) => (current === node.node_id ? null : node.node_id))}
+                  >
+                    <span className="stage-step-indicator">{`S${stepOrdinalByNodeId.get(node.node_id) ?? nodeIndex + 1}`}</span>
+                    <span className="stage-step-main">
+                      <strong>{nodeDisplayTitle(node, snapshot)}</strong>
+                      <span className="stage-step-subline">
+                        <small>{nodeActivityText(node, eventsByNode, snapshot)}</small>
+                        <span>{progress}%</span>
+                      </span>
+                      <span className="stage-step-progress" aria-hidden="true">
+                        <span style={{ width: `${progress}%` }} />
+                      </span>
+                    </span>
+                  </button>
+                  <span className="stage-step-actions">
+                    <span className={`status-badge ${statusTone(node.status)}`}>{statusLabel(node.status)}</span>
+                    {showSubmit ? (
+                      <button className="primary-button stage-step-action" form={nodeInputFormId(node)} type="submit">
+                        运行下一步
+                      </button>
+                    ) : null}
+                    {showRerun ? (
+                      <button className="secondary-button stage-step-action" type="button" onClick={() => void onRerun(node.node_id)}>
+                        重新运行
+                      </button>
+                    ) : null}
+                  </span>
+                </div>
+                {isOpen ? (
+                  <div className="stage-node-details">
+                    <NodeExecutionDetails
+                      events={nodeEvents}
+                      node={node}
+                      projectId={projectId}
+                      snapshot={snapshot}
+                      onInteraction={onInteraction}
+                      onRerun={onRerun}
+                    />
+                  </div>
+                ) : null}
+              </div>
+            );
+          }) : <p className="muted">执行到该阶段后会生成步骤记录。</p>}
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
+function StageProgressRail({
+  nodes,
+  snapshot,
+  stepOrdinalByNodeId,
+}: {
+  nodes: TaskNodeExecution[];
+  snapshot?: WorkflowSnapshot | null;
+  stepOrdinalByNodeId: Map<string, number>;
+}) {
+  if (!nodes.length) {
+    return <p className="stage-progress-empty">执行到该阶段后会生成步骤记录。</p>;
+  }
+  const completedCount = nodes.filter((node) => statusLabel(node.status) === "成功").length;
+  const percent = Math.round((completedCount / nodes.length) * 100);
+  return (
+    <div className="stage-progress-rail" aria-label={`阶段进度 ${percent}%`}>
+      <span className="stage-progress-line" aria-hidden="true" />
+      {nodes.map((node, index) => {
+        const ordinal = stepOrdinalByNodeId.get(node.node_id) ?? index + 1;
+        const tone = statusTone(node.status);
+        return (
+          <div className={`stage-progress-node ${tone}`} key={node.node_execution_id ?? `${node.node_id}-${index}`}>
+            <span>{`S${ordinal}`}</span>
+            <strong>{nodeDisplayTitle(node, snapshot)}</strong>
+            <small>{statusLabel(node.status)}</small>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -840,6 +1206,7 @@ function NodeExecutionCard({
   snapshot,
   onInteraction,
   onRerun,
+  initialExpanded,
 }: {
   node: TaskNodeExecution;
   index: number;
@@ -848,24 +1215,20 @@ function NodeExecutionCard({
   snapshot?: WorkflowSnapshot | null;
   onInteraction: (nodeId: string, input: Record<string, unknown>) => Promise<void>;
   onRerun: (nodeId: string) => Promise<void>;
+  initialExpanded?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const [actionError, setActionError] = useState("");
   const nodeSpec = snapshot?.nodes?.find((item) => item.id === node.node_id);
   const displayTitle = nodeDisplayTitle(node, snapshot);
-  const displayKind = nodeDisplayKind(node, snapshot);
-  const canRerun = statusLabel(node.status) === "成功" && nodeSpec?.ui?.actions?.rerun !== false;
-  const inputConfig = resolveNodeControlConfig(node, nodeSpec, snapshot, "input");
-  const outputConfig = node.error
-    ? { control_id: "ui.display.value.v1", variant: "default", mode: "readonly" }
-    : resolveNodeControlConfig(node, nodeSpec, snapshot, "output");
-  const interactionConfig = resolveNodeInteractionConfig(node, nodeSpec, snapshot);
-  const InteractionControl = interactionConfig ? getNodeUiControl(interactionConfig.control_id) : null;
-  const inputCanSubmit = isWaitingNode(node, snapshot) && inputConfig?.mode === "input";
-  const inputDefaultOpen = nodeSectionDefaultOpen(snapshot, nodeSpec, "input", false);
-  const outputDefaultOpen = node.error ? true : nodeSectionDefaultOpen(snapshot, nodeSpec, "output", true);
-  const eventsDefaultOpen = nodeSectionDefaultOpen(snapshot, nodeSpec, "events", false);
+  const nodeStatusLabel = statusLabel(node.status);
+  const canRerun = nodeCanRerun(node, snapshot);
+  const [expanded, setExpanded] = useState(() => initialExpanded ?? nodeShouldDefaultExpand(node));
+
+  useEffect(() => {
+    if (nodeShouldDefaultExpand(node)) setExpanded(true);
+  }, [node.node_execution_id, node.status, initialExpanded]);
 
   async function withBusy(action: () => Promise<void>) {
     if (busyRef.current) return;
@@ -888,11 +1251,18 @@ function NodeExecutionCard({
       <div className="node-card-content">
         <header className="node-header">
           <div>
-            <p className="eyebrow">{displayKind}</p>
             <h2>{displayTitle}</h2>
           </div>
           <div className="node-actions">
-            <span className={`status-badge ${statusTone(node.status)}`}>{statusLabel(node.status)}</span>
+            <span className={`status-badge ${statusTone(node.status)}`}>{nodeStatusLabel}</span>
+            <button
+              aria-expanded={expanded}
+              className="secondary-button node-expand-button"
+              type="button"
+              onClick={() => setExpanded((current) => !current)}
+            >
+              {expanded ? "收起" : "展开"}
+            </button>
             {canRerun ? (
               <button className="secondary-button" disabled={busy} type="button" onClick={() => withBusy(() => onRerun(node.node_id))}>
                 重新运行
@@ -900,54 +1270,158 @@ function NodeExecutionCard({
             ) : null}
           </div>
         </header>
-
-        <div className="node-data-stack">
-          <NodeDataSection
-            busy={busy}
-            config={inputConfig}
-            defaultOpen={inputDefaultOpen}
-            imageAltPrefix={`${displayTitle} 输入图片`}
-            node={node}
-            nodeSpec={nodeSpec}
-            projectId={projectId}
-            slot="input"
-            snapshot={snapshot}
-            title="输入"
-            value={node.input_snapshot}
-            onSubmit={inputCanSubmit ? (input) => withBusy(() => onInteraction(node.node_id, input)) : undefined}
-          />
-          <NodeDataSection
-            config={outputConfig}
-            defaultOpen={outputDefaultOpen}
-            imageAltPrefix={`${displayTitle} 输出图片`}
-            node={node}
-            nodeSpec={nodeSpec}
-            projectId={projectId}
-            slot="output"
-            snapshot={snapshot}
-            title={node.error ? "错误" : "输出"}
-            value={node.error ?? node.output_snapshot}
-          />
-        </div>
-
-        {isWaitingNode(node, snapshot) && interactionConfig && InteractionControl ? (
-          <InteractionControl
-            busy={busy}
-            config={interactionConfig}
-            node={node}
-            nodeSpec={nodeSpec}
-            projectId={projectId}
-            snapshot={snapshot}
-            onSubmit={(output) => withBusy(() => onInteraction(node.node_id, output))}
-          />
-        ) : null}
-
         {actionError ? <p className="form-error">{actionError}</p> : null}
 
-        {isWaitingNode(node, snapshot) && !interactionConfig && !inputCanSubmit ? (
-          <WaitingInteraction busy={busy} node={node} nodeSpec={nodeSpec} onSubmit={(output) => withBusy(() => onInteraction(node.node_id, output))} />
+        {expanded ? (
+          <NodeExecutionDetails
+            events={events}
+            node={node}
+            projectId={projectId}
+            snapshot={snapshot}
+            onInteraction={onInteraction}
+            onRerun={onRerun}
+          />
         ) : null}
+      </div>
+    </article>
+  );
+}
 
+function NodeExecutionDetails({
+  node,
+  events,
+  projectId,
+  snapshot,
+  onInteraction,
+  onRerun,
+  showRerun = false,
+}: {
+  node: TaskNodeExecution;
+  events: TaskEvent[];
+  projectId: string;
+  snapshot?: WorkflowSnapshot | null;
+  onInteraction: (nodeId: string, input: Record<string, unknown>) => Promise<void>;
+  onRerun: (nodeId: string) => Promise<void>;
+  showRerun?: boolean;
+}) {
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+  const [actionError, setActionError] = useState("");
+  const nodeSpec = snapshot?.nodes?.find((item) => item.id === node.node_id);
+  const displayTitle = nodeDisplayTitle(node, snapshot);
+  const canRerun = nodeCanRerun(node, snapshot);
+  const inputConfig = resolveNodeControlConfig(node, nodeSpec, snapshot, "input");
+  const outputConfig = node.error
+    ? { control_id: "ui.display.value.v1", variant: "default", mode: "readonly" }
+    : resolveNodeControlConfig(node, nodeSpec, snapshot, "output");
+  const interactionConfig = resolveNodeInteractionConfig(node, nodeSpec, snapshot);
+  const hidesGenericSections = interactionConfig?.control_id === "ui.interaction.asset_summary_table.v1";
+  const InteractionControl = interactionConfig ? getNodeUiControl(interactionConfig.control_id) : null;
+  const inputCanSubmit = isWaitingNode(node, snapshot) && inputConfig?.mode === "input";
+  const inputDefaultOpen = nodeSectionDefaultOpen(snapshot, nodeSpec, "input", false);
+  const outputDefaultOpen = node.error ? true : nodeSectionDefaultOpen(snapshot, nodeSpec, "output", true);
+  const eventsDefaultOpen = nodeSectionDefaultOpen(snapshot, nodeSpec, "events", false);
+  const inputVisible = !hidesGenericSections && nodeSectionVisible(nodeSpec, "input", true);
+  const outputVisible = node.error || (!hidesGenericSections && nodeSectionVisible(nodeSpec, "output", true));
+  const eventsVisible = !hidesGenericSections && nodeSectionVisible(nodeSpec, "events", true);
+  const inputWrapped = nodeSectionWrapped(nodeSpec, "input", true);
+  const InputControl = inputConfig ? getNodeUiControl(inputConfig.control_id) : null;
+
+  async function withBusy(action: () => Promise<void>) {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    setActionError("");
+    try {
+      await action();
+    } catch (nextError) {
+      setActionError(nodeActionError(nextError));
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="node-detail-body">
+      {showRerun && canRerun ? (
+        <div className="node-detail-actions">
+          <button className="secondary-button" disabled={busy} type="button" onClick={() => withBusy(() => onRerun(node.node_id))}>
+            重新运行
+          </button>
+        </div>
+      ) : null}
+
+      {inputVisible || outputVisible ? (
+        <div className="node-data-stack">
+          {inputVisible && !inputWrapped && inputConfig && InputControl ? (
+            <InputControl
+              busy={busy}
+              config={inputConfig.options?.submit_placement === "stage_header"
+                ? { ...inputConfig, options: { ...inputConfig.options, form_id: nodeInputFormId(node) } }
+                : inputConfig}
+              imageAltPrefix={`${displayTitle} 输入图片`}
+              node={node}
+              nodeSpec={nodeSpec}
+              projectId={projectId}
+              slot="input"
+              snapshot={snapshot}
+              value={node.input_snapshot}
+              onSubmit={inputCanSubmit ? (input) => withBusy(() => onInteraction(node.node_id, input)) : undefined}
+            />
+          ) : null}
+          {inputVisible && inputWrapped ? (
+            <NodeDataSection
+              busy={busy}
+              config={inputConfig}
+              defaultOpen={inputDefaultOpen}
+              imageAltPrefix={`${displayTitle} 输入图片`}
+              node={node}
+              nodeSpec={nodeSpec}
+              projectId={projectId}
+              slot="input"
+              snapshot={snapshot}
+              title="输入"
+              value={node.input_snapshot}
+              onSubmit={inputCanSubmit ? (input) => withBusy(() => onInteraction(node.node_id, input)) : undefined}
+            />
+          ) : null}
+          {outputVisible ? (
+            <NodeDataSection
+              config={outputConfig}
+              defaultOpen={outputDefaultOpen}
+              imageAltPrefix={`${displayTitle} 输出图片`}
+              node={node}
+              nodeSpec={nodeSpec}
+              projectId={projectId}
+              slot="output"
+              snapshot={snapshot}
+              title={node.error ? "错误" : "输出"}
+              value={node.error ?? node.output_snapshot}
+            />
+          ) : null}
+        </div>
+      ) : null}
+
+      {isWaitingNode(node, snapshot) && interactionConfig && InteractionControl ? (
+        <InteractionControl
+          busy={busy}
+          config={interactionConfig}
+          node={node}
+          nodeSpec={nodeSpec}
+          projectId={projectId}
+          snapshot={snapshot}
+          onSubmit={(output) => withBusy(() => onInteraction(node.node_id, output))}
+        />
+      ) : null}
+
+      {actionError ? <p className="form-error">{actionError}</p> : null}
+
+      {isWaitingNode(node, snapshot) && !interactionConfig && !inputCanSubmit ? (
+        <WaitingInteraction busy={busy} node={node} nodeSpec={nodeSpec} onSubmit={(output) => withBusy(() => onInteraction(node.node_id, output))} />
+      ) : null}
+
+      {eventsVisible ? (
         <details className="event-strip" open={eventsDefaultOpen}>
           <summary>节点事件</summary>
           {events.length ? (
@@ -960,8 +1434,8 @@ function NodeExecutionCard({
             <p className="muted">暂无事件。</p>
           )}
         </details>
-      </div>
-    </article>
+      ) : null}
+    </div>
   );
 }
 
@@ -1158,49 +1632,90 @@ function ProjectsPage({
     }
   }
 
+  const selectedProject = projects.find((project) => project.project_id === selectedProjectId) ?? projects[0] ?? null;
+
   return (
-    <main className="page-grid two-columns">
-      <section className="panel">
-        <p className="eyebrow">项目管理</p>
-        <h1>项目</h1>
-        <p>任务、资产和工作流运行记录都需要归属到明确项目。</p>
-        {loading ? <p className="muted">正在加载项目...</p> : null}
-        {error ? <p className="form-error">{error}</p> : null}
-        <div className="project-card-grid">
-          {projects.map((project) => (
-            <button
-              className={project.project_id === selectedProjectId ? "project-card active" : "project-card"}
-              key={project.project_id}
-              type="button"
-              onClick={() => onSelectProject(project.project_id)}
-            >
-              <strong>{project.name}</strong>
-              <span>{project.description || "项目工作空间"}</span>
-              <small>{formatDate(project.created_at)}</small>
-            </button>
-          ))}
+    <main className="project-entry-page">
+      <section className="project-entry-head">
+        <div>
+          <p className="eyebrow">项目入口</p>
+          <h1>项目</h1>
+          <p>选择一个项目进入对应工作台，任务、资产和工作流运行记录都会归属在项目下。</p>
         </div>
         <button className="secondary-button" type="button" onClick={onReload}>
           刷新项目
         </button>
       </section>
-      <section className="panel">
-        <p className="eyebrow">新建</p>
-        <h2>创建项目</h2>
-        <form className="form-stack" onSubmit={handleCreate}>
-          <label>
-            <span>项目名称</span>
-            <input value={name} onChange={(event) => setName(event.target.value)} />
-          </label>
-          <label>
-            <span>项目说明</span>
-            <textarea value={description} onChange={(event) => setDescription(event.target.value)} />
-          </label>
-          {formError ? <p className="form-error">{formError}</p> : null}
-          <button className="primary-button" disabled={saving} type="submit">
-            {saving ? "创建中" : "创建项目"}
-          </button>
-        </form>
+
+      <section className="project-entry-layout">
+        <div className="project-directory">
+          <div className="project-directory-head">
+            <div>
+              <p className="eyebrow">项目列表</p>
+              <h2>选择工作空间</h2>
+            </div>
+            <span>{projects.length} 个项目</span>
+          </div>
+          {loading ? <p className="muted">正在加载项目...</p> : null}
+          {error ? <p className="form-error">{error}</p> : null}
+          <div className="project-card-grid">
+            {projects.map((project) => (
+              <button
+                className={project.project_id === selectedProjectId ? "project-card active" : "project-card"}
+                key={project.project_id}
+                type="button"
+                aria-label={`进入 ${project.name} 工作台`}
+                onClick={() => onSelectProject(project.project_id)}
+              >
+                <span className="project-card-kicker">{project.project_id === "global" ? "共享项目" : "用户项目"}</span>
+                <strong>{project.name}</strong>
+                <span>{project.description || "项目工作空间"}</span>
+                <small>创建于 {formatDate(project.created_at)}</small>
+                <span className="project-card-action">进入工作台</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <aside className="project-entry-side">
+          <section className="project-focus-panel">
+            <p className="eyebrow">当前焦点</p>
+            <h2>{selectedProject?.name ?? "未选择项目"}</h2>
+            <dl className="project-summary-list">
+              <div>
+                <dt>类型</dt>
+                <dd>{selectedProject?.project_id === "global" ? "共享项目" : "用户项目"}</dd>
+              </div>
+              <div>
+                <dt>说明</dt>
+                <dd>{selectedProject?.description || "项目工作空间"}</dd>
+              </div>
+              <div>
+                <dt>创建时间</dt>
+                <dd>{formatDate(selectedProject?.created_at)}</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section className="project-create-panel">
+            <p className="eyebrow">新建</p>
+            <h2>创建项目</h2>
+            <form className="form-stack" onSubmit={handleCreate}>
+              <label>
+                <span>项目名称</span>
+                <input value={name} onChange={(event) => setName(event.target.value)} />
+              </label>
+              <label>
+                <span>项目说明</span>
+                <textarea value={description} onChange={(event) => setDescription(event.target.value)} />
+              </label>
+              {formError ? <p className="form-error">{formError}</p> : null}
+              <button className="primary-button" disabled={saving} type="submit">
+                {saving ? "创建中" : "创建项目"}
+              </button>
+            </form>
+          </section>
+        </aside>
       </section>
     </main>
   );
@@ -1979,10 +2494,223 @@ function recordValue(value: unknown): Record<string, unknown> | undefined {
 function orderNodes(detail: TaskDetailResponse | null): TaskNodeExecution[] {
   if (!detail) return [];
   const byId = new Map(detail.node_executions.map((node) => [node.node_id, node]));
-  const ordered = detail.workflow_snapshot?.nodes?.map((node) => byId.get(node.id)).filter(Boolean) as TaskNodeExecution[] | undefined;
+  const ordered = detail.workflow_snapshot?.nodes?.map((node) => byId.get(node.id) ?? virtualNodeExecution(node, detail)).filter(Boolean) as TaskNodeExecution[] | undefined;
   if (!ordered?.length) return detail.node_executions;
   const extras = detail.node_executions.filter((node) => !ordered.some((orderedNode) => orderedNode.node_id === node.node_id));
   return [...ordered, ...extras];
+}
+
+function normalizeLiveTaskEvent(event: TaskEvent): TaskEvent {
+  return {
+    ...event,
+    event_id: event.event_id ?? `live-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    created_at: event.created_at ?? event.timestamp ?? new Date().toISOString(),
+  };
+}
+
+function mergeTaskEvents(...groups: TaskEvent[][]): TaskEvent[] {
+  const merged: TaskEvent[] = [];
+  const seen = new Set<string>();
+  for (const group of groups) {
+    for (const event of group) {
+      const key = taskEventKey(event, merged.length);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(event);
+    }
+  }
+  return merged;
+}
+
+function taskEventKey(event: TaskEvent, fallbackIndex: number): string {
+  if (event.event_id) return `id:${event.event_id}`;
+  const nodeId = nodeIdFromTaskEvent(event);
+  const createdAt = event.created_at ?? event.timestamp ?? "";
+  const message = event.message ?? "";
+  return `${event.event_type ?? event.type ?? "message"}:${nodeId}:${createdAt}:${message}:${fallbackIndex}`;
+}
+
+function nodeIdFromTaskEvent(event: TaskEvent): string {
+  return event.node_id || (typeof event.payload?.node_id === "string" ? event.payload.node_id : "");
+}
+
+function taskEventIdentity(event: TaskEvent): string {
+  return taskEventKey(event, 0);
+}
+
+function taskEventRevealsNode(event: TaskEvent): boolean {
+  const type = (event.event_type ?? event.type ?? "").toLowerCase();
+  return [
+    "node_rerun_started",
+    "node_started",
+    "node_running",
+    "node_waiting",
+    "node_succeeded",
+    "node_failed",
+  ].includes(type);
+}
+
+function workflowDownstreamNodeIds(snapshot: WorkflowSnapshot | null | undefined, nodeId: string): Set<string> {
+  const affected = new Set<string>([nodeId]);
+  const edges = (snapshot?.edges ?? []).map(edgeRecord);
+  const stack = [nodeId];
+  while (stack.length) {
+    const current = stack.pop() ?? "";
+    for (const edge of edges) {
+      if (edge.from !== current || !edge.to || edge.to === "__end__") continue;
+      if (affected.has(edge.to)) continue;
+      affected.add(edge.to);
+      stack.push(edge.to);
+    }
+  }
+  return affected;
+}
+
+function virtualNodeExecution(node: WorkflowNodeSpec, detail: TaskDetailResponse): TaskNodeExecution {
+  return {
+    node_id: node.id,
+    node_ref: node.ref,
+    status: virtualNodeStatus(node.id, detail),
+    input_snapshot: null,
+    output_snapshot: null,
+    metadata: {},
+  };
+}
+
+function virtualNodeStatus(nodeId: string, detail: TaskDetailResponse): string {
+  const inbound = (detail.workflow_snapshot?.edges ?? []).map(edgeRecord).filter((edge) => edge.to === nodeId);
+  if (!inbound.length) return "not_started";
+  const executions = new Map(detail.node_executions.map((node) => [node.node_id, node]));
+  const conditional = inbound.filter((edge) => edge.when);
+  if (conditional.length) {
+    const resolved = conditional.map((edge) => evaluateEdgeCondition(edge, executions));
+    if (resolved.some((value) => value === true)) return "not_started";
+    if (resolved.every((value) => value === false)) return "skipped";
+    return "branch_pending";
+  }
+  if (inbound.every((edge) => executions.get(edge.from)?.status === "skipped")) return "skipped";
+  return "not_started";
+}
+
+function workflowStages(snapshot?: WorkflowSnapshot | null): WorkflowUiStage[] {
+  const stages = snapshot?.workflow?.ui?.stages;
+  if (!Array.isArray(stages)) return [];
+  const normalized: WorkflowUiStage[] = [];
+  for (const stage of stages) {
+    const record = recordValue(stage);
+    if (!record) continue;
+    const id = typeof record.id === "string" ? record.id : "";
+    const name = typeof record.name === "string" ? record.name : "";
+    const nodes = Array.isArray(record.nodes) ? record.nodes.filter((node): node is string => typeof node === "string") : [];
+    if (!id || !name) continue;
+    normalized.push({
+      id,
+      name,
+      description: typeof record.description === "string" ? record.description : undefined,
+      nodes,
+    });
+  }
+  return normalized;
+}
+
+interface WorkflowEdgeView {
+  from: string;
+  to: string;
+  when?: { path?: string; equals?: unknown };
+}
+
+function edgeRecord(edge: unknown): WorkflowEdgeView {
+  const record = recordValue(edge) ?? {};
+  const when = recordValue(record.when);
+  return {
+    from: typeof record.from === "string" ? record.from : "",
+    to: typeof record.to === "string" ? record.to : "",
+    when: when ? { path: typeof when.path === "string" ? when.path : undefined, equals: when.equals } : undefined,
+  };
+}
+
+function evaluateEdgeCondition(edge: WorkflowEdgeView, executions: Map<string, TaskNodeExecution>): boolean | "pending" {
+  const path = edge.when?.path;
+  if (!path) return "pending";
+  const value = readWorkflowNodePath(path, executions);
+  if (value === undefined) return "pending";
+  return value === edge.when?.equals;
+}
+
+function readWorkflowNodePath(path: string, executions: Map<string, TaskNodeExecution>): unknown {
+  const prefix = "$nodes.";
+  if (!path.startsWith(prefix)) return undefined;
+  const parts = path.slice(prefix.length).split(".");
+  const nodeId = parts.shift();
+  const slot = parts.shift();
+  if (!nodeId || slot !== "output") return undefined;
+  let current: unknown = executions.get(nodeId)?.output_snapshot;
+  for (const part of parts) {
+    if (current === null || typeof current !== "object") return undefined;
+    current = (current as Record<string, unknown>)[part];
+  }
+  return current;
+}
+
+function stageStatusLabel(nodes: TaskNodeExecution[]): string {
+  if (!nodes.length) return "待运行";
+  if (nodes.some((node) => statusLabel(node.status) === "失败")) return "失败";
+  if (nodes.some((node) => statusLabel(node.status) === "等待用户")) return "等待用户";
+  if (nodes.some((node) => statusLabel(node.status) === "运行中")) return "运行中";
+  if (nodes.every((node) => statusLabel(node.status) === "成功" || statusLabel(node.status) === "已跳过")) return "成功";
+  if (nodes.every((node) => statusLabel(node.status) === "待判定" || statusLabel(node.status) === "已跳过")) return "待判定";
+  return "待运行";
+}
+
+function stageTone(nodes: TaskNodeExecution[]): "neutral" | "info" | "success" | "warning" | "danger" {
+  return statusTone(stageStatusLabel(nodes));
+}
+
+function nodeIsInMotion(node: TaskNodeExecution): boolean {
+  return statusLabel(node.status) === "运行中";
+}
+
+function nodeProgressValue(node: TaskNodeExecution): number {
+  const label = statusLabel(node.status);
+  if (label === "成功" || label === "已跳过") return 100;
+  if (label === "失败") return 100;
+  if (label === "等待用户") return 60;
+  if (label === "运行中") return 35;
+  if (label === "待判定") return 10;
+  return 10;
+}
+
+function nodeUsesStageHeaderSubmit(node: TaskNodeExecution, snapshot?: WorkflowSnapshot | null): boolean {
+  if (!isWaitingNode(node, snapshot)) return false;
+  const nodeSpec = snapshot?.nodes?.find((item) => item.id === node.node_id);
+  const inputConfig = resolveNodeControlConfig(node, nodeSpec, snapshot, "input");
+  return inputConfig?.mode === "input" && inputConfig.options?.submit_placement === "stage_header";
+}
+
+function nodeCanRerun(node: TaskNodeExecution, snapshot?: WorkflowSnapshot | null): boolean {
+  const nodeSpec = snapshot?.nodes?.find((item) => item.id === node.node_id);
+  return statusLabel(node.status) === "成功" && nodeSpec?.ui?.actions?.rerun !== false;
+}
+
+function nodeInputFormId(node: TaskNodeExecution): string {
+  return `xiagent-node-input-${node.node_execution_id ?? node.node_id}`;
+}
+
+function nodeActivityText(node: TaskNodeExecution, eventsByNode: Map<string, TaskEvent[]>, snapshot?: WorkflowSnapshot | null): string {
+  const label = statusLabel(node.status);
+  if (label === "运行中") return `正在${nodeDisplayTitle(node, snapshot)}`;
+  if (label === "等待用户") return "等待用户处理";
+  if (label === "成功") return "已完成";
+  if (label === "失败") {
+    const errorRecord = recordValue(node.error);
+    const errorText = typeof node.error === "string"
+      ? node.error
+      : (typeof errorRecord?.message === "string" ? errorRecord.message : undefined) ?? (typeof errorRecord?.code === "string" ? errorRecord.code : undefined);
+    return errorText ? `失败：${errorText}` : "失败";
+  }
+  const events = eventsByNode.get(node.node_id) ?? [];
+  const latestEvent = events.length ? events[events.length - 1] : undefined;
+  return latestEvent ? eventText(latestEvent) : statusLabel(node.status);
 }
 
 function taskRuntimeContext(detail: TaskDetailResponse, orderedNodes: TaskNodeExecution[]): TaskRuntimeContext {
@@ -2011,6 +2739,19 @@ function taskRuntimeContext(detail: TaskDetailResponse, orderedNodes: TaskNodeEx
   return { status, currentNodeLabel: "未记录" };
 }
 
+function nodeShouldDefaultExpand(node: TaskNodeExecution): boolean {
+  const label = statusLabel(node.status);
+  return label === "等待用户" || label === "失败" || label === "运行中" || Boolean(node.error);
+}
+
+function defaultExpandedStageNodeId(nodes: TaskNodeExecution[], snapshot?: WorkflowSnapshot | null): string | null {
+  return nodes.find((node) => nodeRequiresUserAction(node, snapshot))?.node_id ?? null;
+}
+
+function nodeRequiresUserAction(node: TaskNodeExecution, snapshot?: WorkflowSnapshot | null): boolean {
+  return isWaitingNode(node, snapshot);
+}
+
 function nodeSectionDefaultOpen(
   snapshot: WorkflowSnapshot | null | undefined,
   nodeSpec: WorkflowNodeSpec | undefined,
@@ -2035,6 +2776,22 @@ function nodeSectionDefaultOpenValue(config: unknown): boolean | undefined {
   if (typeof section.default_collapsed === "boolean") return !section.default_collapsed;
   if (typeof section.collapsed === "boolean") return !section.collapsed;
   return undefined;
+}
+
+function nodeSectionVisible(nodeSpec: WorkflowNodeSpec | undefined, section: "input" | "output" | "events", fallback: boolean): boolean {
+  const config = recordValue(nodeSpec?.ui?.sections?.[section]);
+  if (!config) return fallback;
+  if (typeof config.visible === "boolean") return config.visible;
+  if (typeof config.hidden === "boolean") return !config.hidden;
+  return fallback;
+}
+
+function nodeSectionWrapped(nodeSpec: WorkflowNodeSpec | undefined, section: "input" | "output" | "events", fallback: boolean): boolean {
+  const config = recordValue(nodeSpec?.ui?.sections?.[section]);
+  if (!config) return fallback;
+  if (typeof config.wrapper === "boolean") return config.wrapper;
+  if (typeof config.wrapped === "boolean") return config.wrapped;
+  return fallback;
 }
 
 function splitLines(value: string): string[] {

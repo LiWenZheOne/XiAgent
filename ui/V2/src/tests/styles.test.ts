@@ -24,4 +24,20 @@ describe("V2 CSS safeguards", () => {
     expect(selectorRule(".asset-list-panel, .asset-detail-panel")).toContain("min-width: 0");
     expect(selectorRule(".asset-detail-panel h3")).toContain("overflow-wrap: anywhere");
   });
+
+  it("uses masonry columns for variable-height node image previews", () => {
+    expect(selectorRule(".image-gallery")).toContain("column-width");
+    expect(selectorRule(".image-gallery")).toContain("column-gap");
+    expect(css).toMatch(/\.image-gallery img\s*\{[^}]*break-inside:\s*avoid/s);
+    expect(selectorRule(".image-viewer-thumb")).toContain("break-inside: avoid");
+    expect(selectorRule(".asset-image-card-grid")).toContain("column-width");
+    expect(selectorRule(".asset-image-card")).toContain("break-inside: avoid");
+  });
+
+  it("uses masonry columns for variable-height control library cards", () => {
+    expect(selectorRule(".control-grid")).toContain("column-width");
+    expect(selectorRule(".control-grid")).toContain("column-gap");
+    expect(selectorRule(".control-card")).toContain("break-inside: avoid");
+    expect(selectorRule(".control-card")).toContain("margin: 0 0 14px");
+  });
 });

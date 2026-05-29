@@ -27,7 +27,7 @@ from xiagent.nodes.tools.assemble_storyboard_context import AssembleStoryboardCo
 from xiagent.nodes.tools.asset_lookup import AssetLookupNode
 from xiagent.nodes.tools.create_text_asset import CreateTextAssetNode
 from xiagent.nodes.tools.enrich_characters import EnrichCharactersNode
-from xiagent.nodes.tools.merge_asset_images import MergeAssetImagesNode
+from xiagent.nodes.tools.complete_asset_images import CompleteAssetImagesNode
 from xiagent.nodes.tools.script_split import ScriptSplitNode
 from xiagent.nodes.tools.storyboard_prompt import StoryboardPromptAssemblerNode
 from xiagent.runtime import input_resolver as _input_resolver_mod
@@ -83,8 +83,9 @@ def test_orchestration_workflow_node_list(test_settings) -> None:
         "review_assets",
         "upload_images",
         "generate_prompt_v2",
-        "generate_asset_images_v2",
-        "merge_asset_images",
+        "prepare_asset_images",
+        "generate_missing_asset_images",
+        "merge_completed_asset_images",
         "split_script",
         "assign_assets_to_segments",
         "assemble_storyboard_context",
@@ -113,10 +114,11 @@ def test_orchestration_workflow_node_list(test_settings) -> None:
         "match_props_by_name": "tool.asset_lookup.v1",
         "enrich_props": "tool.enrich_characters.v1",
         "review_assets": "system.human_approval.v1",
-        "upload_images": "system.human_approval.v1",
         "generate_prompt_v2": "ai.deepseek_structured_json.v1",
-        "generate_asset_images_v2": "ai.runninghub_image_to_image.v2",
-        "merge_asset_images": "tool.merge_asset_images.v1",
+        "upload_images": "system.human_approval.v1",
+        "prepare_asset_images": "tool.complete_asset_images.v1",
+        "generate_missing_asset_images": "ai.runninghub_image_to_image.v2",
+        "merge_completed_asset_images": "tool.complete_asset_images.v1",
         "split_script": "tool.script_split.v1",
         "assign_assets_to_segments": "ai.deepseek_structured_json.v1",
         "assemble_storyboard_context": "tool.assemble_storyboard_context.v1",
@@ -141,14 +143,14 @@ def test_orchestration_workflow_edges_are_dag(test_settings) -> None:
     assert len(conditional_edges) == 2
     assert conditional_edges == [
         {
-            "from": "review_assets",
-            "to": "upload_images",
-            "when": {"path": "$nodes.collect_asset_storyboard_input.output.generate_assets", "equals": "手动上传"},
+            "from": "prepare_asset_images",
+            "to": "generate_missing_asset_images",
+            "when": {"path": "$nodes.prepare_asset_images.output.next_action", "equals": "generate_missing"},
         },
         {
-            "from": "review_assets",
-            "to": "generate_prompt_v2",
-            "when": {"path": "$nodes.collect_asset_storyboard_input.output.generate_assets", "equals": "自动生成"},
+            "from": "prepare_asset_images",
+            "to": "merge_completed_asset_images",
+            "when": {"path": "$nodes.prepare_asset_images.output.next_action", "equals": "finish"},
         },
     ]
     assert unconditional_edges == [
@@ -166,10 +168,11 @@ def test_orchestration_workflow_edges_are_dag(test_settings) -> None:
         {"from": "enrich_characters", "to": "match_variants"},
         {"from": "match_variants", "to": "check_accessories"},
         {"from": "check_accessories", "to": "review_assets"},
-        {"from": "generate_prompt_v2", "to": "generate_asset_images_v2"},
-        {"from": "upload_images", "to": "merge_asset_images"},
-        {"from": "generate_asset_images_v2", "to": "merge_asset_images"},
-        {"from": "merge_asset_images", "to": "split_script"},
+        {"from": "review_assets", "to": "generate_prompt_v2"},
+        {"from": "generate_prompt_v2", "to": "upload_images"},
+        {"from": "upload_images", "to": "prepare_asset_images"},
+        {"from": "generate_missing_asset_images", "to": "merge_completed_asset_images"},
+        {"from": "merge_completed_asset_images", "to": "split_script"},
         {"from": "split_script", "to": "assign_assets_to_segments"},
         {"from": "assign_assets_to_segments", "to": "assemble_storyboard_context"},
         {"from": "assemble_storyboard_context", "to": "describe_panels"},
@@ -194,9 +197,9 @@ def test_orchestration_workflow_manual_path_valid(test_settings) -> None:
 
     edges = contract["edges"]
     manual_edge = {
-        "from": "review_assets",
-        "to": "upload_images",
-        "when": {"path": "$nodes.collect_asset_storyboard_input.output.generate_assets", "equals": "手动上传"},
+        "from": "prepare_asset_images",
+        "to": "merge_completed_asset_images",
+        "when": {"path": "$nodes.prepare_asset_images.output.next_action", "equals": "finish"},
     }
 
     assert manual_edge in edges
@@ -315,7 +318,16 @@ class FakeOrchestrationRouter(ChatModelRouter):
                 '"existing_accessories": [], '
                 '"reason": "新角色无已有配件"}'
             ),
-            # 7. assign_assets_to_segments — single DeepSeekStructuredJsonNode call
+            # 7. generate_prompt_v2 — single DeepSeekStructuredJsonNode call
+            (
+                '{"prompt_results": [{"full_name": "林冲", '
+                '"think": "角色当前状态为囚服雪地，默认变体为官服，'
+                '需将官服改为囚服，添加花枪和旧毡笠。", '
+                '"prompt": "请将图中角色的官服改成囚服，'
+                '头戴旧毡笠，手持花枪，保持风格和其它特征不变", '
+                '"reference_image_url": "https://cdn.test/template.png"}]}'
+            ),
+            # 8. assign_assets_to_segments — single DeepSeekStructuredJsonNode call
             (
                 '{"segment_assignments": [{"segment_index": 0, '
                 '"characters": [{"full_name": "林冲", '
@@ -328,7 +340,7 @@ class FakeOrchestrationRouter(ChatModelRouter):
                 '"variant": "囚服雪地"}], '
                 '"key_props": ["花枪"]}]}'
             ),
-            # 8. describe_panels — single DeepSeekStructuredJsonNode call
+            # 9. describe_panels — single DeepSeekStructuredJsonNode call
             (
                 '{"segment_descriptions": [{"index": 0, '
                 '"segment_title": "山神庙外踏雪", '
@@ -345,7 +357,7 @@ class FakeOrchestrationRouter(ChatModelRouter):
                 '"style": "电影感国风动画", '
                 '"constraints": "保持动态连贯性。"}]}]}'
             ),
-            # 9. extract_panel_image_urls — single DeepSeekStructuredJsonNode call
+            # 10. extract_panel_image_urls — single DeepSeekStructuredJsonNode call
             (
                 '{"panel_image_urls": [{"full_name": "林冲", '
                 '"image_url": "https://cdn.test/林冲_囚服雪地.png", '
@@ -355,7 +367,7 @@ class FakeOrchestrationRouter(ChatModelRouter):
                 '"style": "电影感国风动画", '
                 '"constraints": "保持角色服装发型一致。"}'
             ),
-            # 10. safety buffer — extra response for unexpected parallel calls
+            # 11. safety buffer — extra response for unexpected parallel calls
             (
                 '{"reasoning": "通用补充响应。", '
                 '"result": "ok"}'
@@ -390,7 +402,7 @@ def _orchestration_registry(router: FakeOrchestrationRouter) -> NodeRegistry:
     registry = NodeRegistry()
     registry.register(SystemUserInputNode())
     registry.register(HumanApprovalNode())
-    registry.register(MergeAssetImagesNode())
+    registry.register(CompleteAssetImagesNode())
     registry.register(ScriptSplitNode())
     registry.register(AssembleStoryboardContextNode())
     registry.register(AssetLookupNode())
@@ -577,7 +589,11 @@ async def test_orchestration_auto_generate_path(
         name="模板角色",
         storage_uri="https://cdn.test/template.png",
     )
-    answers = iter(["approved"])
+    answers = iter([
+        "approved",
+        "[]",
+        "generate_missing",
+    ])
     runner = WorkflowTestRunner(
         session=session,
         console=ConsoleIO(input_func=lambda prompt: next(answers)),
@@ -588,23 +604,21 @@ async def test_orchestration_auto_generate_path(
         input_data={
             "script": _long_shuihu_script(),
             "background": "水浒传",
-            "generate_assets": "自动生成",
-            "template_image_url": "https://cdn.test/template.png",
         },
     )
 
-    # Verify: generate_prompt_v2 + generate_asset_images_v2 executed,
-    # upload_images NOT executed
+    # Verify: generate_prompt_v2 + upload_images + missing image generation executed.
     executed_node_ids = [execution.node_id for execution in result.node_executions]
     assert "generate_prompt_v2" in executed_node_ids
-    assert "generate_asset_images_v2" in executed_node_ids
-    assert "upload_images" not in executed_node_ids
+    assert "upload_images" in executed_node_ids
+    assert "prepare_asset_images" in executed_node_ids
+    assert "generate_missing_asset_images" in executed_node_ids
 
-    # Verify: generate_asset_images_v2 outputs asset_images array
+    # Verify: generate_missing_asset_images outputs asset_images array
     # with source="ai_generated"
     v2_execution = next(
         ex for ex in result.node_executions
-        if ex.node_id == "generate_asset_images_v2"
+        if ex.node_id == "generate_missing_asset_images"
     )
     assert v2_execution.status == "succeeded"
     asset_images = v2_execution.output_snapshot.get("asset_images", [])
@@ -663,7 +677,7 @@ async def test_orchestration_manual_upload_path(
         except ValidationError as exc:
             if exc.code == "workflow_reference_missing_node_output":
                 # Reference to a node not executed (different conditional path).
-                # MergeAssetImagesNode handles missing inputs via .get() default.
+                # CompleteAssetImagesNode handles missing inputs via .get() default.
                 return []
             if exc.code == "invalid_workflow_reference" and (
                 "unknown variable" in exc.message
@@ -692,9 +706,11 @@ async def test_orchestration_manual_upload_path(
     answers = iter([
         "approved",
         (
-            '[{"full_name": "林冲", "image_url": '
+            '[{"asset_type": "character", "asset_key": "林冲", '
+            '"full_name": "林冲", "image_url": '
             '"https://cdn.test/林冲_囚服雪地.png", "source": "manual_upload"}]'
         ),
+        "finish",
         "approved",
         "approved",
     ])
@@ -708,7 +724,6 @@ async def test_orchestration_manual_upload_path(
         input_data={
             "script": _long_shuihu_script(),
             "background": "水浒传",
-            "generate_assets": "手动上传",
             "storyboard_target": {"segment_index": 0, "panel_index": 0},
         },
     )
@@ -716,8 +731,8 @@ async def test_orchestration_manual_upload_path(
     assert result.task.status == "succeeded"
     executed_node_ids = [execution.node_id for execution in result.node_executions]
     assert "upload_images" in executed_node_ids
-    assert "generate_prompt_v2" not in executed_node_ids
-    assert "generate_asset_images_v2" not in executed_node_ids
+    assert "generate_prompt_v2" in executed_node_ids
+    assert "generate_missing_asset_images" not in executed_node_ids
 
     generate_image_v2 = _execution_by_id(
         result.node_executions, "generate_image_v2"
@@ -935,10 +950,10 @@ def test_asset_image_result_workflow_output_schema(test_settings) -> None:
     """工作流中的 asset_images output schema：ai_generated 和 manual_upload 两种 source 均通过。"""
     contract = load_workflow_file(ORCHESTRATION_WORKFLOW_PATH)
     nodes_by_id = {node["id"]: node for node in contract["nodes"]}
-    schema = nodes_by_id["merge_asset_images"]["outputs"]["properties"]["asset_images"]["items"]
+    schema = nodes_by_id["merge_completed_asset_images"]["outputs"]["properties"]["asset_images"]["items"]
 
     assert schema["type"] == "object"
-    assert schema["required"] == ["full_name", "image_url", "source"]
+    assert schema["additionalProperties"] is True
 
     # ── ai_generated source ──
     validate_json_value(
@@ -962,24 +977,6 @@ def test_asset_image_result_workflow_output_schema(test_settings) -> None:
             "source": "manual_upload",
         },
     )
-
-    # ── invalid: wrong source enum ──
-    with pytest.raises(ValidationError):
-        validate_json_value(
-            schema,
-            {
-                "full_name": "林冲",
-                "image_url": "https://cdn.test/linchong.png",
-                "source": "unknown_source",
-            },
-        )
-
-    # ── invalid: missing required field ──
-    with pytest.raises(ValidationError):
-        validate_json_value(
-            schema,
-            {"full_name": "林冲", "source": "ai_generated"},
-        )
 
     validate_workflow_contract(contract, build_node_registry(test_settings))
 
@@ -1049,7 +1046,9 @@ async def test_prop_pipeline_execution(
     # upload_images is guided: ConsoleIO asks for each required field separately
     answers = iter([
         '{"decision": "approved"}',
-        '[{"full_name": "林冲", "image_url": "https://cdn.test/linchong.png", "source": "manual_upload"}]',
+        '[{"asset_type": "character", "asset_key": "林冲", '
+        '"full_name": "林冲", "image_url": "https://cdn.test/linchong.png", "source": "manual_upload"}]',
+        "finish",
         '{"decision": "approved"}',
         '{"decision": "approved", "selected_image_url": "https://cdn.test/storyboard.png", "revision_notes": ""}',
     ])
@@ -1063,7 +1062,6 @@ async def test_prop_pipeline_execution(
         input_data={
             "script": _long_shuihu_script(),
             "background": "水浒传",
-            "generate_assets": "手动上传",
             "storyboard_target": {"segment_index": 0, "panel_index": 0},
         },
     )
@@ -1175,7 +1173,7 @@ async def test_scene_pipeline_execution(
         except ValidationError as exc:
             if exc.code == "workflow_reference_missing_node_output":
                 # Reference to a node not executed (different conditional path).
-                # MergeAssetImagesNode handles missing inputs via .get() default.
+                # CompleteAssetImagesNode handles missing inputs via .get() default.
                 return []
             if exc.code == "invalid_workflow_reference" and (
                 "unknown variable" in exc.message
@@ -1201,21 +1199,24 @@ async def test_scene_pipeline_execution(
         .build()
     )
 
-    # Seed scene asset so lookup_scene_assets and match_scenes_by_name find it
+    # Seed location asset so lookup_scene_assets and match_scenes_by_name find it.
+    # Internal node ids still use "scene" for compatibility, but user-facing
+    # asset taxonomy now uses the "地点" tag.
     await _seed_text_asset(
         database_path=tmp_path / "workflow-test.sqlite3",
         user_id=session.user.user_id,
         name="山神庙",
-        tags=["场景"],
+        tags=["地点"],
     )
 
     # 4 human approvals: review_assets, upload_images,
     # review_storyboard_prompt, review_storyboard_image
     answers = iter([
         '{"decision": "approved"}',
-        '[{"full_name": "林冲", '
-        '"image_url": "https://cdn.test/linchong.png", '
+        '[{"asset_type": "character", "asset_key": "林冲", '
+        '"full_name": "林冲", "image_url": "https://cdn.test/linchong.png", '
         '"source": "manual_upload"}]',
+        "finish",
         '{"decision": "approved"}',
         '{"decision": "approved", '
         '"selected_image_url": "https://cdn.test/storyboard.png", '
@@ -1231,7 +1232,6 @@ async def test_scene_pipeline_execution(
         input_data={
             "script": _long_shuihu_script(),
             "background": "水浒传",
-            "generate_assets": "手动上传",
             "storyboard_target": {"segment_index": 0, "panel_index": 0},
         },
     )
@@ -1239,7 +1239,7 @@ async def test_scene_pipeline_execution(
     assert result.task.status == "succeeded", f"Task status: {result.task.status}"
     executed_node_ids = [execution.node_id for execution in result.node_executions]
 
-    # ── Scene pipeline nodes MUST execute ──
+    # ── Location pipeline nodes MUST execute ──
     scene_pipeline = ["extract_scenes", "lookup_scene_assets",
                       "match_scenes_by_name", "enrich_scenes"]
     for node_id in scene_pipeline:

@@ -112,11 +112,14 @@ async function readTaskEventStream(
 function parseSseBlock(block: string): TaskEvent | null {
   if (!block.trim()) return null;
   let eventType = "message";
+  let eventId = "";
   const dataLines: string[] = [];
   for (const line of block.split(/\r?\n/)) {
+    if (line.startsWith("id:")) eventId = line.slice("id:".length).trim();
     if (line.startsWith("event:")) eventType = line.slice("event:".length).trim();
     if (line.startsWith("data:")) dataLines.push(line.slice("data:".length).trim());
   }
+  if (!dataLines.length) return null;
   const data = dataLines.join("\n");
   let payload: Record<string, unknown> = {};
   if (data) {
@@ -128,6 +131,7 @@ function parseSseBlock(block: string): TaskEvent | null {
     }
   }
   return {
+    event_id: eventId || undefined,
     event_type: eventType,
     node_id: typeof payload.node_id === "string" ? payload.node_id : null,
     message: typeof payload.message === "string" ? payload.message : undefined,

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import asdict
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict
 
@@ -119,20 +120,31 @@ async def delete_task(
 async def stream_task_events(
     task_id: str,
     project_id: str,
+    request: Request,
     services: Annotated[ApiServices, Depends(get_services)],
     current_user: Annotated[UserRecord, Depends(get_current_user)],
 ) -> StreamingResponse:
-    events = await services.runtime.list_events(
-        user_id=current_user.user_id,
-        project_id=project_id,
-        task_id=task_id,
-    )
+    user_id = current_user.user_id
 
-    async def stream_existing_events():
-        for event in events:
-            yield format_sse_event(event)
+    async def stream_events():
+        sent_event_ids: set[str] = set()
+        while not await request.is_disconnected():
+            events = await services.runtime.list_events(
+                user_id=user_id,
+                project_id=project_id,
+                task_id=task_id,
+            )
+            new_events = [event for event in events if event.event_id not in sent_event_ids]
+            for event in new_events:
+                sent_event_ids.add(event.event_id)
+                yield format_sse_event(event)
+            if any(_task_event_is_terminal(event.event_type) for event in events):
+                break
+            if not new_events:
+                yield ": heartbeat\n\n"
+            await asyncio.sleep(1)
 
-    return StreamingResponse(stream_existing_events(), media_type="text/event-stream")
+    return StreamingResponse(stream_events(), media_type="text/event-stream")
 
 
 @router.post("/{task_id}/resume")
@@ -191,3 +203,7 @@ def _group_node_attempts(executions: list[NodeExecutionRecord]) -> dict[str, lis
     for execution in executions:
         grouped.setdefault(execution.node_id, []).append(asdict(execution))
     return grouped
+
+
+def _task_event_is_terminal(event_type: str) -> bool:
+    return event_type in {"task_succeeded", "task_failed", "task_cancelled", "task_canceled", "task_archived"}

@@ -1,11 +1,14 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApprovalControl } from "../node-ui/controls/ApprovalControl";
+import { AssetImageCardsControl } from "../node-ui/controls/AssetImageCardsControl";
+import { AssetSummaryTableControl } from "../node-ui/controls/AssetSummaryTableControl";
 import { ControlLibraryPage } from "../node-ui/ControlLibraryPage";
 import { ImageChoiceThreeControl } from "../node-ui/controls/ImageChoiceThreeControl";
 import { SchemaFormControl } from "../node-ui/controls/SchemaFormControl";
+import { ScriptTextInputControl } from "../node-ui/controls/ScriptTextInputControl";
 import { getNodeUiControl, resolveNodeControlConfig, resolveNodeInteractionConfig } from "../node-ui/registry";
 import type { JsonSchema, NodeUiControlConfig, TaskNodeExecution, UiControlDescriptor, WorkflowNodeSpec } from "../api/types";
 
@@ -86,6 +89,24 @@ const controlDescriptors: UiControlDescriptor[] = [
     description: "人工审批交互控件。",
   },
   {
+    control_id: "ui.interaction.asset_image_cards.v1",
+    version: "1.0.0",
+    name: "Asset Image Cards",
+    kind: "interaction",
+    tags: ["asset", "image", "cards", "upload"],
+    variants: [{ name: "grouped_cards", label: "按资产类型分组的补图卡片", tags: [], modes: ["interactive", "readonly"], required_bindings: [] }],
+    description: "按资产类型分组的补图卡片。",
+  },
+  {
+    control_id: "ui.interaction.asset_summary_table.v1",
+    version: "1.0.0",
+    name: "Asset Summary Table",
+    kind: "interaction",
+    tags: ["asset", "summary", "table", "upload"],
+    variants: [{ name: "tabbed_table", label: "资产汇总列表", tags: [], modes: ["interactive", "readonly"], required_bindings: [] }],
+    description: "P3 资产列表汇总控件。",
+  },
+  {
     control_id: "ui.input.schema_form.v1",
     version: "1.0.0",
     name: "Schema Input Form",
@@ -93,6 +114,15 @@ const controlDescriptors: UiControlDescriptor[] = [
     tags: ["schema", "input", "form", "interactive"],
     variants: [{ name: "default", label: "通用 schema 输入表单", tags: [], modes: ["input", "readonly"], required_bindings: [] }],
     description: "在输入节点中按 schema 收集用户提交的结构化参数。",
+  },
+  {
+    control_id: "ui.input.script_text.v1",
+    version: "1.0.0",
+    name: "Script Text Input",
+    kind: "input",
+    tags: ["script", "text", "upload"],
+    variants: [{ name: "default", label: "剧本文本输入", tags: [], modes: ["input", "readonly"], required_bindings: [] }],
+    description: "用于剧本输入节点。",
   },
   {
     control_id: "ui.input.asset_image_picker.v1",
@@ -145,6 +175,214 @@ describe("node-ui controls", () => {
       selected_item: { id: "b", label: "第二张", image_url: "https://cdn.example.com/b.png" },
       selected_image_url: "https://cdn.example.com/b.png",
     });
+  });
+
+  it("renders matched asset cards and submits only uploaded card images for missing generation", async () => {
+    const onSubmit = vi.fn();
+    const fetchMock = vi.fn(() =>
+      jsonResponse({
+        asset_id: "asset-upload-linchong",
+        name: "林冲_图像",
+        asset_type: "file",
+        scope: "global",
+        metadata: { public_url: "https://cdn.example.com/linchong.png" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const cardNode: TaskNodeExecution = {
+      node_execution_id: "exec-card",
+      node_id: "upload_images",
+      node_ref: "system.human_approval.v1",
+      status: "waiting",
+      input_snapshot: {
+        characters: [
+          {
+            full_name: "林冲",
+            aliases: ["林教头"],
+            summary: "八十万禁军教头，武艺高强。",
+            character_status: "被发配沧州途中，身着囚服，面带风霜。",
+          },
+          {
+            full_name: "鲁智深",
+            aliases: ["花和尚"],
+            summary: "梁山好汉。",
+            character_status: "身穿僧衣。",
+          },
+        ],
+        enriched_characters: [
+          { full_name: "林冲", matched: true, matched_asset_name: "林冲_默认" },
+          { full_name: "鲁智深", matched: false },
+        ],
+        variant_results: [
+          { full_name: "林冲", matched_variant: "默认" },
+          { full_name: "鲁智深", new_variant_name: "鲁智深_僧衣" },
+        ],
+        accessory_results: [
+          { full_name: "林冲", reason: "无配件" },
+          { full_name: "鲁智深", new_accessories: ["禅杖"] },
+        ],
+        prompt_results: [
+          { full_name: "林冲", prompt: "请将图中角色改成囚服", reference_image_url: "https://cdn.example.com/ref-linchong.png" },
+          { full_name: "鲁智深", prompt: "请将图中角色改成僧衣", reference_image_url: "https://cdn.example.com/ref-luzhishen.png" },
+          { full_name: "水火棍", prompt: "生成水火棍道具图", reference_image_url: "https://cdn.example.com/ref-prop.png" },
+        ],
+        approved_assets: {
+          props: [
+            {
+              name: "水火棍",
+              matched: true,
+              matched_asset_name: "水火棍旧图",
+              matched_asset_image_url: "https://cdn.example.com/ref-prop.png",
+            },
+          ],
+        },
+      },
+    };
+
+    render(
+      <AssetImageCardsControl
+        config={{ control_id: "ui.interaction.asset_image_cards.v1", variant: "grouped_cards", mode: "interactive" }}
+        node={cardNode}
+        onSubmit={onSubmit}
+      />,
+    );
+
+    expect(screen.getByText("角色")).toBeInTheDocument();
+    expect(screen.getByText("林冲")).toBeInTheDocument();
+    expect(screen.getAllByText("水火棍").length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("link", { name: "查看参考图" }).map((link) => link.getAttribute("href"))).toContain("https://cdn.example.com/ref-prop.png");
+    expect(screen.getByText("已匹配")).toBeInTheDocument();
+    expect(screen.getByText("林冲_默认")).toBeInTheDocument();
+    expect(screen.getByText("鲁智深")).toBeInTheDocument();
+
+    expect(screen.queryByLabelText("林冲 图片地址")).not.toBeInTheDocument();
+    const file = new File(["fake"], "linchong.png", { type: "image/png" });
+    await userEvent.upload(screen.getAllByLabelText("上传图像")[0], file);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/assets/files", expect.objectContaining({ method: "POST" })));
+    await userEvent.click(screen.getByRole("button", { name: "一键生成未上传图像" }));
+
+    expect(onSubmit).toHaveBeenCalledWith({
+      decision: "generate_missing",
+      asset_images: [
+        {
+          asset_type: "character",
+          asset_key: "林冲",
+          full_name: "林冲",
+          image_url: "https://cdn.example.com/linchong.png",
+          source: "manual_upload",
+        },
+      ],
+    });
+  });
+
+  it("renders the P3 asset summary table with tabs and submitted image rows", async () => {
+    const onSubmit = vi.fn();
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.startsWith("/api/assets/search")) {
+        return jsonResponse({
+          items: [
+            {
+              asset_id: "asset-luzhishen",
+              asset_type: "text",
+              name: "鲁智深",
+              scope: "global",
+              mime_type: null,
+              size_bytes: null,
+              metadata: { tags: ["角色"], public_url: "https://cdn.example.com/luzhishen-ref.png" },
+              created_at: "2026-05-27T10:00:00Z",
+            },
+            {
+              asset_id: "asset-yazhulin",
+              asset_type: "text",
+              name: "野猪林资产",
+              scope: "global",
+              mime_type: null,
+              size_bytes: null,
+              metadata: { tags: ["地点"] },
+              created_at: "2026-05-27T10:00:00Z",
+            },
+          ],
+        });
+      }
+      return jsonResponse({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const reviewNode: TaskNodeExecution = {
+      node_execution_id: "exec-review",
+      node_id: "review_assets",
+      node_ref: "system.human_approval.v1",
+      status: "waiting",
+      input_snapshot: {
+        characters: [
+          { full_name: "林冲", aliases: ["林教头"], summary: "禁军教头", character_status: "发配途中" },
+        ],
+        enriched_characters: [
+          { full_name: "林冲", matched: true, matched_asset_name: "林冲_默认" },
+        ],
+        scenes: [
+          { name: "野猪林", description: "密林埋伏地", time_of_day: "白天" },
+        ],
+        enriched_scenes: [
+          { name: "野猪林", matched: false },
+        ],
+        props: [
+          { full_name: "水火棍", description: "差役棍棒", category: "武器" },
+        ],
+        enriched_props: [
+          { full_name: "水火棍", matched: false },
+        ],
+      },
+    };
+
+    render(
+      <AssetSummaryTableControl
+        config={{ control_id: "ui.interaction.asset_summary_table.v1", variant: "tabbed_table", mode: "interactive" }}
+        node={reviewNode}
+        onSubmit={onSubmit}
+      />,
+    );
+
+    expect(screen.getByRole("tab", { name: /角色/ })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /地点/ })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /道具/ })).toBeInTheDocument();
+    expect(screen.getByDisplayValue("林冲")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "林冲_默认" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("tab", { name: /道具/ }));
+    expect(screen.getByRole("textbox", { name: "水火棍 关联角色" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("tab", { name: /角色/ }));
+
+    await userEvent.click(screen.getByRole("button", { name: "林冲_默认" }));
+    expect(await screen.findByRole("dialog", { name: "选择匹配资产" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /鲁智深/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /野猪林资产/ })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /鲁智深/ }));
+
+    await userEvent.click(screen.getByRole("button", { name: "新增角色" }));
+    let nameInputs = screen.getAllByLabelText("角色名称");
+    await userEvent.type(nameInputs[nameInputs.length - 1], "武松");
+    await userEvent.click(screen.getByRole("button", { name: "新增角色" }));
+    nameInputs = screen.getAllByLabelText("角色名称");
+    await userEvent.type(nameInputs[nameInputs.length - 1], "宋江");
+    const deleteButtons = screen.getAllByRole("button", { name: "删除" });
+    await userEvent.click(deleteButtons[deleteButtons.length - 1]);
+    expect(screen.getAllByLabelText("角色名称")).toHaveLength(2);
+    await userEvent.click(screen.getByRole("button", { name: "确认并继续" }));
+
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+      decision: "approved",
+      approved_assets: expect.objectContaining({
+        characters: [
+          expect.objectContaining({
+            name: "林冲",
+            matched_asset_name: "鲁智深",
+            matched_asset_image_url: "https://cdn.example.com/luzhishen-ref.png",
+          }),
+          expect.objectContaining({ name: "武松" }),
+        ],
+      }),
+      asset_images: [],
+    }));
   });
 
   it("shows an in-node preview for every manifest control in the control library", async () => {
@@ -268,6 +506,90 @@ describe("node-ui controls", () => {
     await waitFor(() => {
       expect(screen.getByText(/尚未在 V2 注册/)).toBeInTheDocument();
     });
+  });
+
+  it("imports txt files and submits script text input", async () => {
+    const onSubmit = vi.fn();
+    const inputSchema: JsonSchema = {
+      type: "object",
+      required: ["script", "background"],
+      properties: {
+        script: { type: "string", title: "剧本内容" },
+        background: { type: "string", title: "世界背景", default: "水浒传" },
+      },
+    };
+    const inputNode: TaskNodeExecution = {
+      node_execution_id: "exec-script",
+      node_id: "collect_asset_input",
+      node_ref: "system.user_input.v1",
+      status: "waiting",
+      input_snapshot: {},
+      output_snapshot: null,
+      metadata: { input_schema: inputSchema },
+    };
+
+    render(
+      <ScriptTextInputControl
+        config={{ control_id: "ui.input.script_text.v1", variant: "default", mode: "input" }}
+        node={inputNode}
+        onSubmit={onSubmit}
+        slot="interaction"
+      />,
+    );
+
+    await userEvent.upload(screen.getByLabelText("上传 Word/TXT"), new File(["武松打虎"], "script.txt", { type: "text/plain" }));
+    expect(await screen.findByText("已导入：script.txt")).toBeInTheDocument();
+    expect(screen.getByLabelText("剧本内容")).toHaveValue("武松打虎");
+    expect(screen.getByLabelText("世界背景")).toHaveValue("水浒传");
+
+    await userEvent.click(screen.getByRole("button", { name: "提交并继续" }));
+
+    expect(onSubmit).toHaveBeenCalledWith({
+      script: "武松打虎",
+      background: "水浒传",
+    });
+  });
+
+  it("imports script files by dropping them on the script field", async () => {
+    const onSubmit = vi.fn();
+    const inputSchema: JsonSchema = {
+      type: "object",
+      required: ["script", "background"],
+      properties: {
+        script: { type: "string", title: "剧本内容" },
+        background: { type: "string", title: "世界背景", default: "水浒传" },
+      },
+    };
+    const inputNode: TaskNodeExecution = {
+      node_execution_id: "exec-script-drop",
+      node_id: "collect_asset_input",
+      node_ref: "system.user_input.v1",
+      status: "waiting",
+      input_snapshot: {},
+      output_snapshot: null,
+      metadata: { input_schema: inputSchema },
+    };
+
+    render(
+      <ScriptTextInputControl
+        config={{ control_id: "ui.input.script_text.v1", variant: "default", mode: "input" }}
+        node={inputNode}
+        onSubmit={onSubmit}
+        slot="interaction"
+      />,
+    );
+
+    const dropTarget = screen.getByLabelText("剧本内容").closest(".script-textarea-field") as HTMLElement;
+    fireEvent.dragOver(dropTarget, {
+      dataTransfer: { files: [new File(["鲁智深倒拔垂杨柳"], "drop-script.txt", { type: "text/plain" })] },
+    });
+    expect(dropTarget).toHaveClass("dragging");
+    fireEvent.drop(dropTarget, {
+      dataTransfer: { files: [new File(["鲁智深倒拔垂杨柳"], "drop-script.txt", { type: "text/plain" })] },
+    });
+
+    expect(await screen.findByText("已导入：drop-script.txt")).toBeInTheDocument();
+    expect(screen.getByLabelText("剧本内容")).toHaveValue("鲁智深倒拔垂杨柳");
   });
 
   it("renders node user input through schema form and the reusable asset image picker", async () => {

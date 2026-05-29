@@ -180,6 +180,90 @@ def build_builtin_ui_control_catalog() -> UiControlCatalog:
                 description="人工审批交互控件。",
             ),
             UiControlDescriptor(
+                control_id="ui.interaction.asset_image_cards.v1",
+                version="1.0.0",
+                name="Asset Image Cards",
+                kind="interaction",
+                tags=("asset", "image", "cards", "upload", "generation", "interactive"),
+                variants=(
+                    UiControlVariant(
+                        name="grouped_cards",
+                        label="按资产类型分组的补图卡片",
+                        modes=("interactive", "readonly"),
+                        submit_schema={
+                            "type": "object",
+                            "required": ["decision"],
+                            "properties": {
+                                "decision": {
+                                    "type": "string",
+                                    "enum": ["finish", "generate_missing"],
+                                },
+                                "asset_images": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "required": ["asset_type", "asset_key", "image_url"],
+                                        "properties": {
+                                            "asset_type": {"type": "string"},
+                                            "asset_key": {"type": "string"},
+                                            "full_name": {"type": "string"},
+                                            "image_url": {"type": "string"},
+                                            "asset_id": {"type": "string"},
+                                            "source": {"type": "string"},
+                                        },
+                                        "additionalProperties": True,
+                                    },
+                                },
+                            },
+                            "additionalProperties": True,
+                        },
+                    ),
+                ),
+                description="展示角色、地点、道具资产卡片，支持逐卡上传图片并只生成未上传资产。",
+            ),
+            UiControlDescriptor(
+                control_id="ui.interaction.asset_summary_table.v1",
+                version="1.0.0",
+                name="Asset Summary Table",
+                kind="interaction",
+                tags=("asset", "summary", "table", "tabs", "upload", "interactive"),
+                variants=(
+                    UiControlVariant(
+                        name="tabbed_table",
+                        label="资产汇总列表",
+                        modes=("interactive", "readonly"),
+                        submit_schema={
+                            "type": "object",
+                            "required": ["decision"],
+                            "properties": {
+                                "decision": {
+                                    "type": "string",
+                                    "enum": ["approved", "needs_changes"],
+                                },
+                                "approved_assets": {"type": "object"},
+                                "asset_images": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "required": ["asset_type", "asset_key", "image_url"],
+                                        "properties": {
+                                            "asset_type": {"type": "string"},
+                                            "asset_key": {"type": "string"},
+                                            "full_name": {"type": "string"},
+                                            "image_url": {"type": "string"},
+                                            "source": {"type": "string"},
+                                        },
+                                        "additionalProperties": True,
+                                    },
+                                },
+                            },
+                            "additionalProperties": True,
+                        },
+                    ),
+                ),
+                description="P3 资产列表汇总控件，按角色、地点、道具三类 tab 展示字段、匹配资产选择和图像上传列，支持新增和删除列表项。",
+            ),
+            UiControlDescriptor(
                 control_id="ui.input.schema_form.v1",
                 version="1.0.0",
                 name="Schema Input Form",
@@ -194,6 +278,22 @@ def build_builtin_ui_control_catalog() -> UiControlCatalog:
                     ),
                 ),
                 description="在输入节点中按 schema 收集用户提交的结构化参数。",
+            ),
+            UiControlDescriptor(
+                control_id="ui.input.script_text.v1",
+                version="1.0.0",
+                name="Script Text Input",
+                kind="input",
+                tags=("script", "text", "upload", "docx", "txt", "input"),
+                variants=(
+                    UiControlVariant(
+                        name="default",
+                        label="剧本文本输入",
+                        modes=("input", "readonly"),
+                        submit_schema={"type": "object", "additionalProperties": True},
+                    ),
+                ),
+                description="用于剧本输入节点，支持粘贴文本、上传 TXT 或在浏览器中解析 DOCX 正文。",
             ),
             UiControlDescriptor(
                 control_id="ui.input.asset_image_picker.v1",

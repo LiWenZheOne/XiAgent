@@ -97,6 +97,9 @@ const statusLabels: Record<string, string> = {
   cancelled: "已取消",
   superseded: "历史版本",
   cleared: "等待重跑",
+  not_started: "待运行",
+  branch_pending: "待判定",
+  skipped: "已跳过",
 };
 
 export function buildSchemaFields(schema?: JsonSchema): SchemaField[] {

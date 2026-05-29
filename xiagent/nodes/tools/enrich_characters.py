@@ -119,6 +119,9 @@ class EnrichCharactersNode(BaseNode):
                 result["matched"] = True
                 result["matched_asset_id"] = asset.get("asset_id")
                 result["matched_asset_name"] = asset.get("name", "")
+                image_url = _asset_image_url(asset)
+                if image_url:
+                    result["matched_asset_image_url"] = image_url
             else:
                 # 2. Semantic match fallback
                 semantic = name_to_semantic.get(full_name)
@@ -126,6 +129,9 @@ class EnrichCharactersNode(BaseNode):
                     result["matched"] = True
                     result["matched_asset_id"] = semantic.get("matched_asset_id")
                     result["matched_asset_name"] = semantic.get("matched_asset_name", "")
+                    image_url = _asset_image_url(semantic)
+                    if image_url:
+                        result["matched_asset_image_url"] = image_url
                 else:
                     result["matched"] = False
                     result["matched_asset_id"] = None
@@ -140,3 +146,24 @@ class EnrichCharactersNode(BaseNode):
             status="succeeded",
             output={"characters": enriched},
         )
+
+
+def _asset_image_url(asset: Mapping[str, Any]) -> str | None:
+    for key in ("image_url", "public_url", "storage_uri"):
+        value = asset.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    metadata = asset.get("metadata")
+    if isinstance(metadata, Mapping):
+        for key in ("image_url", "public_url", "storage_uri"):
+            value = metadata.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        object_storage = metadata.get("object_storage")
+        if isinstance(object_storage, Mapping):
+            value = object_storage.get("public_url")
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+
+    return None

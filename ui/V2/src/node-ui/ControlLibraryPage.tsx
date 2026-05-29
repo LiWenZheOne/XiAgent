@@ -94,6 +94,22 @@ const fallbackSchemaPreviewSchema = {
   },
 };
 
+const scriptInputPreviewSchema = {
+  type: "object",
+  required: ["script", "background"],
+  properties: {
+    script: {
+      type: "string",
+      title: "剧本内容",
+    },
+    background: {
+      type: "string",
+      title: "世界背景",
+      default: "水浒传",
+    },
+  },
+};
+
 const controlPreviewFixtures: Record<string, ControlPreviewFixture[]> = {
   "ui.display.value.v1": [
     {
@@ -163,6 +179,86 @@ const controlPreviewFixtures: Record<string, ControlPreviewFixture[]> = {
       },
     },
   ],
+  "ui.interaction.asset_image_cards.v1": [
+    {
+      config: { control_id: "ui.interaction.asset_image_cards.v1", variant: "grouped_cards", mode: "interactive" },
+      node: {
+        node_execution_id: "preview-asset-image-cards",
+        node_id: "preview_asset_image_cards",
+        node_ref: "system.human_approval.v1",
+        status: "waiting",
+        input_snapshot: {
+          characters: [
+            {
+              full_name: "林冲",
+              aliases: ["林教头"],
+              summary: "八十万禁军教头，武艺高强。",
+              character_status: "被发配沧州途中，身着囚服，面带风霜。",
+              accessories: [],
+            },
+          ],
+          enriched_characters: [
+            {
+              full_name: "林冲",
+              matched: true,
+              matched_asset_name: "林冲_默认",
+            },
+          ],
+          variant_results: [
+            {
+              full_name: "林冲",
+              matched_variant: "默认",
+              reason: "已有默认变体",
+            },
+          ],
+          accessory_results: [
+            {
+              full_name: "林冲",
+              new_accessories: [],
+              reason: "无新增配件",
+            },
+          ],
+          prompt_results: [
+            {
+              full_name: "林冲",
+              prompt: "请将图中角色的官服改成囚服，保持风格和其它特征不变",
+              reference_image_url: sampleImageUrls[0],
+            },
+          ],
+        },
+      },
+      projectId: "global",
+    },
+  ],
+  "ui.interaction.asset_summary_table.v1": [
+    {
+      config: { control_id: "ui.interaction.asset_summary_table.v1", variant: "tabbed_table", mode: "interactive" },
+      node: {
+        node_execution_id: "preview-asset-summary-table",
+        node_id: "preview_asset_summary_table",
+        node_ref: "system.human_approval.v1",
+        status: "waiting",
+        input_snapshot: {
+          characters: [
+            {
+              full_name: "林冲",
+              aliases: ["林教头"],
+              summary: "八十万禁军教头，武艺高强。",
+              character_status: "被发配沧州途中，身着囚服。",
+            },
+          ],
+          enriched_characters: [{ full_name: "林冲", matched: true, matched_asset_name: "林冲_默认" }],
+          scenes: [{ name: "野猪林", description: "《水浒传》中林冲被押解途中经过的密林地点，常用于伏击和救援情节。", time_of_day: "白天" }],
+          enriched_scenes: [{ name: "野猪林", matched: false }],
+          props: [{ full_name: "水火棍", description: "押解差役所持棍棒。", category: "武器" }],
+          enriched_props: [{ full_name: "水火棍", matched: false }],
+          variant_results: [{ full_name: "林冲", matched_variant: "默认", reason: "已有默认变体" }],
+          accessory_results: [{ full_name: "林冲", reason: "无新增配件" }],
+        },
+      },
+      projectId: "global",
+    },
+  ],
   "ui.input.schema_form.v1": [
     {
       config: {
@@ -202,6 +298,26 @@ const controlPreviewFixtures: Record<string, ControlPreviewFixture[]> = {
         resolution: "",
         image_urls: [],
       },
+    },
+  ],
+  "ui.input.script_text.v1": [
+    {
+      config: { control_id: "ui.input.script_text.v1", variant: "default", mode: "input" },
+      node: {
+        node_execution_id: "preview-script-text",
+        node_id: "preview_script_text",
+        node_ref: "system.user_input.v1",
+        status: "waiting",
+        metadata: {
+          input_schema: scriptInputPreviewSchema,
+        },
+      },
+      nodeSpec: {
+        id: "preview_script_text",
+        ref: "system.user_input.v1",
+        outputs: scriptInputPreviewSchema,
+      },
+      slot: "interaction",
     },
   ],
   "ui.input.asset_image_picker.v1": [

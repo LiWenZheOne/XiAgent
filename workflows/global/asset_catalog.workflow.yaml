@@ -1,14 +1,57 @@
-workflow:
+﻿workflow:
   id: asset_catalog
   version: "1.0.0"
   scope: global
-  name: Asset Catalog
-  description: 从剧本中提取角色资产，P1全名精确匹配+LLM语义匹配，P2变体匹配+配件检查，审核后生成图像或手动上传。
+  name: 资产编目
+  description: 从剧本中提取角色、地点和道具资产，完成角色全名精确匹配、LLM语义匹配、变体匹配和配件检查，审核后按资产卡片上传图像或只生成缺图资产。
   ui:
     layout:
       node_io: vertical_stack
       default_collapsed_sections: ["input", "events"]
       default_expanded_sections: ["output"]
+    stages:
+      - id: p1_input
+        name: P1 用户输入
+        description: 收集剧本和世界背景，作为后续资产分析的业务输入。
+        nodes:
+          - collect_asset_catalog_input
+      - id: p2_asset_analysis
+        name: P2 资产分析
+        description: 提取角色、地点、道具，并完成已有资产、变体和配件匹配。
+        nodes:
+          - extract_characters
+          - lookup_existing_assets
+          - match_by_name
+          - semantic_match_characters
+          - enrich_characters
+          - extract_scenes
+          - lookup_scene_assets
+          - match_scenes_by_name
+          - enrich_scenes
+          - match_variants
+          - check_accessories
+          - extract_props
+          - lookup_prop_assets
+          - match_props_by_name
+          - enrich_props
+      - id: p3_user_confirm
+        name: P3 资产列表汇总
+        description: 汇总识别到的角色、地点、道具及匹配结果，支持逐项补充图像。
+        nodes:
+          - review_assets
+      - id: p4_asset_generation
+        name: P4 资产生成
+        description: 生成提示词，上传或自动补生成未上传图像。
+        nodes:
+          - generate_prompt
+          - upload_images
+          - prepare_asset_images
+          - generate_missing_asset_images
+          - merge_completed_asset_images
+      - id: p5_final_confirm
+        name: P5 最终确定
+        description: 汇总最终资产结果；后续可接入替换图像、下载和一键入库节点。
+        nodes: []
     defaults:
       ai:
         controls:
@@ -40,71 +83,69 @@ workflow:
             control_id: ui.display.value.v1
             variant: default
             mode: readonly
-      ai.runninghub_image_to_image.v1:
+      ai.runninghub_image_to_image.v2:
         controls:
           output:
             control_id: ui.display.image_viewer.v1
             variant: grid_modal
             mode: readonly
             bindings:
-              items_path: "$node.output.results"
-              image_url_path: url
-              label_path: text
+              items_path: "$node.output.asset_images"
+              image_url_path: image_url
+              label_path: full_name
 
 nodes:
   - id: collect_asset_catalog_input
     ref: system.user_input.v1
+    name: 剧本输入
     inputs:
       script:
         from_user: true
         schema:
           type: string
           minLength: 1
-      generate_assets:
-        from_user: true
-        schema:
-          type: string
-          enum: ["手动上传", "自动生成"]
       background:
         from_user: true
         schema:
           type: string
           minLength: 1
-      template_image_url:
-        from_user: true
-        required: false
-        schema:
-          type: string
+          default: 水浒传
     outputs:
       type: object
-      required: ["script", "generate_assets", "background"]
+      required: ["script", "background"]
       properties:
         script:
           type: string
           minLength: 1
-        generate_assets:
-          type: string
-          enum: ["手动上传", "自动生成"]
         background:
           type: string
           minLength: 1
-        template_image_url:
-          type: string
+          default: 水浒传
       additionalProperties: false
     config:
-      title: 填写资产抽取输入
-      description: 收集剧本、世界背景和资产生成方式。
+      title: 剧本输入
+      description: 上传 Word/TXT 或直接粘贴剧本，并确认世界背景。
     ui:
       controls:
         input:
-          control_id: ui.input.schema_form.v1
+          control_id: ui.input.script_text.v1
           variant: default
           mode: input
+          options:
+            submit_placement: stage_header
+      sections:
+        input:
+          wrapper: false
+        output:
+          visible: false
+        events:
+          visible: false
 
   # ===== P1: 角色资产匹配 =====
 
   - id: extract_characters
     ref: ai.deepseek_structured_json.v1
+    name: 提取角色信息
     inputs:
       system:
         template: |
@@ -123,6 +164,7 @@ nodes:
           角色收录条件：叙述段中有动作或状态描写，或作为对话段发言者且叙述段中在场。
           当使用代称或非全名称呼时，请根据原作推断角色的全名（如果不是你了解的作品，不需要推断全名。）
           当多个角色被一起称呼时，比如几位好汉，请根据原作和此时的剧情发展记录具体角色，每个角色单独记录。（没有名称的龙套角色不需要单独记录并且合称只作为一个单独角色。）
+          根据当前情景推断角色临时可附加的视觉配件，例如口罩、面巾、披风、围巾、斗笠、斗篷、包袱、兵器挂件等；只有叙述段显示其正在佩戴、携带、遮挡、披挂或此情景下极可能附着于角色时才记录。
           排除条件：仅在对话中被提及、谈论、派遣、回忆的角色不收录。
         vars:
           background:
@@ -144,7 +186,7 @@ nodes:
           - aliases：别名列表
           - summary：角色梗概（≤100字）
           - character_status：当前剧情阶段该角色的状态（一段自然语言的近况描述，含身份、处境、外貌等）
-          - accessories：当前可能有的配件列表（如["蒙面"]，无配件时为空数组）
+          - accessories：当前情景下可附加在角色身上的视觉配件列表（如["面巾", "披风"]，无配件时为空数组；不要把身份、身体特征或普通服装整体写成配件）
 
           根层级除 reasoning、characters 和 character_names 外不得包含其他键。
         vars:
@@ -194,6 +236,7 @@ nodes:
 
   - id: lookup_existing_assets
     ref: tool.asset_lookup.v1
+    name: 查询已有角色资产
     inputs:
       scope:
         value: "combined"
@@ -237,6 +280,7 @@ nodes:
 
   - id: match_by_name
     ref: tool.asset_lookup.v1
+    name: 按名称匹配角色资产
     inputs:
       scope:
         value: "combined"
@@ -282,6 +326,7 @@ nodes:
 
   - id: semantic_match_characters
     ref: ai.deepseek_structured_json.v1
+    name: 语义匹配角色资产
     inputs:
       system:
         value: |
@@ -344,6 +389,7 @@ nodes:
 
   - id: enrich_characters
     ref: tool.enrich_characters.v1
+    name: 汇总角色匹配信息
     inputs:
       characters:
         from: "$nodes.extract_characters.output.characters"
@@ -392,10 +438,212 @@ nodes:
             additionalProperties: true
       additionalProperties: false
 
+  # ===== 地点提取管道 =====
+
+  - id: extract_scenes
+    ref: ai.deepseek_structured_json.v1
+    name: 提取地点
+    inputs:
+      system:
+        template: |
+          仅返回合法 JSON。你是专业的剧本资产分析师。请从剧本中提取所有需要资产化的地点信息。
+          世界背景（原作）：{background}。
+          注意：这里的“地点”是资产意义上的地点、场所或建筑，不是剧情意义上的一场戏、镜头段落或事件片段。不要按戏份切分地点。
+
+          思维链要求：在输出最终 JSON 前，你必须先逐步分析并记录你的思考过程：
+          1. 判断当前剧本对应原作的哪一回、剧情发展到什么阶段。
+          2. 逐段分析剧本，识别剧本中出现或隐含的地点资产，合并同一地点的多次出现。
+          3. 为每个地点命名、描述、判定时间特征和地点类型；描述必须结合世界背景/原作说明这个地点在哪里、是干什么的、通常承载什么功能。
+          将你的完整分析过程写入 reasoning 字段。
+        vars:
+          background:
+            from: "$nodes.collect_asset_catalog_input.output.background"
+      prompt:
+        template: |
+          请从以下剧本中提取所有地点资产信息。地点是空间/场所资产，不是剧情中的一场戏。
+
+          剧本内容：
+          {script}
+
+          返回一个仅包含以下根键的 JSON 对象：
+          - reasoning：你的逐步分析过程（字符串，不能为空）
+          - scenes：地点数组
+          - scene_names：所有地点的名称数组（仅字符串）
+
+          每个地点对象必须包含：
+          - name：地点名称
+          - description：地点描述（≤100字，结合世界背景/原作说明地点在哪里、用途是什么）
+          - time_of_day：时间特征（如"白天"、"夜晚"、"黄昏"等）
+          - location_type：地点类型（如"室内"、"户外"、"宫殿"、"山林"等）
+
+          根层级除 reasoning、scenes 和 scene_names 外不得包含其他键。
+        vars:
+          script:
+            from: "$nodes.collect_asset_catalog_input.output.script"
+          background:
+            from: "$nodes.collect_asset_catalog_input.output.background"
+      max_attempts:
+        value: 2
+    outputs:
+      type: object
+      required: ["reasoning", "scenes", "scene_names"]
+      properties:
+        reasoning:
+          type: string
+          minLength: 1
+        scenes:
+          type: array
+          items:
+            type: object
+            required: ["name", "description", "time_of_day", "location_type"]
+            properties:
+              name:
+                type: string
+                minLength: 1
+              description:
+                type: string
+                minLength: 1
+              time_of_day:
+                type: string
+                minLength: 1
+              location_type:
+                type: string
+                minLength: 1
+            additionalProperties: false
+        scene_names:
+          type: array
+          items:
+            type: string
+            minLength: 1
+      additionalProperties: false
+
+  - id: lookup_scene_assets
+    ref: tool.asset_lookup.v1
+    name: 检索已有地点资产
+    inputs:
+      scope:
+        value: "combined"
+      asset_type:
+        value: "text"
+      tags:
+        value: ["地点"]
+      limit:
+        value: 200
+    outputs:
+      type: object
+      required: ["total", "assets"]
+      properties:
+        total:
+          type: integer
+          minimum: 0
+        assets:
+          type: array
+          items:
+            type: object
+            required: ["asset_id", "name"]
+            properties:
+              asset_id:
+                type: string
+                minLength: 1
+              name:
+                type: string
+                minLength: 1
+              asset_type:
+                type: string
+              mime_type:
+                type: string
+              storage_uri:
+                type: string
+              metadata:
+                type: object
+              text_content:
+                type: string
+            additionalProperties: true
+      additionalProperties: false
+
+  - id: match_scenes_by_name
+    ref: tool.asset_lookup.v1
+    name: 按名称匹配地点
+    inputs:
+      scope:
+        value: "combined"
+      names:
+        from: "$nodes.extract_scenes.output.scene_names"
+      asset_type:
+        value: "text"
+      tags:
+        value: ["地点"]
+      limit:
+        value: 200
+    outputs:
+      type: object
+      required: ["total", "assets"]
+      properties:
+        total:
+          type: integer
+          minimum: 0
+        assets:
+          type: array
+          items:
+            type: object
+            required: ["asset_id", "name"]
+            properties:
+              asset_id:
+                type: string
+                minLength: 1
+              name:
+                type: string
+                minLength: 1
+              asset_type:
+                type: string
+              mime_type:
+                type: string
+              storage_uri:
+                type: string
+              metadata:
+                type: object
+              text_content:
+                type: string
+            additionalProperties: true
+      additionalProperties: false
+
+  - id: enrich_scenes
+    ref: tool.enrich_characters.v1
+    name: 汇总地点匹配结果
+    inputs:
+      characters:
+        from: "$nodes.extract_scenes.output.scenes"
+      matched_by_name:
+        from: "$nodes.match_scenes_by_name.output.assets"
+      existing_assets:
+        from: "$nodes.lookup_scene_assets.output.assets"
+    outputs:
+      type: object
+      required: ["characters"]
+      properties:
+        characters:
+          type: array
+          items:
+            type: object
+            required: ["name", "matched"]
+            properties:
+              name:
+                type: string
+                minLength: 1
+              matched:
+                type: boolean
+              matched_asset_id:
+                type: ["string", "null"]
+              matched_asset_name:
+                type: string
+            additionalProperties: true
+      additionalProperties: false
+
   # ===== P2: 变体匹配 =====
 
   - id: match_variants
     ref: ai.parallel_deepseek_structured_json.v1
+    name: 匹配角色变体
     inputs:
       system:
         value: |
@@ -465,6 +713,7 @@ nodes:
 
   - id: check_accessories
     ref: ai.parallel_deepseek_structured_json.v1
+    name: 检查角色配件
     inputs:
       system:
         value: |
@@ -516,10 +765,229 @@ nodes:
             additionalProperties: false
       additionalProperties: false
 
+  # ===== 道具提取与匹配 =====
+
+  - id: extract_props
+    ref: ai.deepseek_structured_json.v1
+    name: 提取道具
+    inputs:
+      system:
+        template: |
+          仅返回合法 JSON。你是专业的剧本分析师。请从以下剧本中提取所有关键道具（props）。
+          世界背景（原作）：{background}。
+
+          请分析剧本中出现的所有关键道具，包括武器、工具、物品等。
+          道具收录条件：在叙述段中被角色使用、持有、提及或具有叙事意义的物品。
+          排除条件：仅为背景装饰的无名物品、对话中提及但未实际出现或使用的物品。
+          如果道具与某个角色有明确持有、使用、携带、赠予或争夺关系，请记录关联角色；没有明确关联时留空或省略。
+          将你的分析过程写入 reasoning 字段。
+        vars:
+          background:
+            from: "$nodes.collect_asset_catalog_input.output.background"
+      prompt:
+        template: |
+          请从以下剧本中提取所有关键道具。
+
+          剧本内容：
+          {script}
+
+          返回一个仅包含以下根键的 JSON 对象：
+          - reasoning：你的逐步分析过程（字符串，不能为空）
+          - props：道具数组
+          - prop_names：所有道具名称数组（仅字符串）
+
+          每个道具对象必须包含：
+          - full_name：道具名称（如"青龙偃月刀"）
+          - description：道具描述（≤100字）
+          - category：道具类别（如"武器"、"工具"、"容器"、"书籍/信件"、"饰品"等）
+          - related_character：关联角色（可选；仅当剧本明确说明某角色持有、使用、携带、赠予或争夺该道具时填写角色名，否则可省略或为空字符串）
+
+          根层级除 reasoning、props 和 prop_names 外不得包含其他键。
+        vars:
+          script:
+            from: "$nodes.collect_asset_catalog_input.output.script"
+          background:
+            from: "$nodes.collect_asset_catalog_input.output.background"
+      max_attempts:
+        value: 2
+    outputs:
+      type: object
+      required: ["reasoning", "props", "prop_names"]
+      properties:
+        reasoning:
+          type: string
+          minLength: 1
+        props:
+          type: array
+          items:
+            type: object
+            required: ["full_name", "description", "category"]
+            properties:
+              full_name:
+                type: string
+                minLength: 1
+              description:
+                type: string
+                minLength: 1
+              category:
+                type: string
+                minLength: 1
+              related_character:
+                type: string
+            additionalProperties: false
+        prop_names:
+          type: array
+          items:
+            type: string
+            minLength: 1
+      additionalProperties: false
+
+  - id: lookup_prop_assets
+    ref: tool.asset_lookup.v1
+    name: 检索已有道具资产
+    inputs:
+      scope:
+        value: "combined"
+      asset_type:
+        value: "text"
+      tags:
+        value: ["道具"]
+      limit:
+        value: 200
+    outputs:
+      type: object
+      required: ["total", "assets"]
+      properties:
+        total:
+          type: integer
+          minimum: 0
+        assets:
+          type: array
+          items:
+            type: object
+            required: ["asset_id", "name"]
+            properties:
+              asset_id:
+                type: string
+                minLength: 1
+              name:
+                type: string
+                minLength: 1
+              asset_type:
+                type: string
+              mime_type:
+                type: string
+              storage_uri:
+                type: string
+              metadata:
+                type: object
+              text_content:
+                type: string
+            additionalProperties: true
+      additionalProperties: false
+
+  - id: match_props_by_name
+    ref: tool.asset_lookup.v1
+    name: 按名称匹配道具
+    inputs:
+      scope:
+        value: "combined"
+      names:
+        from: "$nodes.extract_props.output.prop_names"
+      asset_type:
+        value: "text"
+      tags:
+        value: ["道具"]
+      limit:
+        value: 200
+    outputs:
+      type: object
+      required: ["total", "assets"]
+      properties:
+        total:
+          type: integer
+          minimum: 0
+        assets:
+          type: array
+          items:
+            type: object
+            required: ["asset_id", "name"]
+            properties:
+              asset_id:
+                type: string
+                minLength: 1
+              name:
+                type: string
+                minLength: 1
+              asset_type:
+                type: string
+              mime_type:
+                type: string
+              storage_uri:
+                type: string
+              metadata:
+                type: object
+              text_content:
+                type: string
+            additionalProperties: true
+      additionalProperties: false
+
+  - id: enrich_props
+    ref: tool.enrich_characters.v1
+    name: 汇总道具匹配结果
+    inputs:
+      characters:
+        from: "$nodes.extract_props.output.props"
+      matched_by_name:
+        from: "$nodes.match_props_by_name.output.assets"
+      semantic_matches:
+        value: []
+      existing_assets:
+        from: "$nodes.lookup_prop_assets.output.assets"
+    outputs:
+      type: object
+      required: ["characters"]
+      properties:
+        characters:
+          type: array
+          items:
+            type: object
+            required: ["full_name", "matched"]
+            properties:
+              full_name:
+                type: string
+                minLength: 1
+              matched:
+                type: boolean
+              matched_asset_id:
+                type: ["string", "null"]
+              matched_asset_name:
+                type: string
+              existing_variants:
+                type: array
+                items:
+                  type: object
+                  required: ["asset_id", "name", "variant"]
+                  properties:
+                    asset_id:
+                      type: string
+                      minLength: 1
+                    name:
+                      type: string
+                      minLength: 1
+                    variant:
+                      type: string
+                      minLength: 1
+                    metadata:
+                      type: object
+            additionalProperties: true
+      additionalProperties: false
+
   # ===== 审核 =====
 
   - id: review_assets
     ref: system.human_approval.v1
+    name: 资产列表汇总
     inputs:
       question:
         template: |
@@ -533,6 +1001,18 @@ nodes:
 
           语义匹配结果：
           {semantic_match}
+
+          提取的地点：
+          {scenes}
+
+          地点匹配结果：
+          {scene_matches}
+
+          提取的道具：
+          {props}
+
+          道具匹配结果：
+          {prop_matches}
 
           变体匹配结果：
           {variant_result}
@@ -548,10 +1028,42 @@ nodes:
             from: "$nodes.match_by_name.output.assets"
           semantic_match:
             from: "$nodes.semantic_match_characters.output.match_results"
+          scenes:
+            from: "$nodes.extract_scenes.output.scenes"
+          scene_matches:
+            from: "$nodes.match_scenes_by_name.output.assets"
+          props:
+            from: "$nodes.extract_props.output.props"
+          prop_matches:
+            from: "$nodes.match_props_by_name.output.assets"
           variant_result:
             from: "$nodes.match_variants.output.results"
           accessory_result:
             from: "$nodes.check_accessories.output.results"
+      characters:
+        from: "$nodes.extract_characters.output.characters"
+      enriched_characters:
+        from: "$nodes.enrich_characters.output.characters"
+      match_by_name:
+        from: "$nodes.match_by_name.output.assets"
+      semantic_match:
+        from: "$nodes.semantic_match_characters.output.match_results"
+      scenes:
+        from: "$nodes.extract_scenes.output.scenes"
+      enriched_scenes:
+        from: "$nodes.enrich_scenes.output.characters"
+      scene_matches:
+        from: "$nodes.match_scenes_by_name.output.assets"
+      props:
+        from: "$nodes.extract_props.output.props"
+      enriched_props:
+        from: "$nodes.enrich_props.output.characters"
+      prop_matches:
+        from: "$nodes.match_props_by_name.output.assets"
+      variant_results:
+        from: "$nodes.match_variants.output.results"
+      accessory_results:
+        from: "$nodes.check_accessories.output.results"
       decision:
         from_user: true
         schema:
@@ -562,14 +1074,26 @@ nodes:
         required: false
         schema:
           type: object
-      image_urls:
+      asset_images:
         from_user: true
         required: false
         schema:
           type: array
           items:
-            type: string
-            minLength: 1
+            type: object
+            required: ["asset_type", "asset_key", "image_url"]
+            properties:
+              asset_type:
+                type: string
+              asset_key:
+                type: string
+              full_name:
+                type: string
+              image_url:
+                type: string
+              source:
+                type: string
+            additionalProperties: true
     outputs:
       type: object
       required: ["decision"]
@@ -579,17 +1103,31 @@ nodes:
           minLength: 1
         approved_assets:
           type: object
-        image_urls:
+        asset_images:
           type: array
           items:
-            type: string
-            minLength: 1
+            type: object
+            additionalProperties: true
       additionalProperties: true
+    ui:
+      sections:
+        input:
+          visible: false
+        output:
+          visible: false
+        events:
+          visible: false
+      controls:
+        interaction:
+          control_id: ui.interaction.asset_summary_table.v1
+          variant: tabbed_table
+          mode: interactive
 
   # ===== 提示词生成与图像生成 =====
 
   - id: generate_prompt
     ref: ai.deepseek_structured_json.v1
+    name: 生成角色图像提示词
     inputs:
       system:
         value: |
@@ -599,7 +1137,7 @@ nodes:
           必须先输出 think（思考过程），再输出 prompt（最终提示词）。
       prompt:
         template: |
-          请为以下所有角色生成图生图修改提示词。
+          请为以下所有需要图像的角色、地点和道具生成图生图修改提示词。
 
           剧本内容：
           {script}
@@ -607,17 +1145,29 @@ nodes:
           角色列表：
           {characters}
 
+          审核确认后的资产列表：
+          {approved_assets}
+
           变体匹配结果（含默认变体状态）：
           {variant_results}
 
+          地点匹配汇总：
+          {enriched_scenes}
+
+          道具匹配汇总：
+          {enriched_props}
+
+          默认模板图 URL：
+          {template_image_url}
+
           返回一个仅包含一个根键的 JSON 对象：
-          - prompt_results：数组，每个角色一条记录
+          - prompt_results：数组，每个需要图像的资产一条记录
 
           每条记录必须包含：
-          - full_name：角色全名
+          - full_name：资产名称
           - think：思考过程，逐项对比差异，列出要添加/去除/修改的部分
-          - prompt：最终提示词，格式为"请将图中角色的xx改成xx，保持风格和其它特征不变"
-          - reference_image_url：参考图URL（场景A从已有变体取storage_uri，场景B使用模板图URL）
+          - prompt：最终提示词，说明要生成或改造的资产图像
+          - reference_image_url：参考图URL。角色有已有变体时取已有变体 storage_uri；道具或地点已匹配/关联资产且存在 matched_asset_image_url 或 reference_image_url 时，必须使用该关联资产图像；无参考图时才使用默认模板图 URL。
 
           根层级除 prompt_results 外不得包含其他键。
         vars:
@@ -625,8 +1175,16 @@ nodes:
             from: "$nodes.collect_asset_catalog_input.output.script"
           characters:
             from: "$nodes.extract_characters.output.characters"
+          approved_assets:
+            from: "$nodes.review_assets.output.approved_assets"
           variant_results:
             from: "$nodes.match_variants.output.results"
+          enriched_scenes:
+            from: "$nodes.enrich_scenes.output.characters"
+          enriched_props:
+            from: "$nodes.enrich_props.output.characters"
+          template_image_url:
+            value: "https://assets.local.invalid/3f/26/3f26f7ef206b654d664aae0d2637ecf724f418f943da26696b6407bb32ba0133.png"
       max_attempts:
         value: 2
     outputs:
@@ -654,50 +1212,9 @@ nodes:
             additionalProperties: false
       additionalProperties: false
 
-  - id: generate_image
-    ref: ai.runninghub_image_to_image.v1
-    inputs:
-      prompt:
-        from: "$nodes.generate_prompt.output.prompt_results.0.prompt"
-      image_urls:
-        from: "$nodes.generate_prompt.output.prompt_results.0.reference_image_url"
-      aspect_ratio:
-        value: "1:1"
-      resolution:
-        value: "2048x2048"
-    outputs:
-      type: object
-      required: ["image_url", "model", "usage", "results"]
-      properties:
-        image_url:
-          type: string
-        model:
-          type: string
-        usage:
-          type: object
-        results:
-          type: array
-          items:
-            type: object
-            properties:
-              url:
-                type: string
-                minLength: 1
-              text:
-                type: string
-                minLength: 1
-              output_type:
-                type: string
-                minLength: 1
-            additionalProperties: false
-        task_id:
-          type: string
-        status:
-          type: string
-      additionalProperties: false
-
   - id: upload_images
     ref: system.human_approval.v1
+    name: 上传或关联角色图像
     inputs:
       question:
         template: |
@@ -727,40 +1244,205 @@ nodes:
             from: "$nodes.match_variants.output.results"
           accessory_result:
             from: "$nodes.check_accessories.output.results"
+      characters:
+        from: "$nodes.extract_characters.output.characters"
+      enriched_characters:
+        from: "$nodes.enrich_characters.output.characters"
+      variant_results:
+        from: "$nodes.match_variants.output.results"
+      accessory_results:
+        from: "$nodes.check_accessories.output.results"
+      prompt_results:
+        from: "$nodes.generate_prompt.output.prompt_results"
+      approved_assets:
+        from: "$nodes.review_assets.output.approved_assets"
       decision:
         from_user: true
         schema:
           type: string
-          minLength: 1
-      image_urls:
+          enum: ["finish", "generate_missing"]
+      asset_images:
         from_user: true
-        required: false
         schema:
           type: array
           items:
-            type: string
-            minLength: 1
+            type: object
+            required: ["asset_type", "asset_key", "image_url"]
+            properties:
+              asset_type:
+                type: string
+                minLength: 1
+              asset_key:
+                type: string
+                minLength: 1
+              full_name:
+                type: string
+              image_url:
+                type: string
+                minLength: 1
+              asset_id:
+                type: string
+              source:
+                type: string
+            additionalProperties: true
     outputs:
       type: object
-      required: ["decision"]
+      required: ["decision", "asset_images"]
       properties:
         decision:
           type: string
-          minLength: 1
-        image_urls:
+          enum: ["finish", "generate_missing"]
+        asset_images:
           type: array
           items:
-            type: string
-            minLength: 1
+            type: object
+            required: ["asset_type", "asset_key", "image_url"]
+            properties:
+              asset_type:
+                type: string
+                minLength: 1
+              asset_key:
+                type: string
+                minLength: 1
+              full_name:
+                type: string
+              image_url:
+                type: string
+                minLength: 1
+              asset_id:
+                type: string
+              source:
+                type: string
+            additionalProperties: true
       additionalProperties: true
+    ui:
+      controls:
+        interaction:
+          control_id: ui.interaction.asset_image_cards.v1
+          variant: grouped_cards
+          mode: interactive
+
+  - id: prepare_asset_images
+    ref: tool.complete_asset_images.v1
+    name: 筛选未上传图像
+    inputs:
+      decision:
+        from: "$nodes.upload_images.output.decision"
+      prompt_results:
+        from: "$nodes.generate_prompt.output.prompt_results"
+      manual_images:
+        from: "$nodes.upload_images.output.asset_images"
+    outputs:
+      type: object
+      required: ["asset_images", "missing_prompt_results", "missing_count", "next_action"]
+      properties:
+        asset_images:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        missing_prompt_results:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        missing_count:
+          type: integer
+          minimum: 0
+        next_action:
+          type: string
+          enum: ["finish", "generate_missing"]
+      additionalProperties: false
+
+  - id: generate_missing_asset_images
+    ref: ai.runninghub_image_to_image.v2
+    name: 生成未上传角色图像
+    inputs:
+      prompt_results:
+        from: "$nodes.prepare_asset_images.output.missing_prompt_results"
+      aspect_ratio:
+        value: "1:1"
+      resolution:
+        value: "2048x2048"
+    outputs:
+      type: object
+      required: ["asset_images"]
+      properties:
+        asset_images:
+          type: array
+          items:
+            type: object
+            required: ["full_name", "image_url", "source"]
+            properties:
+              full_name:
+                type: string
+                minLength: 1
+              image_url:
+                type: string
+                minLength: 1
+              source:
+                type: string
+                minLength: 1
+              runninghub_task_id:
+                type: string
+              variant:
+                type: string
+              asset_id:
+                type: string
+            additionalProperties: true
+      additionalProperties: false
+
+  - id: merge_completed_asset_images
+    ref: tool.complete_asset_images.v1
+    name: 合并角色图像
+    inputs:
+      decision:
+        value: "finish"
+      prompt_results:
+        from: "$nodes.generate_prompt.output.prompt_results"
+      manual_images:
+        from: "$nodes.prepare_asset_images.output.asset_images"
+      auto_images:
+        from: "$nodes.generate_missing_asset_images.output.asset_images"
+    outputs:
+      type: object
+      required: ["asset_images", "missing_prompt_results", "missing_count", "next_action"]
+      properties:
+        asset_images:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        missing_prompt_results:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        missing_count:
+          type: integer
+          minimum: 0
+        next_action:
+          type: string
+          enum: ["finish", "generate_missing"]
+      additionalProperties: false
 
 edges:
   - from: START
     to: collect_asset_catalog_input
   - from: collect_asset_catalog_input
     to: extract_characters
+  - from: collect_asset_catalog_input
+    to: extract_props
   - from: extract_characters
     to: lookup_existing_assets
+  - from: extract_props
+    to: lookup_prop_assets
+  - from: lookup_prop_assets
+    to: match_props_by_name
+  - from: match_props_by_name
+    to: enrich_props
+  - from: enrich_props
+    to: review_assets
   - from: lookup_existing_assets
     to: match_by_name
   - from: match_by_name
@@ -773,15 +1455,29 @@ edges:
     to: check_accessories
   - from: check_accessories
     to: review_assets
+  - from: collect_asset_catalog_input
+    to: extract_scenes
+  - from: extract_scenes
+    to: lookup_scene_assets
+  - from: lookup_scene_assets
+    to: match_scenes_by_name
+  - from: match_scenes_by_name
+    to: enrich_scenes
+  - from: enrich_scenes
+    to: review_assets
   - from: review_assets
     to: generate_prompt
-    when: {path: "$nodes.collect_asset_catalog_input.output.generate_assets", equals: "自动生成"}
-  - from: review_assets
-    to: upload_images
-    when: {path: "$nodes.collect_asset_catalog_input.output.generate_assets", equals: "手动上传"}
   - from: generate_prompt
-    to: generate_image
-  - from: generate_image
-    to: END
+    to: upload_images
   - from: upload_images
+    to: prepare_asset_images
+  - from: prepare_asset_images
+    to: generate_missing_asset_images
+    when: {path: "$nodes.prepare_asset_images.output.next_action", equals: "generate_missing"}
+  - from: prepare_asset_images
+    to: END
+    when: {path: "$nodes.prepare_asset_images.output.next_action", equals: "finish"}
+  - from: generate_missing_asset_images
+    to: merge_completed_asset_images
+  - from: merge_completed_asset_images
     to: END

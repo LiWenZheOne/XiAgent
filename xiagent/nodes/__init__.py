@@ -40,6 +40,7 @@ from xiagent.nodes.tools.asset_lookup import AssetLookupNode
 from xiagent.nodes.tools.create_text_asset import CreateTextAssetNode
 from xiagent.nodes.tools.echo_tool import EchoToolNode
 from xiagent.nodes.tools.merge_asset_images import MergeAssetImagesNode
+from xiagent.nodes.tools.complete_asset_images import CompleteAssetImagesNode
 from xiagent.nodes.tools.enrich_characters import EnrichCharactersNode
 from xiagent.nodes.tools.runninghub_workflow_images import RunningHubWorkflowImagesNode
 from xiagent.nodes.tools.script_split import ScriptSplitNode
@@ -121,6 +122,7 @@ def build_node_registry(settings: Settings) -> NodeRegistry:
     registry.register(SystemUserInputNode())
     registry.register(EchoToolNode())
     registry.register(MergeAssetImagesNode())
+    registry.register(CompleteAssetImagesNode())
     registry.register(ScriptSplitNode())
     registry.register(AssembleSegmentContextNode())
     registry.register(AssembleStoryboardContextNode())

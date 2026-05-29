@@ -16,13 +16,14 @@ from xiagent.nodes.ai.deepseek_structured_json import DeepSeekStructuredJsonNode
 from xiagent.nodes.ai.parallel_deepseek_structured_json import (
     ParallelDeepSeekStructuredJsonNode,
 )
-from xiagent.nodes.ai.runninghub_image import RunningHubImageToImageNode
+from xiagent.nodes.ai.runninghub_image import RunningHubImageToImageNodeV2
 from xiagent.nodes.registry import NodeRegistry
 from xiagent.nodes.base import NodeContext
 from xiagent.nodes.system.human_approval import HumanApprovalNode
 from xiagent.nodes.system.user_input import SystemUserInputNode
 from xiagent.nodes.tools.asset_lookup import AssetLookupNode
 from xiagent.nodes.tools.create_text_asset import CreateTextAssetNode
+from xiagent.nodes.tools.complete_asset_images import CompleteAssetImagesNode
 from xiagent.nodes.tools.enrich_characters import EnrichCharactersNode
 from xiagent.workflows.loader import load_workflow_file
 from xiagent.workflows.testing import WorkflowTestBuilder
@@ -116,12 +117,9 @@ def test_asset_catalog_workflow_contract_structure(test_settings) -> None:
     assert contract["workflow"]["scope"] == "global"
     nodes_by_id = {node["id"]: node for node in contract["nodes"]}
     assert nodes_by_id["collect_asset_catalog_input"]["outputs"]["required"] == [
-        "script", "generate_assets", "background",
+        "script", "background",
     ]
-    assert nodes_by_id["collect_asset_catalog_input"]["outputs"]["properties"]["generate_assets"]["enum"] == [
-        "手动上传",
-        "自动生成",
-    ]
+    assert "generate_assets" not in nodes_by_id["collect_asset_catalog_input"]["outputs"]["properties"]
 
     nodes_by_id = {node["id"]: node for node in contract["nodes"]}
     assert list(nodes_by_id) == [
@@ -131,12 +129,22 @@ def test_asset_catalog_workflow_contract_structure(test_settings) -> None:
         "match_by_name",
         "semantic_match_characters",
         "enrich_characters",
+        "extract_scenes",
+        "lookup_scene_assets",
+        "match_scenes_by_name",
+        "enrich_scenes",
         "match_variants",
         "check_accessories",
+        "extract_props",
+        "lookup_prop_assets",
+        "match_props_by_name",
+        "enrich_props",
         "review_assets",
         "generate_prompt",
-        "generate_image",
         "upload_images",
+        "prepare_asset_images",
+        "generate_missing_asset_images",
+        "merge_completed_asset_images",
     ]
     assert {node_id: node["ref"] for node_id, node in nodes_by_id.items()} == {
         "collect_asset_catalog_input": "system.user_input.v1",
@@ -145,12 +153,22 @@ def test_asset_catalog_workflow_contract_structure(test_settings) -> None:
         "match_by_name": "tool.asset_lookup.v1",
         "semantic_match_characters": "ai.deepseek_structured_json.v1",
         "enrich_characters": "tool.enrich_characters.v1",
+        "extract_scenes": "ai.deepseek_structured_json.v1",
+        "lookup_scene_assets": "tool.asset_lookup.v1",
+        "match_scenes_by_name": "tool.asset_lookup.v1",
+        "enrich_scenes": "tool.enrich_characters.v1",
         "match_variants": "ai.parallel_deepseek_structured_json.v1",
         "check_accessories": "ai.parallel_deepseek_structured_json.v1",
+        "extract_props": "ai.deepseek_structured_json.v1",
+        "lookup_prop_assets": "tool.asset_lookup.v1",
+        "match_props_by_name": "tool.asset_lookup.v1",
+        "enrich_props": "tool.enrich_characters.v1",
         "review_assets": "system.human_approval.v1",
         "generate_prompt": "ai.deepseek_structured_json.v1",
-        "generate_image": "ai.runninghub_image_to_image.v1",
         "upload_images": "system.human_approval.v1",
+        "prepare_asset_images": "tool.complete_asset_images.v1",
+        "generate_missing_asset_images": "ai.runninghub_image_to_image.v2",
+        "merge_completed_asset_images": "tool.complete_asset_images.v1",
     }
 
     validate_workflow_contract(contract, build_node_registry(test_settings))
@@ -165,29 +183,41 @@ def test_asset_catalog_workflow_has_conditional_edges(test_settings) -> None:
 
     assert len(conditional_edges) == 2
     assert {
-        "from": "review_assets",
-        "to": "generate_prompt",
-        "when": {"path": "$nodes.collect_asset_catalog_input.output.generate_assets", "equals": "自动生成"},
+        "from": "prepare_asset_images",
+        "to": "generate_missing_asset_images",
+        "when": {"path": "$nodes.prepare_asset_images.output.next_action", "equals": "generate_missing"},
     } in conditional_edges
     assert {
-        "from": "review_assets",
-        "to": "upload_images",
-        "when": {"path": "$nodes.collect_asset_catalog_input.output.generate_assets", "equals": "手动上传"},
+        "from": "prepare_asset_images",
+        "to": "END",
+        "when": {"path": "$nodes.prepare_asset_images.output.next_action", "equals": "finish"},
     } in conditional_edges
 
     assert unconditional_edges == [
         {"from": "START", "to": "collect_asset_catalog_input"},
         {"from": "collect_asset_catalog_input", "to": "extract_characters"},
+        {"from": "collect_asset_catalog_input", "to": "extract_props"},
         {"from": "extract_characters", "to": "lookup_existing_assets"},
+        {"from": "extract_props", "to": "lookup_prop_assets"},
+        {"from": "lookup_prop_assets", "to": "match_props_by_name"},
+        {"from": "match_props_by_name", "to": "enrich_props"},
+        {"from": "enrich_props", "to": "review_assets"},
         {"from": "lookup_existing_assets", "to": "match_by_name"},
         {"from": "match_by_name", "to": "semantic_match_characters"},
         {"from": "semantic_match_characters", "to": "enrich_characters"},
         {"from": "enrich_characters", "to": "match_variants"},
         {"from": "match_variants", "to": "check_accessories"},
         {"from": "check_accessories", "to": "review_assets"},
-        {"from": "generate_prompt", "to": "generate_image"},
-        {"from": "generate_image", "to": "END"},
-        {"from": "upload_images", "to": "END"},
+        {"from": "collect_asset_catalog_input", "to": "extract_scenes"},
+        {"from": "extract_scenes", "to": "lookup_scene_assets"},
+        {"from": "lookup_scene_assets", "to": "match_scenes_by_name"},
+        {"from": "match_scenes_by_name", "to": "enrich_scenes"},
+        {"from": "enrich_scenes", "to": "review_assets"},
+        {"from": "review_assets", "to": "generate_prompt"},
+        {"from": "generate_prompt", "to": "upload_images"},
+        {"from": "upload_images", "to": "prepare_asset_images"},
+        {"from": "generate_missing_asset_images", "to": "merge_completed_asset_images"},
+        {"from": "merge_completed_asset_images", "to": "END"},
     ]
 
     validate_workflow_contract(contract, build_node_registry(test_settings))
@@ -242,6 +272,46 @@ def test_asset_catalog_semantic_match_output_schema(test_settings) -> None:
             ]
         },
     )
+    validate_workflow_contract(contract, build_node_registry(test_settings))
+
+
+def test_asset_catalog_scene_and_prop_output_schemas(test_settings) -> None:
+    contract = load_workflow_file(ASSET_CATALOG_WORKFLOW_PATH)
+    nodes_by_id = {node["id"]: node for node in contract["nodes"]}
+
+    scene_schema = nodes_by_id["extract_scenes"]["outputs"]
+    validate_json_value(
+        scene_schema,
+        {
+            "reasoning": "剧本叙述段发生在山神庙外。",
+            "scenes": [
+                {
+                    "name": "山神庙外",
+                    "description": "风雪中的山神庙外，林冲踏雪而来。",
+                    "time_of_day": "夜晚",
+                    "location_type": "户外",
+                }
+            ],
+            "scene_names": ["山神庙外"],
+        },
+    )
+
+    prop_schema = nodes_by_id["extract_props"]["outputs"]
+    validate_json_value(
+        prop_schema,
+        {
+            "reasoning": "剧本叙述段中林冲持有花枪。",
+            "props": [
+                {
+                    "full_name": "花枪",
+                    "description": "林冲随身携带的长枪。",
+                    "category": "武器",
+                }
+            ],
+            "prop_names": ["花枪"],
+        },
+    )
+
     validate_workflow_contract(contract, build_node_registry(test_settings))
 
 
@@ -354,16 +424,26 @@ def test_asset_catalog_match_by_name_uses_names_array() -> None:
     }
 
 
-def test_asset_catalog_generate_image_references_prompt_results() -> None:
+def test_asset_catalog_image_completion_references_prompt_results() -> None:
     contract = load_workflow_file(ASSET_CATALOG_WORKFLOW_PATH)
     nodes_by_id = {node["id"]: node for node in contract["nodes"]}
 
-    gen_image_inputs = nodes_by_id["generate_image"]["inputs"]
-    assert gen_image_inputs["prompt"] == {
-        "from": "$nodes.generate_prompt.output.prompt_results.0.prompt",
+    upload_inputs = nodes_by_id["upload_images"]["inputs"]
+    assert upload_inputs["prompt_results"] == {
+        "from": "$nodes.generate_prompt.output.prompt_results",
     }
-    assert gen_image_inputs["image_urls"] == {
-        "from": "$nodes.generate_prompt.output.prompt_results.0.reference_image_url",
+    assert upload_inputs["enriched_characters"] == {
+        "from": "$nodes.enrich_characters.output.characters",
+    }
+
+    prepare_inputs = nodes_by_id["prepare_asset_images"]["inputs"]
+    assert prepare_inputs["manual_images"] == {
+        "from": "$nodes.upload_images.output.asset_images",
+    }
+
+    gen_image_inputs = nodes_by_id["generate_missing_asset_images"]["inputs"]
+    assert gen_image_inputs["prompt_results"] == {
+        "from": "$nodes.prepare_asset_images.output.missing_prompt_results",
     }
 
 
@@ -392,7 +472,7 @@ async def test_asset_catalog_auto_generate_path(
         name="塞雷无腿角色模板",
         storage_uri="https://cdn.test/template-character.png",
     )
-    answers = iter(["approved"])
+    answers = iter(["approved", "[]", "generate_missing"])
     runner = WorkflowTestRunner(
         session=session,
         console=ConsoleIO(input_func=lambda prompt: next(answers)),
@@ -402,7 +482,6 @@ async def test_asset_catalog_auto_generate_path(
         ASSET_CATALOG_WORKFLOW_PATH,
         input_data={
             "script": "林冲在山神庙外踏雪而来。",
-            "generate_assets": "自动生成",
             "background": "水浒传",
         },
     )
@@ -414,12 +493,22 @@ async def test_asset_catalog_auto_generate_path(
     assert "match_by_name" in executed_node_ids
     assert "semantic_match_characters" in executed_node_ids
     assert "enrich_characters" in executed_node_ids
+    assert "extract_scenes" in executed_node_ids
+    assert "lookup_scene_assets" in executed_node_ids
+    assert "match_scenes_by_name" in executed_node_ids
+    assert "enrich_scenes" in executed_node_ids
     assert "match_variants" in executed_node_ids
     assert "check_accessories" in executed_node_ids
+    assert "extract_props" in executed_node_ids
+    assert "lookup_prop_assets" in executed_node_ids
+    assert "match_props_by_name" in executed_node_ids
+    assert "enrich_props" in executed_node_ids
     assert "review_assets" in executed_node_ids
     assert "generate_prompt" in executed_node_ids
-    assert "generate_image" in executed_node_ids
-    assert "upload_images" not in executed_node_ids
+    assert "upload_images" in executed_node_ids
+    assert "prepare_asset_images" in executed_node_ids
+    assert "generate_missing_asset_images" in executed_node_ids
+    assert "merge_completed_asset_images" in executed_node_ids
 
 
 async def test_asset_catalog_manual_upload_path(
@@ -441,7 +530,7 @@ async def test_asset_catalog_manual_upload_path(
         .with_run_output_dir(tmp_path / "runs")
         .build()
     )
-    answers = iter(["approved", "approved"])
+    answers = iter(["approved", "[]", "finish"])
     runner = WorkflowTestRunner(
         session=session,
         console=ConsoleIO(input_func=lambda prompt: next(answers)),
@@ -451,7 +540,6 @@ async def test_asset_catalog_manual_upload_path(
         ASSET_CATALOG_WORKFLOW_PATH,
         input_data={
             "script": "林冲在山神庙外踏雪而来。",
-            "generate_assets": "手动上传",
             "background": "水浒传",
         },
     )
@@ -463,12 +551,22 @@ async def test_asset_catalog_manual_upload_path(
     assert "match_by_name" in executed_node_ids
     assert "semantic_match_characters" in executed_node_ids
     assert "enrich_characters" in executed_node_ids
+    assert "extract_scenes" in executed_node_ids
+    assert "lookup_scene_assets" in executed_node_ids
+    assert "match_scenes_by_name" in executed_node_ids
+    assert "enrich_scenes" in executed_node_ids
     assert "match_variants" in executed_node_ids
     assert "check_accessories" in executed_node_ids
+    assert "extract_props" in executed_node_ids
+    assert "lookup_prop_assets" in executed_node_ids
+    assert "match_props_by_name" in executed_node_ids
+    assert "enrich_props" in executed_node_ids
     assert "review_assets" in executed_node_ids
+    assert "generate_prompt" in executed_node_ids
     assert "upload_images" in executed_node_ids
-    assert "generate_prompt" not in executed_node_ids
-    assert "generate_image" not in executed_node_ids
+    assert "prepare_asset_images" in executed_node_ids
+    assert "generate_missing_asset_images" not in executed_node_ids
+    assert "merge_completed_asset_images" not in executed_node_ids
 
 
 class FakeAssetCatalogRouter(ChatModelRouter):
@@ -484,6 +582,19 @@ class FakeAssetCatalogRouter(ChatModelRouter):
                 '"character_status": "被发配沧州途中，身着囚服，面带风霜。", '
                 '"accessories": []}], '
                 '"character_names": ["林冲"]}'
+            ),
+            # extract_scenes
+            (
+                '{"reasoning": "剧本发生在山神庙外。", '
+                '"scenes": [{"name": "山神庙外", '
+                '"description": "林冲在风雪中的山神庙外踏雪而来。", '
+                '"time_of_day": "夜晚", "location_type": "户外"}], '
+                '"scene_names": ["山神庙外"]}'
+            ),
+            # extract_props
+            (
+                '{"reasoning": "剧本中未出现关键道具。", '
+                '"props": [], "prop_names": []}'
             ),
             # semantic_match_characters
             (
@@ -543,6 +654,7 @@ def _asset_catalog_registry(router: FakeAssetCatalogRouter) -> NodeRegistry:
     registry.register(AssetLookupNode())
     registry.register(CreateTextAssetNode())
     registry.register(EnrichCharactersNode())
+    registry.register(CompleteAssetImagesNode())
     registry.register(
         DeepSeekStructuredJsonNode(
             model_router=router,
@@ -558,7 +670,7 @@ def _asset_catalog_registry(router: FakeAssetCatalogRouter) -> NodeRegistry:
         )
     )
     registry.register(
-        RunningHubImageToImageNode(
+        RunningHubImageToImageNodeV2(
             model_router=router,
             provider="runninghub_image_to_image",
             model="runninghub-image-test-model",

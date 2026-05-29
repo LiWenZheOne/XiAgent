@@ -61,6 +61,14 @@ export interface NodeUiConfig {
   sections?: Record<string, unknown>;
   actions?: Record<string, unknown>;
   bindings?: Record<string, unknown>;
+  stages?: WorkflowUiStage[];
+}
+
+export interface WorkflowUiStage {
+  id: string;
+  name: string;
+  description?: string;
+  nodes: string[];
 }
 
 export interface UiControlDescriptor {

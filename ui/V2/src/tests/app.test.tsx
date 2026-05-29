@@ -10,6 +10,22 @@ const workflowContract = {
     version: "1.0.0",
     name: "故事板生成",
     description: "根据主题生成候选图片并等待用户选择。",
+    ui: {
+      stages: [
+        {
+          id: "p1_input",
+          name: "P1 用户输入",
+          description: "收集创作主题和参考图。",
+          nodes: ["collect_user_input"],
+        },
+        {
+          id: "p2_generate",
+          name: "P2 生成与选择",
+          description: "准备提示词并等待用户选择图片。",
+          nodes: ["prepare_prompt", "choose_image"],
+        },
+      ],
+    },
     input_schema: {
       type: "object",
       required: ["topic"],
@@ -481,6 +497,8 @@ async function login() {
   await userEvent.type(screen.getByLabelText("用户名"), "alice");
   await userEvent.type(screen.getByLabelText("密码"), "secret-123");
   await userEvent.click(screen.getByRole("button", { name: "登录" }));
+  await screen.findByRole("heading", { name: "项目" });
+  await userEvent.click(await screen.findByRole("button", { name: "进入 全局项目 工作台" }));
   await screen.findByRole("button", { name: "创建任务" });
 }
 
@@ -491,22 +509,28 @@ describe("XiAgent V2 app", () => {
     vi.stubGlobal("fetch", mockFetch());
   });
 
-  it("requires a real user login and opens the project workspace", async () => {
+  it("requires a real user login and opens the project entry page", async () => {
     render(<App />);
 
     expect(screen.getByRole("heading", { name: "登录 XiAgent" })).toBeInTheDocument();
 
-    await login();
+    await userEvent.type(screen.getByLabelText("用户名"), "alice");
+    await userEvent.type(screen.getByLabelText("密码"), "secret-123");
+    await userEvent.click(screen.getByRole("button", { name: "登录" }));
 
-    expect(screen.getByRole("heading", { name: "任务工作台" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "创建任务" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "项目" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "进入 全局项目 工作台" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "进入 演示项目 工作台" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "创建任务" })).not.toBeInTheDocument();
   });
 
-  it("uses the shared global project as the default project", async () => {
+  it("opens the shared global project workbench from the project entry page", async () => {
     render(<App />);
     await login();
 
-    expect(screen.getByRole("combobox")).toHaveValue("global");
+    expect(screen.getByRole("heading", { name: "全局项目" })).toBeInTheDocument();
+    expect(screen.getByText("所有用户可访问的默认项目")).toBeInTheDocument();
+    expect(screen.queryByLabelText("当前项目")).not.toBeInTheDocument();
   });
 
   it("creates tasks from launch information and leaves user input to the first node", async () => {
@@ -551,7 +575,8 @@ describe("XiAgent V2 app", () => {
     await login();
 
     expect(await screen.findByRole("button", { name: "打开 故事板生成" })).toBeInTheDocument();
-    await userEvent.selectOptions(screen.getByLabelText("当前项目"), "project-2");
+    await userEvent.click(screen.getByRole("button", { name: "返回项目" }));
+    await userEvent.click(await screen.findByRole("button", { name: "进入 客户项目 工作台" }));
 
     await waitFor(() => {
       expect(screen.queryByRole("button", { name: "打开 故事板生成" })).not.toBeInTheDocument();
@@ -605,7 +630,18 @@ describe("XiAgent V2 app", () => {
     await userEvent.click(await screen.findByRole("button", { name: "打开 故事板生成" }));
 
     const detail = await screen.findByLabelText("任务运行详情");
-    expect(within(detail).getByText("准备提示词")).toBeInTheDocument();
+    expect(within(detail).getByText("P1 用户输入")).toBeInTheDocument();
+    expect(within(detail).getByText("P2 生成与选择")).toBeInTheDocument();
+    expect(within(detail).getAllByText("待运行").length).toBeGreaterThan(0);
+    expect(within(detail).getAllByText("准备提示词").length).toBeGreaterThan(0);
+    expect(within(detail).queryByLabelText("节点进度：成功")).not.toBeInTheDocument();
+    expect(within(detail).queryByText("雨夜城市电影感")).not.toBeInTheDocument();
+    const prepareStep = within(detail).getAllByText("准备提示词").find((item) => item.closest(".stage-step-row"));
+    expect(prepareStep).toBeTruthy();
+    expect(prepareStep!.closest(".stage-step-row")?.textContent).toContain("S1");
+    expect(prepareStep!.closest(".stage-step-row")?.querySelector(".stage-step-progress")).toBeTruthy();
+    await userEvent.click(prepareStep!.closest(".stage-step-row") as HTMLElement);
+    expect(prepareStep!.closest(".stage-step-entry")?.querySelector(".node-detail-body")).toBeTruthy();
     expect(within(detail).getByText("雨夜城市电影感")).toBeInTheDocument();
     expect(within(detail).getByRole("img", { name: "准备提示词 输出图片 1" })).toHaveAttribute("src", "https://cdn.example.com/a.png");
     expect(within(detail).getAllByText("输入")[0].closest("details")).not.toHaveAttribute("open");
@@ -616,6 +652,9 @@ describe("XiAgent V2 app", () => {
     expect(screen.queryByText(/output_snapshot/)).not.toBeInTheDocument();
     expect(screen.queryByText(/public_url/)).not.toBeInTheDocument();
 
+    const chooseStep = within(detail).getAllByText("选择图片").find((item) => item.closest(".stage-step-row"));
+    expect(chooseStep).toBeTruthy();
+    await userEvent.click(chooseStep!.closest(".stage-step-row") as HTMLElement);
     await userEvent.click(screen.getByRole("button", { name: "选择 第二张" }));
 
     await waitFor(() => {
@@ -652,6 +691,7 @@ describe("XiAgent V2 app", () => {
     render(<App />);
     await login();
     await userEvent.click(await screen.findByRole("button", { name: "打开 故事板生成" }));
+    expect(screen.getByRole("button", { name: /S2 选择图片/ })).toHaveAttribute("aria-expanded", "true");
     await userEvent.click(screen.getByRole("button", { name: "选择 第二张" }));
 
     expect(await screen.findByText(/数据不满足 JSON Schema/)).toBeInTheDocument();
@@ -877,6 +917,7 @@ describe("XiAgent V2 app", () => {
       detailReadCount = detailReads.length;
     });
 
+    expect(screen.getByRole("button", { name: /S2 选择图片/ })).toHaveAttribute("aria-expanded", "true");
     await userEvent.click(screen.getByRole("button", { name: "选择 第二张" }));
 
     expect(await screen.findByText(/RunningHub image request failed/)).toBeInTheDocument();
