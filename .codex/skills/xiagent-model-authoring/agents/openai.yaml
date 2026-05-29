@@ -1,4 +1,4 @@
 interface:
   display_name: "XiAgent 模型编写"
-  short_description: "按模型路由边界新增或修改 XiAgent 模型供应商与配置"
+  short_description: "新增或修改模型供应商、路由、配置和测试"
   default_prompt: "Use $xiagent-model-authoring to add or update a XiAgent model provider with tests."

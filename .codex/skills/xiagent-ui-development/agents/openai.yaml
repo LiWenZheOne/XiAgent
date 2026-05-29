@@ -1,4 +1,4 @@
 interface:
-  display_name: "XiAgent UI Development"
-  short_description: "XiAgent UI development rules and delivery constraints"
+  display_name: "XiAgent UI 开发"
+  short_description: "开发和验证版本化 XiAgent 前端界面"
   default_prompt: "Use $xiagent-ui-development to implement or change a XiAgent UI version safely."

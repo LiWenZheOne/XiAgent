@@ -1,4 +1,4 @@
 interface:
-  display_name: "XiAgent UI Control Library"
-  short_description: "XiAgent UI control authoring and validation rules"
+  display_name: "XiAgent UI 控件库编写"
+  short_description: "编写、注册和验证节点 UI 控件契约"
   default_prompt: "Use $xiagent-ui-control-library-authoring to add or modify XiAgent UI controls safely."

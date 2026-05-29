@@ -1,4 +1,4 @@
 interface:
   display_name: "XiAgent 后端审查"
-  short_description: "按架构边界、数据口径、模块解耦和强契约审查后端改动"
+  short_description: "审查后端架构边界、数据口径和服务契约"
   default_prompt: "Use $xiagent-backend-review to review XiAgent backend code changes for architecture boundaries, data ownership, module decoupling, and contract quality."

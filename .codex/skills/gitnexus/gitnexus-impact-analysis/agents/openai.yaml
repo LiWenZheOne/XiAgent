@@ -1,0 +1,4 @@
+interface:
+  display_name: "GitNexus 影响分析"
+  short_description: "分析符号变更的调用方和破坏范围"
+  default_prompt: "Use $gitnexus-impact-analysis to assess what depends on a symbol before changing it."

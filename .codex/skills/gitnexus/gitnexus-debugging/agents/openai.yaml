@@ -1,0 +1,4 @@
+interface:
+  display_name: "GitNexus 调试追踪"
+  short_description: "用代码图谱追踪错误来源和失败链路"
+  default_prompt: "Use $gitnexus-debugging to trace why a bug or error is happening."

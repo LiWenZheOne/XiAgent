@@ -1,0 +1,4 @@
+interface:
+  display_name: "GitNexus 重构辅助"
+  short_description: "安全执行重命名、抽取、移动和拆分"
+  default_prompt: "Use $gitnexus-refactoring to refactor code with GitNexus impact checks."

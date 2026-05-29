@@ -1,4 +1,4 @@
 interface:
   display_name: "XiAgent UI 审查"
-  short_description: "审查 XiAgent UI 真实数据、设计一致性与布局质量"
+  short_description: "审查 UI 真实数据、设计一致性和布局质量"
   default_prompt: "Use $xiagent-ui-review to review a XiAgent UI implementation before accepting it."
