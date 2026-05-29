@@ -91,10 +91,10 @@ $nodes.<node_id>.output.<field>
 
 - 后端 manifest 或校验变更：运行 `python -m pytest tests/test_ui_control_catalog.py tests/test_workflow_validator.py tests/test_node_registry.py -q`，并补充相关 API 测试。
 - 工作流配置变更：运行 `python -m xiagent.workflows.testing_cli <workflow-path> --interactive` 或 `WorkflowTestBuilder`，并通过真实等待/提交交互路径提供业务参数。
-- UI 版本控件变更：运行目标版本 AGENTS 中列出的测试、构建和浏览器验证命令。
+- UI 版本控件变更：运行目标版本 AGENTS 中列出的测试、构建命令，并用 Codex 内部浏览器完成真实交互验收。
 - 涉及人工交互控件时，至少验证等待态渲染、提交 payload、busy/disabled 状态、错误态和刷新后的任务详情。
-- 涉及工作流默认控件或节点 UI 配置变更时，浏览器验收必须验证新建任务的新 snapshot；历史任务只可用于验证旧配置仍按旧语义展示，除非已显式迁移该 snapshot/config。
-- 修改工作流 YAML 后，真实浏览器验收前必须确认后端已重新加载工作流目录；如果后端 catalog 只在启动时加载工作流，先重启/重载后端再创建新任务。
+- 涉及工作流默认控件或节点 UI 配置变更时，Codex 内部浏览器验收必须验证新建任务的新 snapshot；历史任务只可用于验证旧配置仍按旧语义展示，除非已显式迁移该 snapshot/config。
+- 修改工作流 YAML 后，Codex 内部浏览器验收前必须确认后端已重新加载工作流目录；如果后端 catalog 只在启动时加载工作流，先重启/重载后端再创建新任务。
 
 ## Common Mistakes
 

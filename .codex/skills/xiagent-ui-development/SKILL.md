@@ -62,10 +62,11 @@ Run the target version's available commands, usually:
 ```powershell
 npm run test
 npm run build
-npm run test:e2e
 ```
 
-Also run backend/API tests when UI behavior depends on backend contracts. Finish with a real browser flow using the running backend and UI: login or register, select/confirm project, exercise the changed page, perform the core action, refresh or navigate as needed, and verify persisted results. Check that no user-facing raw JSON appears.
+Also run backend/API tests when UI behavior depends on backend contracts. Finish with a Codex internal browser flow using the running backend and UI: login or register, select/confirm project, exercise the changed page by clicking and typing like a user, perform the core action, refresh or navigate as needed, and verify persisted results. Check that no user-facing raw JSON appears.
+
+`真实交互测试` 专指 Codex 使用内部浏览器（in-app browser / Browser plugin）连接真实 UI 和真实后端，按用户路径点击、输入、提交、等待、刷新或跳转确认结果。外部浏览器自动化 CLI、旧 e2e 脚本、组件渲染测试、直接 API 调用、localStorage 预置、数据库造数或只看截图只能作为辅助回归证据，不能算最终验收。若内部浏览器不可用，必须说明具体阻塞原因并列出待人工验证步骤，不得声称真实交互测试已通过。
 
 When validating workflow UI config changes, create a fresh task and verify the new task detail is driven by the new persisted workflow snapshot. Historical tasks are evidence for old-snapshot behavior only unless their snapshot/config was explicitly migrated before the test.
 

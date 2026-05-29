@@ -35,6 +35,13 @@ class CreateCollectionRequest(BaseModel):
     description: str | None = None
 
 
+class UpdateCollectionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    description: str | None = None
+
+
 class CreateTagRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -42,6 +49,19 @@ class CreateTagRequest(BaseModel):
     project_id: str | None = None
     name: str
     description: str | None = None
+
+
+class UpdateTagRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    description: str | None = None
+
+
+class UpdateAssetRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
 
 
 @router.post("/text")
@@ -123,6 +143,35 @@ async def list_collection_nodes(
     return {"items": [asdict(collection) for collection in collections]}
 
 
+@router.patch("/collections/{collection_id}")
+async def update_collection_node(
+    collection_id: str,
+    request: UpdateCollectionRequest,
+    services: Annotated[ApiServices, Depends(get_services)],
+    current_user: Annotated[UserRecord, Depends(get_current_user)],
+) -> dict:
+    collection = await services.assets.update_collection_node(
+        user_id=current_user.user_id,
+        collection_id=collection_id,
+        name=request.name,
+        description=request.description,
+    )
+    return asdict(collection)
+
+
+@router.delete("/collections/{collection_id}")
+async def delete_collection_node(
+    collection_id: str,
+    services: Annotated[ApiServices, Depends(get_services)],
+    current_user: Annotated[UserRecord, Depends(get_current_user)],
+) -> dict:
+    await services.assets.delete_collection_node(
+        user_id=current_user.user_id,
+        collection_id=collection_id,
+    )
+    return {"deleted": True}
+
+
 @router.post("/tags")
 async def create_tag(
     request: CreateTagRequest,
@@ -154,6 +203,35 @@ async def list_tags(
     return {"items": [asdict(tag) for tag in tags]}
 
 
+@router.patch("/tags/{tag_id}")
+async def update_tag(
+    tag_id: str,
+    request: UpdateTagRequest,
+    services: Annotated[ApiServices, Depends(get_services)],
+    current_user: Annotated[UserRecord, Depends(get_current_user)],
+) -> dict:
+    tag = await services.assets.update_tag(
+        user_id=current_user.user_id,
+        tag_id=tag_id,
+        name=request.name,
+        description=request.description,
+    )
+    return asdict(tag)
+
+
+@router.delete("/tags/{tag_id}")
+async def delete_tag(
+    tag_id: str,
+    services: Annotated[ApiServices, Depends(get_services)],
+    current_user: Annotated[UserRecord, Depends(get_current_user)],
+) -> dict:
+    await services.assets.delete_tag(
+        user_id=current_user.user_id,
+        tag_id=tag_id,
+    )
+    return {"deleted": True}
+
+
 @router.get("/search")
 async def search_assets(
     scope: str,
@@ -179,6 +257,49 @@ async def search_assets(
     return {"items": [asdict(asset) for asset in result.items], "total": result.total}
 
 
+@router.get("/{asset_id}/tags")
+async def list_asset_tags(
+    asset_id: str,
+    services: Annotated[ApiServices, Depends(get_services)],
+    current_user: Annotated[UserRecord, Depends(get_current_user)],
+) -> dict:
+    tags = await services.assets.list_asset_tags(
+        user_id=current_user.user_id,
+        asset_id=asset_id,
+    )
+    return {"items": [asdict(tag) for tag in tags]}
+
+
+@router.post("/{asset_id}/tags/{tag_id}")
+async def attach_asset_tag(
+    asset_id: str,
+    tag_id: str,
+    services: Annotated[ApiServices, Depends(get_services)],
+    current_user: Annotated[UserRecord, Depends(get_current_user)],
+) -> dict:
+    tags = await services.assets.attach_asset_tag(
+        user_id=current_user.user_id,
+        asset_id=asset_id,
+        tag_id=tag_id,
+    )
+    return {"items": [asdict(tag) for tag in tags]}
+
+
+@router.delete("/{asset_id}/tags/{tag_id}")
+async def detach_asset_tag(
+    asset_id: str,
+    tag_id: str,
+    services: Annotated[ApiServices, Depends(get_services)],
+    current_user: Annotated[UserRecord, Depends(get_current_user)],
+) -> dict:
+    tags = await services.assets.detach_asset_tag(
+        user_id=current_user.user_id,
+        asset_id=asset_id,
+        tag_id=tag_id,
+    )
+    return {"items": [asdict(tag) for tag in tags]}
+
+
 @router.get("/{asset_id}")
 async def get_asset(
     asset_id: str,
@@ -190,6 +311,21 @@ async def get_asset(
         user_id=current_user.user_id,
         asset_id=asset_id,
         project_id=project_id,
+    )
+    return asdict(asset)
+
+
+@router.patch("/{asset_id}")
+async def update_asset(
+    asset_id: str,
+    request: UpdateAssetRequest,
+    services: Annotated[ApiServices, Depends(get_services)],
+    current_user: Annotated[UserRecord, Depends(get_current_user)],
+) -> dict:
+    asset = await services.assets.update_asset(
+        user_id=current_user.user_id,
+        asset_id=asset_id,
+        name=request.name,
     )
     return asdict(asset)
 

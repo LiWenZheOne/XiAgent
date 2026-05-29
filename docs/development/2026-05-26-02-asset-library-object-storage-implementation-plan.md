@@ -6,7 +6,7 @@
 
 **Architecture:** 后端新增对象存储路由器抽象，七牛云只作为基础设施适配器出现。资产服务继续保存本地资产、目录、标签和索引，图片文件上传后发布到对象存储并把 `metadata.public_url` 交给前端和工作流。前端采用 `React + Vite + TypeScript`，资产库和工作流输入表单共用资产选择器。
 
-**Tech Stack:** Python 3.11、FastAPI、SQLite、pytest、python-multipart、qiniu SDK、React、Vite、TypeScript、Vitest、Playwright。
+**Tech Stack:** Python 3.11、FastAPI、SQLite、pytest、python-multipart、qiniu SDK、React、Vite、TypeScript、Vitest、Codex 内部浏览器验收。
 
 ---
 
@@ -60,7 +60,6 @@ ui/V1/src/task/CreateTaskPage.tsx
 ui/V1/src/task/WorkflowInputForm.tsx
 ui/V1/src/styles/app.css
 ui/V1/src/tests/*.test.tsx
-ui/V1/tests/e2e/image-to-image-asset.spec.ts
 ```
 
 工作流：
@@ -973,41 +972,11 @@ Expected: PASS.
 ## Task 6: 图生图端到端验证
 
 **Files:**
-- Create: `ui/V1/playwright.config.ts`
-- Create: `ui/V1/tests/e2e/image-to-image-asset.spec.ts`
-- Create: `tests/e2e/test_asset_image_to_image_files.py`
 - Modify: `docs/development/2026-05-21-01-dependency-and-deployment-guidelines.md`
 
-- [ ] **Step 1: 增加 E2E 文件存在测试**
+- [ ] **Step 1: 准备 Codex 内部浏览器场景**
 
-创建 `tests/e2e/test_asset_image_to_image_files.py`：
-
-```python
-from pathlib import Path
-
-
-def test_asset_image_to_image_e2e_files_exist() -> None:
-    assert Path("ui/V1/playwright.config.ts").exists()
-    assert Path("ui/V1/tests/e2e/image-to-image-asset.spec.ts").exists()
-```
-
-- [ ] **Step 2: 运行测试确认失败**
-
-Run:
-
-```powershell
-python -m pytest tests/e2e/test_asset_image_to_image_files.py -q
-```
-
-Expected: FAIL，原因是 Playwright 配置和 E2E 脚本尚不存在。
-
-- [ ] **Step 3: 增加 Playwright 配置**
-
-创建 `ui/V1/playwright.config.ts`，配置 Vite dev server 和 `baseURL=http://127.0.0.1:5173`。
-
-- [ ] **Step 4: 增加浏览器场景测试**
-
-`image-to-image-asset.spec.ts` 覆盖：
+Codex 内部浏览器验收覆盖：
 
 - 注册/登录。
 - 创建项目。
@@ -1019,7 +988,7 @@ Expected: FAIL，原因是 Playwright 配置和 E2E 脚本尚不存在。
 - 创建并运行任务。
 - 看到图生图任务结果区域。
 
-- [ ] **Step 5: 更新部署文档**
+- [ ] **Step 2: 更新部署文档**
 
 在依赖和配置文档中补充：
 
@@ -1028,7 +997,7 @@ Expected: FAIL，原因是 Playwright 配置和 E2E 脚本尚不存在。
 - 七牛云 `bucket/public_base_url/key_prefix` 说明。
 - 正式密钥不得提交。
 
-- [ ] **Step 6: 运行完整验证**
+- [ ] **Step 3: 运行完整验证**
 
 Run:
 
@@ -1047,11 +1016,11 @@ Expected: PASS.
 ```powershell
 python -m uvicorn xiagent.api.app:app --host 127.0.0.1 --port 8000
 Set-Location ui\V1
-npm run test:e2e
+npm run dev -- --host 127.0.0.1
 Set-Location ..\..
 ```
 
-Expected: PASS，前提是本地 `object_storage.local.toml`、RunningHub 配置和七牛云 bucket/public domain 有效。
+Expected: 使用 Codex 内部浏览器完成上传、资产选择、创建任务、提交图生图输入、查看输出资产的真实页面交互；前提是本地 `object_storage.local.toml`、RunningHub 配置和七牛云 bucket/public domain 有效。验收报告必须记录访问 URL、输入资产、点击路径、任务结果和截图或日志证据。
 
 ## 自检
 

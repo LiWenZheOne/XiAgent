@@ -73,6 +73,16 @@ class AssetService(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def update_asset(
+        self,
+        *,
+        user_id: str,
+        asset_id: str,
+        name: str,
+    ) -> Any:
+        raise NotImplementedError
+
+    @abstractmethod
     async def create_collection_node(
         self,
         *,
@@ -96,6 +106,26 @@ class AssetService(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def update_collection_node(
+        self,
+        *,
+        user_id: str,
+        collection_id: str,
+        name: str,
+        description: str | None = None,
+    ) -> Any:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def delete_collection_node(
+        self,
+        *,
+        user_id: str,
+        collection_id: str,
+    ) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
     async def create_tag(
         self,
         *,
@@ -114,6 +144,55 @@ class AssetService(ABC):
         user_id: str,
         scope: str,
         project_id: str | None,
+    ) -> Any:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def update_tag(
+        self,
+        *,
+        user_id: str,
+        tag_id: str,
+        name: str,
+        description: str | None = None,
+    ) -> Any:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def delete_tag(
+        self,
+        *,
+        user_id: str,
+        tag_id: str,
+    ) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def list_asset_tags(
+        self,
+        *,
+        user_id: str,
+        asset_id: str,
+    ) -> Any:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def attach_asset_tag(
+        self,
+        *,
+        user_id: str,
+        asset_id: str,
+        tag_id: str,
+    ) -> Any:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def detach_asset_tag(
+        self,
+        *,
+        user_id: str,
+        asset_id: str,
+        tag_id: str,
     ) -> Any:
         raise NotImplementedError
 

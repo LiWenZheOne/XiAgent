@@ -94,6 +94,11 @@ nodes:
       title: 填写运行输入
       description: 从资产库选择参考图并填写 RunningHub 图生图调用参数。
     ui:
+      sections:
+        input:
+          default_open: true
+        output:
+          default_open: false
       controls:
         input:
           control_id: ui.input.schema_form.v1

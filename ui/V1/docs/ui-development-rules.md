@@ -6,7 +6,7 @@
 
 ## 技术栈
 
-- React 19、TypeScript、Vite、Vitest、Testing Library、Playwright。
+- React 19、TypeScript、Vite、Vitest、Testing Library。最终验收优先使用 Codex 内部浏览器。
 - 入口位于 `ui/V1/src/app/App.tsx`，样式主要在 `ui/V1/src/styles/app.css`。
 - API 调用集中在 `ui/V1/src/api/`，不得绕过 API client 直接访问后端内部实现。
 
@@ -41,10 +41,9 @@
 ```powershell
 npm run test
 npm run build
-npm run test:e2e
 ```
 
-涉及后端契约时，同时运行相关 `pytest`。最终验收仍需用真实浏览器走登录、项目选择、目标页面操作和持久化结果确认。
+涉及后端契约时，同时运行相关 `pytest`。最终验收必须用 Codex 内部浏览器连接真实后端和真实 UI，按用户路径完成登录、项目选择、目标页面操作和持久化结果确认。外部浏览器自动化 CLI、旧 e2e 脚本或截图检查只能作为辅助回归证据，不能替代真实交互验收。
 
 ## 维护要求
 

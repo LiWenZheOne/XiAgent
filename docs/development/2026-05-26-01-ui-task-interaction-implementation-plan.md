@@ -8,7 +8,7 @@
 
 **Architecture:** 后端继续保持模块化单体，任务运行能力放在 `xiagent.runtime`，HTTP/SSE 放在 `xiagent.api.routers.tasks`，节点能力放在 `xiagent.nodes.system`。前端是独立 React + Vite + TypeScript 工程，放在 `ui/V1/`，只通过 HTTP API 和 SSE 与后端通信。UI 控件通过契约化注册表解析 `workflow.nodes[].ui.block_ref`，任务详情页只消费注册表，不直接依赖具体控件实现。
 
-**Tech Stack:** Python 3.11、FastAPI、SQLite、pytest、React、Vite、TypeScript、Vitest、Playwright。
+**Tech Stack:** Python 3.11、FastAPI、SQLite、pytest、React、Vite、TypeScript、Vitest、Codex 内部浏览器验收。
 
 ---
 
@@ -77,7 +77,6 @@ ui/V1/src/ui-library/UiBlockLibraryPage.tsx
 ui/V1/src/styles/app.css
 ui/V1/src/tests/setup.ts
 ui/V1/src/tests/*.test.tsx
-ui/V1/tests/e2e/task-interaction.spec.ts
 ```
 
 工作流新增：
@@ -1156,8 +1155,7 @@ Create `ui/V1/package.json`:
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "test": "vitest run",
-    "test:e2e": "playwright test"
+    "test": "vitest run"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^5.0.0",
@@ -1167,7 +1165,6 @@ Create `ui/V1/package.json`:
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
-    "@playwright/test": "^1.0.0",
     "@testing-library/jest-dom": "^6.0.0",
     "@testing-library/react": "^16.0.0",
     "@types/react": "^19.0.0",
@@ -2324,76 +2321,9 @@ git commit -m "feat: 增加 UI 控件库页面"
 ## Task 12: 真实前后端用户场景测试
 
 **Files:**
-- Create: `ui/V1/playwright.config.ts`
-- Create: `ui/V1/tests/e2e/task-interaction.spec.ts`
-- Create: `tests/e2e/test_ui_backend_smoke.py`
+- 不创建外部浏览器自动化 CLI 配置或脚本；最终验收记录在任务报告中。
 
-- [ ] **Step 1: 增加 Playwright 配置**
-
-Create `ui/V1/playwright.config.ts`:
-
-```ts
-import { defineConfig } from "@playwright/test";
-
-export default defineConfig({
-  testDir: "./tests/e2e",
-  use: {
-    baseURL: "http://127.0.0.1:5173",
-    trace: "on-first-retry",
-  },
-  webServer: {
-    command: "npm run dev -- --host 127.0.0.1",
-    url: "http://127.0.0.1:5173",
-    reuseExistingServer: true,
-  },
-});
-```
-
-- [ ] **Step 2: 创建前端真实后端 E2E 测试**
-
-Create `ui/V1/tests/e2e/task-interaction.spec.ts`:
-
-```ts
-import { expect, test } from "@playwright/test";
-
-test("user creates task, selects candidate, and reruns node", async ({ page }) => {
-  await page.goto("/");
-  await page.getByLabel("用户名").fill("ui-e2e-user");
-  await page.getByLabel("密码").fill("secret-123");
-  await page.getByText("注册").click();
-  await page.getByText("登录").click();
-  await page.getByText("任务").click();
-  await page.getByText("创建任务").click();
-  await page.getByText("UI 任务交互演示").click();
-  await page.getByLabel("prompt").fill("电影感人物主视觉");
-  await page.getByText("创建").click();
-
-  await expect(page.getByText("填写工作流输入")).toBeVisible();
-  await expect(page.getByText("生成 3 张候选图")).toBeVisible();
-  await page.getByText("候选 2").click();
-  await expect(page.getByText("最终输出")).toBeVisible();
-
-  await page.getByText("重新运行").click();
-  await expect(page.getByText("pending")).toBeVisible();
-});
-```
-
-- [ ] **Step 3: 增加后端集成测试说明性 smoke**
-
-Create `tests/e2e/test_ui_backend_smoke.py`:
-
-```python
-from __future__ import annotations
-
-from pathlib import Path
-
-
-def test_ui_v1_e2e_files_exist() -> None:
-    assert Path("ui/V1/playwright.config.ts").exists()
-    assert Path("ui/V1/tests/e2e/task-interaction.spec.ts").exists()
-```
-
-- [ ] **Step 4: 运行真实前后端 E2E**
+- [ ] **Step 1: 启动真实后端**
 
 启动后端：
 
@@ -2401,17 +2331,19 @@ def test_ui_v1_e2e_files_exist() -> None:
 python -m uvicorn xiagent.api.app:app --host 127.0.0.1 --port 8000
 ```
 
-另一个终端运行：
+- [ ] **Step 2: 启动真实 UI**
 
 ```powershell
 Set-Location ui\V1
-npm run test:e2e
+npm run dev -- --host 127.0.0.1
 Set-Location ..\..
 ```
 
-Expected: Playwright PASS，浏览器真实访问 `ui/V1` 页面并通过代理调用 FastAPI。
+- [ ] **Step 3: 使用 Codex 内部浏览器完成真实交互验收**
 
-- [ ] **Step 5: 运行全量测试**
+用 Codex 内部浏览器打开本地 UI，按真实用户路径完成：注册或登录 -> 进入全局项目 -> 打开任务列表 -> 创建任务 -> 选择可用工作流 -> 在任务详情填写文本/图片/文档输入 -> 运行任务 -> 接收节点级 SSE 更新 -> 选择候选图片 -> 提交交互继续执行 -> 查看最终输出 -> 重新运行节点并确认下游状态清理。验收报告必须记录访问 URL、测试账号、关键输入、点击路径、刷新/跳转后的结果和截图或日志证据。
+
+- [ ] **Step 4: 运行全量测试**
 
 Run:
 
@@ -2425,10 +2357,10 @@ Set-Location ..\..
 
 Expected: PASS.
 
-- [ ] **Step 6: 提交**
+- [ ] **Step 5: 提交**
 
 ```powershell
-git add ui/V1/playwright.config.ts ui/V1/tests/e2e tests/e2e
+git add ui/V1/src ui/V1/package.json docs/development/2026-05-26-01-ui-task-interaction-implementation-plan.md
 git commit -m "test: 增加 UI 前后端场景测试"
 ```
 
@@ -2471,15 +2403,7 @@ Expected: PASS.
 
 - [ ] **Step 4: 运行前后端真实场景测试**
 
-Run:
-
-```powershell
-Set-Location ui\V1
-npm run test:e2e
-Set-Location ..\..
-```
-
-Expected: PASS.
+启动真实后端和 `ui/V1` 开发服务器后，使用 Codex 内部浏览器按 Task 12 的用户路径完成验收。Expected: 真实页面交互通过，报告记录访问 URL、账号、输入、页面结果、刷新/跳转后的持久化确认和截图或日志证据。
 
 - [ ] **Step 5: 查看 git 状态**
 

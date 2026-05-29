@@ -128,7 +128,7 @@ variant: thumbnails
 mode: input
 ```
 
-资产图片选择控件通过资产 API 查询目录、标签、资产和上传文件。提交值写入等待节点的用户输入 payload，经运行时校验后进入该节点 `input_snapshot`，再由节点执行逻辑产出 `output_snapshot`。
+资产图片选择控件通过资产 API 查询目录、标签、资产和上传文件。资产库页签先展示项目过滤入口，点击后弹出 `/api/projects` 返回的全局项目和用户自建项目，单选确认后使用该项目上下文刷新目录、标签和资产列表；选择全局项目时使用 `scope=global`，选择普通项目时使用 `scope=combined&project_id=<selected>`。提交值写入等待节点的用户输入 payload，经运行时校验后进入该节点 `input_snapshot`，再由节点执行逻辑产出 `output_snapshot`。
 
 ## 创建任务页
 
@@ -170,7 +170,7 @@ mode: input
 - 资产图片选择控件覆盖加载、空态、错误、禁用、上传中、单选、多选、折叠展开和大图预览。
 - 提交节点输入后，任务详情展示已提交参数的 readonly 状态，并继续后续节点。
 
-浏览器验收：
+Codex 内部浏览器验收：
 
 - 注册或登录。
 - 选择项目。

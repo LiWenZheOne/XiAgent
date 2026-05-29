@@ -211,5 +211,7 @@ export interface AssetTag {
   tag_id: string;
   name: string;
   scope: AssetScope;
+  project_id?: string | null;
+  description?: string | null;
   asset_count?: number;
 }

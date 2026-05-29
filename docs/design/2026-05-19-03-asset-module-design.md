@@ -170,6 +170,15 @@ class AssetService(ABC):
     ) -> AssetContent:
         ...
 
+    async def update_asset(
+        self,
+        *,
+        user_id: str,
+        asset_id: str,
+        name: str,
+    ) -> AssetRecord:
+        ...
+
     async def update_asset_metadata(
         self,
         *,
@@ -271,6 +280,8 @@ class AssetService(ABC):
         ...
 ```
 
+`update_asset` 只更新资产展示名称，不改动底层文件存储 URI、内容哈希、目录关系或标签关系。调用方必须传入非空 `name`；空名称返回 `asset_name_required`，资产不存在返回 `asset_not_found`，项目资产写入前必须通过 `UserService.ensure_project_access(..., action="asset:write")`。
+
 ## 作用域查询规则
 
 `scope` 支持：
@@ -313,4 +324,3 @@ node_execution_asset_refs
 ```
 
 前端未来打开任务详情时，可以展示该任务使用过哪些资产、由哪个节点使用、用途是什么。
-

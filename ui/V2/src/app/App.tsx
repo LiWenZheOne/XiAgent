@@ -1,6 +1,22 @@
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
-import { createTextAsset, deleteAsset, downloadAssetContent, listAssetCollections, listAssetTags, searchAssets, uploadAsset } from "../api/assets";
+import {
+  attachAssetTag,
+  createAssetCollection,
+  createAssetTag,
+  deleteAsset,
+  deleteAssetCollection,
+  deleteAssetTag,
+  detachAssetTag,
+  downloadAssetContent,
+  listAssetCollections,
+  listAssetTags,
+  listAssetTagsForAsset,
+  searchAssets,
+  updateAsset,
+  updateAssetCollection,
+  uploadAsset,
+} from "../api/assets";
 import { getCurrentUser, login, register } from "../api/auth";
 import { ApiError, clearAccessToken, getAccessToken } from "../api/client";
 import { createProject, listProjects } from "../api/projects";
@@ -264,6 +280,9 @@ export function App() {
             setSelectedTaskId(task.task_id);
             setCreatingTask(false);
           }}
+          onTaskUpdated={(task) => {
+            setTasks((current) => current.map((item) => (item.task_id === task.task_id ? { ...item, ...task } : item)));
+          }}
           onDeleteTask={async (task) => {
             if (!selectedProjectId) return;
             await deleteTask(selectedProjectId, task.task_id);
@@ -378,6 +397,7 @@ function WorkbenchPage({
   onCreateTask,
   onSelectTask,
   onTaskCreated,
+  onTaskUpdated,
   onDeleteTask,
   onRefreshTasks,
 }: {
@@ -395,6 +415,7 @@ function WorkbenchPage({
   onCreateTask: () => void;
   onSelectTask: (taskId: string) => void;
   onTaskCreated: (task: TaskRecord) => void;
+  onTaskUpdated: (task: TaskRecord) => void;
   onDeleteTask: (task: TaskRecord) => Promise<void>;
   onRefreshTasks: () => void;
 }) {
@@ -535,6 +556,7 @@ function WorkbenchPage({
             taskId={selectedTask.task_id}
             onRuntimeContextChange={setRuntimeContext}
             onTaskChanged={onRefreshTasks}
+            onTaskUpdated={onTaskUpdated}
           />
         ) : null}
         {!creatingTask && !selectedTask ? (
@@ -686,11 +708,13 @@ function TaskDetailPanel({
   taskId,
   onRuntimeContextChange,
   onTaskChanged,
+  onTaskUpdated,
 }: {
   projectId: string;
   taskId: string;
   onRuntimeContextChange: (context: TaskRuntimeContext | null) => void;
   onTaskChanged: () => void;
+  onTaskUpdated: (task: TaskRecord) => void;
 }) {
   const [detail, setDetail] = useState<TaskDetailResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -705,6 +729,7 @@ function TaskDetailPanel({
       .then((nextDetail) => {
         if (!active) return;
         onRuntimeContextChange(taskRuntimeContext(nextDetail, orderNodes(nextDetail)));
+        onTaskUpdated(nextDetail.task);
         setDetail(nextDetail);
       })
       .catch((nextError) => {
@@ -745,9 +770,26 @@ function TaskDetailPanel({
     setRefreshKey((current) => current + 1);
   }
 
+  function markInteractionRunning(nodeId: string) {
+    if (!detail) return;
+    const nextDetail = {
+      ...detail,
+      task: { ...detail.task, status: "running", current_node_id: nodeId },
+      node_executions: detail.node_executions.map((node) => (
+        node.node_id === nodeId ? { ...node, status: "running" } : node
+      )),
+    };
+    setDetail(nextDetail);
+    onRuntimeContextChange(taskRuntimeContext(nextDetail, orderNodes(nextDetail)));
+    onTaskUpdated(nextDetail.task);
+  }
+
   async function handleInteraction(nodeId: string, input: Record<string, unknown>) {
+    markInteractionRunning(nodeId);
     try {
-      await submitInteraction(taskId, { project_id: projectId, node_id: nodeId, input });
+      const task = await submitInteraction(taskId, { project_id: projectId, node_id: nodeId, input });
+      onTaskUpdated(task);
+      setDetail((current) => (current ? { ...current, task: { ...current.task, ...task } } : current));
     } finally {
       onTaskChanged();
       setRefreshKey((current) => current + 1);
@@ -821,9 +863,9 @@ function NodeExecutionCard({
   const interactionConfig = resolveNodeInteractionConfig(node, nodeSpec, snapshot);
   const InteractionControl = interactionConfig ? getNodeUiControl(interactionConfig.control_id) : null;
   const inputCanSubmit = isWaitingNode(node, snapshot) && inputConfig?.mode === "input";
-  const inputDefaultOpen = nodeSectionDefaultOpen(snapshot, "input", false);
-  const outputDefaultOpen = node.error ? true : nodeSectionDefaultOpen(snapshot, "output", true);
-  const eventsDefaultOpen = nodeSectionDefaultOpen(snapshot, "events", false);
+  const inputDefaultOpen = nodeSectionDefaultOpen(snapshot, nodeSpec, "input", false);
+  const outputDefaultOpen = node.error ? true : nodeSectionDefaultOpen(snapshot, nodeSpec, "output", true);
+  const eventsDefaultOpen = nodeSectionDefaultOpen(snapshot, nodeSpec, "events", false);
 
   async function withBusy(action: () => Promise<void>) {
     if (busyRef.current) return;
@@ -1164,30 +1206,103 @@ function ProjectsPage({
   );
 }
 
+type DirectoryAction = "create" | "rename" | "delete" | null;
+type TagAction = "create" | "delete" | null;
+type AssetLibraryScope = "combined" | "project" | "global";
+
+interface AssetCollectionTreeNode {
+  collection: AssetCollection;
+  children: AssetCollectionTreeNode[];
+}
+
+function buildAssetCollectionTree(collections: AssetCollection[]): AssetCollectionTreeNode[] {
+  const byParent = new Map<string, AssetCollection[]>();
+  for (const collection of collections) {
+    const parentId = collection.parent_id ?? "";
+    byParent.set(parentId, [...(byParent.get(parentId) ?? []), collection]);
+  }
+
+  function build(parentId: string): AssetCollectionTreeNode[] {
+    return (byParent.get(parentId) ?? []).map((collection) => ({
+      collection,
+      children: build(collection.collection_id),
+    }));
+  }
+
+  return build("");
+}
+
+function AssetCollectionTreeItems({
+  nodes,
+  selectedCollectionId,
+  onSelect,
+}: {
+  nodes: AssetCollectionTreeNode[];
+  selectedCollectionId: string;
+  onSelect: (collectionId: string) => void;
+}) {
+  return (
+    <>
+      {nodes.map((node) => (
+        <div className="asset-directory-node" key={node.collection.collection_id}>
+          <button
+            aria-selected={selectedCollectionId === node.collection.collection_id}
+            className={selectedCollectionId === node.collection.collection_id ? "directory-tree-item active" : "directory-tree-item"}
+            role="treeitem"
+            type="button"
+            onClick={() => onSelect(node.collection.collection_id)}
+          >
+            <span>{node.collection.name}</span>
+            {node.collection.asset_count === undefined ? null : <small>{node.collection.asset_count}</small>}
+          </button>
+          {node.children.length ? (
+            <div className="asset-directory-children" role="group">
+              <AssetCollectionTreeItems nodes={node.children} selectedCollectionId={selectedCollectionId} onSelect={onSelect} />
+            </div>
+          ) : null}
+        </div>
+      ))}
+    </>
+  );
+}
+
 function AssetLibraryPage({ project, onProjectRequired }: { project: ProjectRecord | null; onProjectRequired: () => void }) {
   const [assets, setAssets] = useState<AssetRecord[]>([]);
   const [keyword, setKeyword] = useState("");
-  const [scope, setScope] = useState<"combined" | "global">("combined");
+  const [scope, setScope] = useState<AssetLibraryScope>("combined");
   const [collections, setCollections] = useState<AssetCollection[]>([]);
   const [tags, setTags] = useState<AssetTag[]>([]);
   const [selectedCollectionId, setSelectedCollectionId] = useState("");
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
   const [selectedAssetId, setSelectedAssetId] = useState("");
   const [file, setFile] = useState<File | null>(null);
-  const [textName, setTextName] = useState("");
-  const [textContent, setTextContent] = useState("");
+  const [uploadName, setUploadName] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
+  const [directoryAction, setDirectoryAction] = useState<DirectoryAction>(null);
+  const [directoryName, setDirectoryName] = useState("");
+  const [directorySaving, setDirectorySaving] = useState(false);
+  const [assetRenameOpen, setAssetRenameOpen] = useState(false);
+  const [assetRenameName, setAssetRenameName] = useState("");
+  const [assetNameSaving, setAssetNameSaving] = useState(false);
+  const [tagAction, setTagAction] = useState<TagAction>(null);
+  const [tagName, setTagName] = useState("");
+  const [tagSaving, setTagSaving] = useState(false);
+  const [currentAssetTags, setCurrentAssetTags] = useState<AssetTag[]>([]);
+  const [assetTagDialogOpen, setAssetTagDialogOpen] = useState(false);
+  const [assetTagFilter, setAssetTagFilter] = useState("");
+  const [assetTagSavingId, setAssetTagSavingId] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
-    if (scope === "combined" && !project) return;
+    if (scope !== "global" && !project) return;
     let active = true;
+    const projectId = scope === "global" ? undefined : project?.project_id;
     setLoading(true);
     setMessage("");
     searchAssets({
       scope,
-      project_id: scope === "combined" ? project?.project_id : undefined,
+      project_id: projectId,
       keyword: keyword.trim() || undefined,
       collection_id: selectedCollectionId || undefined,
       tag_ids: selectedTagIds,
@@ -1209,11 +1324,12 @@ function AssetLibraryPage({ project, onProjectRequired }: { project: ProjectReco
   }, [keyword, project, reloadKey, scope, selectedCollectionId, selectedTagIds]);
 
   useEffect(() => {
-    if (scope === "combined" && !project) return;
+    if (scope !== "global" && !project) return;
     let active = true;
+    const projectId = scope === "global" ? undefined : project?.project_id;
     Promise.all([
-      listAssetCollections(scope, scope === "combined" ? project?.project_id : undefined),
-      listAssetTags(scope, scope === "combined" ? project?.project_id : undefined),
+      listAssetCollections(scope, projectId),
+      listAssetTags(scope, projectId),
     ])
       .then(([nextCollections, nextTags]) => {
         if (!active) return;
@@ -1230,11 +1346,61 @@ function AssetLibraryPage({ project, onProjectRequired }: { project: ProjectReco
     };
   }, [project, reloadKey, scope]);
 
+  useEffect(() => {
+    setDirectoryAction(null);
+    setDirectoryName("");
+    setTagAction(null);
+    setTagName("");
+  }, [project?.project_id, scope]);
+
   const selectedAsset = assets.find((asset) => asset.asset_id === selectedAssetId) ?? null;
+  const selectedCollection = collections.find((collection) => collection.collection_id === selectedCollectionId) ?? null;
+  const selectedEditableTag = selectedTagIds.length === 1 ? tags.find((tag) => tag.tag_id === selectedTagIds[0]) ?? null : null;
+  const selectedEditableTagIsEmpty = selectedEditableTag ? (selectedEditableTag.asset_count ?? 0) === 0 : false;
+  const collectionTree = useMemo(() => buildAssetCollectionTree(collections), [collections]);
+  const collectionWriteScope = scope === "global" ? "global" : "project";
+  const collectionProjectId = collectionWriteScope === "project" ? project?.project_id : undefined;
+  const tagWriteScope = scope === "global" ? "global" : "project";
+  const tagProjectId = tagWriteScope === "project" ? project?.project_id : undefined;
+  const projectDisplayName = project?.name?.trim() || "项目";
+  const combinedScopeLabel = `${projectDisplayName} + 全局`;
+  const projectScopeLabel = `${projectDisplayName}资产`;
+  const filteredAssetTagOptions = useMemo(() => {
+    const keyword = assetTagFilter.trim().toLowerCase();
+    const compatibleTags = selectedAsset ? tags.filter((tag) => tagMatchesAssetScope(tag, selectedAsset)) : [];
+    if (!keyword) return compatibleTags;
+    return compatibleTags.filter((tag) => tag.name.toLowerCase().includes(keyword));
+  }, [assetTagFilter, selectedAsset, tags]);
+
+  useEffect(() => {
+    setAssetRenameOpen(false);
+    setAssetRenameName("");
+  }, [selectedAsset?.asset_id]);
+
+  useEffect(() => {
+    if (!selectedAsset) {
+      setCurrentAssetTags([]);
+      setAssetTagDialogOpen(false);
+      setAssetTagFilter("");
+      return;
+    }
+    let active = true;
+    listAssetTagsForAsset(selectedAsset.asset_id)
+      .then((items) => {
+        if (active) setCurrentAssetTags(items);
+      })
+      .catch((error) => {
+        if (active) setMessage(readableError(error, "资产标签暂时不可用。"));
+      });
+    return () => {
+      active = false;
+    };
+  }, [reloadKey, selectedAsset]);
 
   async function handleUpload() {
-    if (!file) return;
-    if (scope === "combined" && !project) {
+    const cleanName = uploadName.trim();
+    if (!file || !cleanName) return;
+    if (scope !== "global" && !project) {
       onProjectRequired();
       return;
     }
@@ -1242,23 +1408,12 @@ function AssetLibraryPage({ project, onProjectRequired }: { project: ProjectReco
       file,
       scope: scope === "global" ? "global" : "project",
       project_id: scope === "global" ? undefined : project?.project_id,
+      name: cleanName,
+      collection_ids: selectedCollectionId ? [selectedCollectionId] : undefined,
       publish: true,
     });
     setFile(null);
-    setReloadKey((current) => current + 1);
-  }
-
-  async function handleCreateText(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!textName.trim() || !textContent.trim()) return;
-    await createTextAsset({
-      scope: scope === "global" ? "global" : "project",
-      project_id: scope === "global" ? undefined : project?.project_id,
-      name: textName.trim(),
-      text: textContent,
-    });
-    setTextName("");
-    setTextContent("");
+    setUploadName("");
     setReloadKey((current) => current + 1);
   }
 
@@ -1278,6 +1433,181 @@ function AssetLibraryPage({ project, onProjectRequired }: { project: ProjectReco
     setReloadKey((current) => current + 1);
   }
 
+  function handleStartAssetRename(asset: AssetRecord) {
+    setAssetRenameName(asset.name);
+    setAssetRenameOpen(true);
+  }
+
+  async function handleSaveAssetName(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const cleanName = assetRenameName.trim();
+    if (!selectedAsset || !cleanName) return;
+    setAssetNameSaving(true);
+    setMessage("");
+    try {
+      const renamed = await updateAsset({
+        asset_id: selectedAsset.asset_id,
+        name: cleanName,
+      });
+      setAssets((current) => current.map((asset) => asset.asset_id === renamed.asset_id ? renamed : asset));
+      setAssetRenameOpen(false);
+      setAssetRenameName("");
+      setMessage(`已重命名资产：${renamed.name}`);
+      setReloadKey((current) => current + 1);
+    } catch (error) {
+      setMessage(readableError(error, "资产重命名失败，请稍后重试。"));
+    } finally {
+      setAssetNameSaving(false);
+    }
+  }
+
+  function handleSelectCollection(collectionId: string) {
+    setSelectedCollectionId(collectionId);
+    setDirectoryAction(null);
+    setDirectoryName("");
+  }
+
+  function handleStartDirectoryAction(action: Exclude<DirectoryAction, null>) {
+    if (action !== "create" && !selectedCollection) return;
+    setDirectoryAction(action);
+    setDirectoryName(action === "rename" ? selectedCollection?.name ?? "" : "");
+  }
+
+  async function handleSaveDirectory(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const cleanName = directoryName.trim();
+    if (!cleanName) return;
+    if (collectionWriteScope === "project" && !collectionProjectId) {
+      onProjectRequired();
+      return;
+    }
+    setDirectorySaving(true);
+    setMessage("");
+    try {
+      if (directoryAction === "create") {
+        const collection = await createAssetCollection({
+          scope: collectionWriteScope,
+          project_id: collectionProjectId,
+          parent_id: selectedCollectionId || null,
+          name: cleanName,
+        });
+        setSelectedCollectionId(collection.collection_id);
+        setMessage(`已创建目录：${collection.name}`);
+      }
+      if (directoryAction === "rename" && selectedCollection) {
+        const collection = await updateAssetCollection({
+          collection_id: selectedCollection.collection_id,
+          name: cleanName,
+        });
+        setMessage(`已重命名目录：${collection.name}`);
+      }
+      setDirectoryAction(null);
+      setDirectoryName("");
+      setReloadKey((current) => current + 1);
+    } catch (error) {
+      setMessage(readableError(error, "目录保存失败，请稍后重试。"));
+    } finally {
+      setDirectorySaving(false);
+    }
+  }
+
+  async function handleConfirmDeleteCollection() {
+    if (!selectedCollection) return;
+    setDirectorySaving(true);
+    setMessage("");
+    try {
+      await deleteAssetCollection(selectedCollection.collection_id);
+      setMessage(`已删除目录：${selectedCollection.name}`);
+      setSelectedCollectionId("");
+      setDirectoryAction(null);
+      setReloadKey((current) => current + 1);
+    } catch (error) {
+      setMessage(readableError(error, "目录删除失败，请稍后重试。"));
+    } finally {
+      setDirectorySaving(false);
+    }
+  }
+
+  function handleToggleTag(tagId: string, checked: boolean) {
+    setSelectedTagIds((current) => checked ? [...current, tagId] : current.filter((item) => item !== tagId));
+    setTagAction(null);
+    setTagName("");
+  }
+
+  function handleStartTagAction(action: Exclude<TagAction, null>) {
+    if (action === "delete" && !selectedEditableTagIsEmpty) return;
+    setTagAction(action);
+    setTagName("");
+  }
+
+  async function handleSaveTag(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const cleanName = tagName.trim();
+    if (!cleanName) return;
+    if (tagWriteScope === "project" && !tagProjectId) {
+      onProjectRequired();
+      return;
+    }
+    setTagSaving(true);
+    setMessage("");
+    try {
+      if (tagAction === "create") {
+        const tag = await createAssetTag({
+          scope: tagWriteScope,
+          project_id: tagProjectId,
+          name: cleanName,
+        });
+        setSelectedTagIds([tag.tag_id]);
+        setMessage(`已创建标签：${tag.name}`);
+      }
+      setTagAction(null);
+      setTagName("");
+      setReloadKey((current) => current + 1);
+    } catch (error) {
+      setMessage(readableError(error, "标签保存失败，请稍后重试。"));
+    } finally {
+      setTagSaving(false);
+    }
+  }
+
+  async function handleConfirmDeleteTag() {
+    if (!selectedEditableTag || !selectedEditableTagIsEmpty) return;
+    setTagSaving(true);
+    setMessage("");
+    try {
+      await deleteAssetTag(selectedEditableTag.tag_id);
+      setMessage(`已删除标签：${selectedEditableTag.name}`);
+      setSelectedTagIds((current) => current.filter((tagId) => tagId !== selectedEditableTag.tag_id));
+      setTagAction(null);
+      setReloadKey((current) => current + 1);
+    } catch (error) {
+      setMessage(readableError(error, "标签删除失败，请稍后重试。"));
+    } finally {
+      setTagSaving(false);
+    }
+  }
+
+  async function handleToggleAssetTag(tag: AssetTag, checked: boolean) {
+    if (!selectedAsset || assetTagSavingId) return;
+    if (!tagMatchesAssetScope(tag, selectedAsset)) {
+      setMessage("当前标签与资产范围不一致，不能贴到该资产。");
+      return;
+    }
+    setAssetTagSavingId(tag.tag_id);
+    setMessage("");
+    try {
+      const nextTags = checked
+        ? await attachAssetTag(selectedAsset.asset_id, tag.tag_id)
+        : await detachAssetTag(selectedAsset.asset_id, tag.tag_id);
+      setCurrentAssetTags(nextTags);
+      setReloadKey((current) => current + 1);
+    } catch (error) {
+      setMessage(readableError(error, "资产标签更新失败，请稍后重试。"));
+    } finally {
+      setAssetTagSavingId("");
+    }
+  }
+
   async function handleCopyAssetUrl(asset: AssetRecord) {
     const url = asset.metadata.public_url;
     if (!url) return;
@@ -1294,51 +1624,159 @@ function AssetLibraryPage({ project, onProjectRequired }: { project: ProjectReco
           <p>资产来自后端服务，项目资产和全局资产保持隔离。</p>
         </div>
         <div className="toolbar-actions">
-          <button className={scope === "combined" ? "secondary-button active-control" : "secondary-button"} disabled={!project} type="button" onClick={() => setScope("combined")}>
-            当前项目 + 全局
+          <button className={assetScopeButtonClass(scope === "combined")} disabled={!project} type="button" onClick={() => setScope("combined")}>
+            {combinedScopeLabel}
           </button>
-          <button className={scope === "global" ? "secondary-button active-control" : "secondary-button"} type="button" onClick={() => setScope("global")}>
+          <button className={assetScopeButtonClass(scope === "project")} disabled={!project} type="button" onClick={() => setScope("project")}>
+            {projectScopeLabel}
+          </button>
+          <button className={assetScopeButtonClass(scope === "global")} type="button" onClick={() => setScope("global")}>
             全局资产
           </button>
           <input aria-label="搜索资产" placeholder="搜索资产" value={keyword} onChange={(event) => setKeyword(event.target.value)} />
         </div>
-        <div className="asset-filter-row">
-          <label className="compact-field">
-            <span>目录</span>
-            <select aria-label="资产目录" value={selectedCollectionId} onChange={(event) => setSelectedCollectionId(event.target.value)}>
-              <option value="">全部目录</option>
-              {collections.map((collection) => (
-                <option key={collection.collection_id} value={collection.collection_id}>
-                  {collection.name}{collection.asset_count === undefined ? "" : ` (${collection.asset_count})`}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="tag-filter-group" aria-label="资产标签">
+        <div className="asset-tag-management">
+          <div className="asset-tag-management-head">
+            <div>
+              <p className="eyebrow">标签</p>
+              <h2>资产标签</h2>
+            </div>
+            <div className="asset-tag-toolbar" role="toolbar" aria-label="资产库标签操作">
+              <button className="secondary-button" type="button" onClick={() => handleStartTagAction("create")}>
+                新建标签
+              </button>
+              <button
+                className="secondary-button danger"
+                disabled={!selectedEditableTag || !selectedEditableTagIsEmpty}
+                title={selectedEditableTag && !selectedEditableTagIsEmpty ? "标签仍被资产使用" : undefined}
+                type="button"
+                onClick={() => handleStartTagAction("delete")}
+              >
+                删除标签
+              </button>
+            </div>
+          </div>
+          <div className="tag-filter-group" aria-label="资产标签筛选">
             {tags.length ? tags.map((tag) => {
               const checked = selectedTagIds.includes(tag.tag_id);
               return (
                 <label className={checked ? "tag-filter active" : "tag-filter"} key={tag.tag_id}>
                   <input
+                    aria-label={`筛选标签 ${tag.name}`}
                     checked={checked}
                     type="checkbox"
-                    onChange={(event) => {
-                      setSelectedTagIds((current) => event.target.checked ? [...current, tag.tag_id] : current.filter((item) => item !== tag.tag_id));
-                    }}
+                    onChange={(event) => handleToggleTag(tag.tag_id, event.target.checked)}
                   />
                   <span>{tag.name}{tag.asset_count === undefined ? "" : ` ${tag.asset_count}`}</span>
                 </label>
               );
             }) : <span className="muted">暂无标签</span>}
           </div>
+          {tagAction === "create" ? (
+            <form className="tag-edit-form" onSubmit={handleSaveTag}>
+              <label className="compact-field">
+                <span>标签名称</span>
+                <input aria-label="标签名称" value={tagName} onChange={(event) => setTagName(event.target.value)} />
+              </label>
+              <div className="button-row">
+                <button className="secondary-button" type="button" onClick={() => setTagAction(null)} disabled={tagSaving}>
+                  取消
+                </button>
+                <button className="primary-button" type="submit" disabled={tagSaving || !tagName.trim()}>
+                  创建标签
+                </button>
+              </div>
+            </form>
+          ) : null}
+          {tagAction === "delete" && selectedEditableTag ? (
+            <div className="tag-edit-form">
+              <p>确认删除“{selectedEditableTag.name}”？</p>
+              <div className="button-row">
+                <button className="secondary-button" type="button" onClick={() => setTagAction(null)} disabled={tagSaving}>
+                  取消
+                </button>
+                <button className="primary-button danger" type="button" onClick={() => void handleConfirmDeleteTag()} disabled={tagSaving}>
+                  确认删除标签
+                </button>
+              </div>
+            </div>
+          ) : null}
         </div>
       </section>
       {message ? <p className="toast-message">{message}</p> : null}
       <div className="asset-layout">
-        <section className="panel">
-          <h2>资产列表</h2>
+        <aside className="panel asset-directory-panel">
+          <div className="section-title-row">
+            <div>
+              <p className="eyebrow">目录</p>
+              <h2>资产目录</h2>
+            </div>
+          </div>
+          <div className="asset-directory-actions">
+            <button className="secondary-button" type="button" onClick={() => handleStartDirectoryAction("create")}>
+              {selectedCollection ? "新建子目录" : "新建目录"}
+            </button>
+            <button className="secondary-button" disabled={!selectedCollection} type="button" onClick={() => handleStartDirectoryAction("rename")}>
+              重命名目录
+            </button>
+            <button className="secondary-button danger" disabled={!selectedCollection} type="button" onClick={() => handleStartDirectoryAction("delete")}>
+              删除目录
+            </button>
+          </div>
+          <div className="asset-directory-tree" role="tree" aria-label="资产目录">
+            <button
+              aria-selected={!selectedCollectionId}
+              className={!selectedCollectionId ? "directory-tree-item active" : "directory-tree-item"}
+              role="treeitem"
+              type="button"
+              onClick={() => handleSelectCollection("")}
+            >
+              <span>全部目录</span>
+            </button>
+            {collectionTree.length ? (
+              <AssetCollectionTreeItems nodes={collectionTree} selectedCollectionId={selectedCollectionId} onSelect={handleSelectCollection} />
+            ) : (
+              <p className="muted">暂无目录</p>
+            )}
+          </div>
+          {directoryAction === "create" || directoryAction === "rename" ? (
+            <form className="directory-edit-form" onSubmit={handleSaveDirectory}>
+              <label className="compact-field">
+                <span>目录名称</span>
+                <input aria-label="目录名称" value={directoryName} onChange={(event) => setDirectoryName(event.target.value)} />
+              </label>
+              <div className="button-row">
+                <button className="secondary-button" type="button" onClick={() => setDirectoryAction(null)} disabled={directorySaving}>
+                  取消
+                </button>
+                <button className="primary-button" type="submit" disabled={directorySaving || !directoryName.trim()}>
+                  {directoryAction === "create" ? "创建目录" : "保存目录"}
+                </button>
+              </div>
+            </form>
+          ) : null}
+          {directoryAction === "delete" && selectedCollection ? (
+            <div className="directory-edit-form">
+              <p>确认删除“{selectedCollection.name}”及其子目录？目录内资产会保留在资产库中。</p>
+              <div className="button-row">
+                <button className="secondary-button" type="button" onClick={() => setDirectoryAction(null)} disabled={directorySaving}>
+                  取消
+                </button>
+                <button className="primary-button danger" type="button" onClick={() => void handleConfirmDeleteCollection()} disabled={directorySaving}>
+                  确认删除目录
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </aside>
+        <section className="panel asset-list-panel">
+          <div className="asset-list-header">
+            <div className="asset-list-title-row">
+              <h2>资产列表</h2>
+            </div>
+          </div>
           {loading ? <p className="muted">正在加载资产...</p> : null}
-          {!loading && !assets.length ? <p className="empty-box">暂无资产，可以上传文件或创建文字资产。</p> : null}
+          {!loading && !assets.length ? <p className="empty-box">暂无资产，可以上传文件。</p> : null}
           <div className="asset-grid">
             {assets.map((asset) => (
               <button className={asset.asset_id === selectedAssetId ? "asset-card active" : "asset-card"} key={asset.asset_id} type="button" onClick={() => setSelectedAssetId(asset.asset_id)}>
@@ -1372,24 +1810,101 @@ function AssetLibraryPage({ project, onProjectRequired }: { project: ProjectReco
                   <dd>{selectedAsset.deleted_at ? "已删除" : selectedAsset.metadata.public_url ? "已发布" : "未发布"}</dd>
                 </div>
               </dl>
-              {selectedAsset.metadata.public_url ? (
-                <div className="button-row">
-                  <a className="asset-link" href={selectedAsset.metadata.public_url} target="_blank" rel="noreferrer">
-                    预览资产
-                  </a>
-                  <button className="secondary-button" type="button" onClick={() => void handleCopyAssetUrl(selectedAsset)}>
-                    复制引用
-                  </button>
-                </div>
-              ) : null}
-              <div className="button-row">
-                <button className="primary-button" type="button" onClick={() => void handleDownload(selectedAsset)}>
+              <div className="asset-detail-actions" role="group" aria-label="资产操作">
+                {selectedAsset.metadata.public_url ? (
+                  <>
+                    <a className="secondary-button asset-action-button" href={selectedAsset.metadata.public_url} target="_blank" rel="noreferrer">
+                      预览资产
+                    </a>
+                    <button className="secondary-button asset-action-button" type="button" onClick={() => void handleCopyAssetUrl(selectedAsset)}>
+                      复制引用
+                    </button>
+                  </>
+                ) : null}
+                <button className="primary-button asset-action-button" type="button" onClick={() => void handleDownload(selectedAsset)}>
                   下载
                 </button>
-                <button className="secondary-button danger" type="button" onClick={() => void handleDelete(selectedAsset)}>
+                <button className="secondary-button asset-action-button" type="button" onClick={() => handleStartAssetRename(selectedAsset)}>
+                  重命名资产
+                </button>
+                <button className="secondary-button danger asset-action-button" type="button" onClick={() => void handleDelete(selectedAsset)}>
                   软删除
                 </button>
               </div>
+              {assetRenameOpen ? (
+                <form className="asset-inline-form" onSubmit={(event) => void handleSaveAssetName(event)}>
+                  <label className="compact-field">
+                    <span>资产名称</span>
+                    <input
+                      aria-label="资产名称"
+                      value={assetRenameName}
+                      onChange={(event) => setAssetRenameName(event.target.value)}
+                    />
+                  </label>
+                  <div className="asset-inline-actions">
+                    <button className="primary-button" disabled={!assetRenameName.trim() || assetNameSaving} type="submit">
+                      保存资产名称
+                    </button>
+                    <button className="secondary-button" disabled={assetNameSaving} type="button" onClick={() => setAssetRenameOpen(false)}>
+                      取消
+                    </button>
+                  </div>
+                </form>
+              ) : null}
+              <div className="asset-current-tags">
+                <div className="section-title-row">
+                  <h4>资产标签</h4>
+                  <button className="secondary-button" type="button" onClick={() => {
+                    setAssetTagFilter("");
+                    setAssetTagDialogOpen(true);
+                  }}>
+                    管理资产标签
+                  </button>
+                </div>
+                <div className="asset-tag-chip-row" role="group" aria-label="当前资产标签">
+                  {currentAssetTags.length ? currentAssetTags.map((tag) => (
+                    <span className="tag-chip" key={tag.tag_id}>{tag.name}</span>
+                  )) : <span className="muted">暂无标签</span>}
+                </div>
+              </div>
+              {assetTagDialogOpen ? (
+                <div className="asset-picker-modal">
+                  <button className="modal-scrim" type="button" aria-label="关闭资产标签弹窗" onClick={() => setAssetTagDialogOpen(false)} />
+                  <section className="asset-tag-dialog" role="dialog" aria-modal="true" aria-label="管理资产标签">
+                    <div className="asset-picker-header">
+                      <div>
+                        <p className="eyebrow">标签</p>
+                        <h2>管理资产标签</h2>
+                      </div>
+                      <button className="secondary-button" type="button" onClick={() => setAssetTagDialogOpen(false)}>
+                        关闭
+                      </button>
+                    </div>
+                    <label className="compact-field">
+                      <span>过滤标签</span>
+                      <input aria-label="过滤标签" value={assetTagFilter} onChange={(event) => setAssetTagFilter(event.target.value)} />
+                    </label>
+                    <div className="asset-tag-option-list">
+                      {filteredAssetTagOptions.length ? filteredAssetTagOptions.map((tag) => {
+                        const checked = currentAssetTags.some((item) => item.tag_id === tag.tag_id);
+                        return (
+                          <label className={checked ? "asset-tag-option active" : "asset-tag-option"} key={tag.tag_id}>
+                            <input
+                              aria-label={`${checked ? "取消资产标签" : "给资产贴标签"} ${tag.name}`}
+                              checked={checked}
+                              disabled={assetTagSavingId === tag.tag_id}
+                              type="checkbox"
+                              onChange={(event) => void handleToggleAssetTag(tag, event.target.checked)}
+                            />
+                            <span>{tag.name}</span>
+                            {tag.asset_count === undefined ? null : <small>{tag.asset_count}</small>}
+                          </label>
+                        );
+                      }) : <p className="muted">暂无匹配标签</p>}
+                    </div>
+                  </section>
+                </div>
+              ) : null}
             </>
           ) : (
             <p className="muted">选择资产查看详情。</p>
@@ -1399,22 +1914,18 @@ function AssetLibraryPage({ project, onProjectRequired }: { project: ProjectReco
               <span>上传文件</span>
               <input type="file" onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
             </label>
-            <button className="secondary-button" disabled={!file} type="button" onClick={() => void handleUpload()}>
+            <label className="compact-field">
+              <span>上传资产名称</span>
+              <input
+                aria-label="上传资产名称"
+                placeholder="填写资产名，不必等同文件名"
+                value={uploadName}
+                onChange={(event) => setUploadName(event.target.value)}
+              />
+            </label>
+            <button className="secondary-button" disabled={!file || !uploadName.trim()} type="button" onClick={() => void handleUpload()}>
               上传到资产库
             </button>
-            <form className="form-stack compact" onSubmit={handleCreateText}>
-              <label>
-                <span>文字资产名</span>
-                <input value={textName} onChange={(event) => setTextName(event.target.value)} />
-              </label>
-              <label>
-                <span>文字内容</span>
-                <textarea value={textContent} onChange={(event) => setTextContent(event.target.value)} />
-              </label>
-              <button className="secondary-button" type="submit">
-                创建文字资产
-              </button>
-            </form>
           </div>
         </aside>
       </div>
@@ -1500,11 +2011,30 @@ function taskRuntimeContext(detail: TaskDetailResponse, orderedNodes: TaskNodeEx
   return { status, currentNodeLabel: "未记录" };
 }
 
-function nodeSectionDefaultOpen(snapshot: WorkflowSnapshot | null | undefined, section: "input" | "output" | "events", fallback: boolean): boolean {
+function nodeSectionDefaultOpen(
+  snapshot: WorkflowSnapshot | null | undefined,
+  nodeSpec: WorkflowNodeSpec | undefined,
+  section: "input" | "output" | "events",
+  fallback: boolean,
+): boolean {
+  const nodeSectionDefault = nodeSectionDefaultOpenValue(nodeSpec?.ui?.sections?.[section]);
+  if (nodeSectionDefault !== undefined) return nodeSectionDefault;
   const layout = snapshot?.workflow?.ui?.layout;
   if (layout?.default_expanded_sections?.includes(section)) return true;
   if (layout?.default_collapsed_sections?.includes(section)) return false;
   return fallback;
+}
+
+function nodeSectionDefaultOpenValue(config: unknown): boolean | undefined {
+  if (typeof config === "boolean") return config;
+  if (typeof config !== "object" || config === null) return undefined;
+  const section = config as Record<string, unknown>;
+  if (typeof section.default_open === "boolean") return section.default_open;
+  if (typeof section.open === "boolean") return section.open;
+  if (typeof section.default_expanded === "boolean") return section.default_expanded;
+  if (typeof section.default_collapsed === "boolean") return !section.default_collapsed;
+  if (typeof section.collapsed === "boolean") return !section.collapsed;
+  return undefined;
 }
 
 function splitLines(value: string): string[] {
@@ -1542,6 +2072,16 @@ function formatBytes(size: number | null): string {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
   return `${(size / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function tagMatchesAssetScope(tag: AssetTag, asset: AssetRecord): boolean {
+  if (tag.scope !== asset.scope) return false;
+  if (asset.scope !== "project") return true;
+  return (tag.project_id ?? null) === (asset.project_id ?? null);
+}
+
+function assetScopeButtonClass(active: boolean): string {
+  return active ? "secondary-button asset-scope-button active-control" : "secondary-button asset-scope-button";
 }
 
 function readableError(error: unknown, fallback: string): string {

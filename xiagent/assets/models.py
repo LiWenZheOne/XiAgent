@@ -62,3 +62,4 @@ class AssetTagRecord:
     created_by: str
     created_at: str
     updated_at: str
+    asset_count: int = 0

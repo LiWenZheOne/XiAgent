@@ -49,6 +49,86 @@ export async function listAssetTags(scope: AssetScope = "combined", projectId?: 
   return result.items;
 }
 
+export async function createAssetTag(input: {
+  scope: Exclude<AssetScope, "combined">;
+  project_id?: string;
+  name: string;
+  description?: string | null;
+}): Promise<AssetTag> {
+  return apiRequest<AssetTag>("/api/assets/tags", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function updateAssetTag(input: {
+  tag_id: string;
+  name: string;
+  description?: string | null;
+}): Promise<AssetTag> {
+  return apiRequest<AssetTag>(`/api/assets/tags/${encodeURIComponent(input.tag_id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: input.name, description: input.description ?? null }),
+  });
+}
+
+export async function deleteAssetTag(tagId: string): Promise<void> {
+  await apiRequest<void>(`/api/assets/tags/${encodeURIComponent(tagId)}`, { method: "DELETE" });
+}
+
+export async function listAssetTagsForAsset(assetId: string): Promise<AssetTag[]> {
+  const result = await apiRequest<{ items: AssetTag[] }>(`/api/assets/${encodeURIComponent(assetId)}/tags`);
+  return result.items;
+}
+
+export async function attachAssetTag(assetId: string, tagId: string): Promise<AssetTag[]> {
+  const result = await apiRequest<{ items: AssetTag[] }>(
+    `/api/assets/${encodeURIComponent(assetId)}/tags/${encodeURIComponent(tagId)}`,
+    { method: "POST" },
+  );
+  return result.items;
+}
+
+export async function detachAssetTag(assetId: string, tagId: string): Promise<AssetTag[]> {
+  const result = await apiRequest<{ items: AssetTag[] }>(
+    `/api/assets/${encodeURIComponent(assetId)}/tags/${encodeURIComponent(tagId)}`,
+    { method: "DELETE" },
+  );
+  return result.items;
+}
+
+export async function createAssetCollection(input: {
+  scope: Exclude<AssetScope, "combined">;
+  project_id?: string;
+  parent_id?: string | null;
+  name: string;
+  description?: string | null;
+}): Promise<AssetCollection> {
+  return apiRequest<AssetCollection>("/api/assets/collections", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function updateAssetCollection(input: {
+  collection_id: string;
+  name: string;
+  description?: string | null;
+}): Promise<AssetCollection> {
+  return apiRequest<AssetCollection>(`/api/assets/collections/${encodeURIComponent(input.collection_id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: input.name, description: input.description ?? null }),
+  });
+}
+
+export async function deleteAssetCollection(collectionId: string): Promise<void> {
+  await apiRequest<void>(`/api/assets/collections/${encodeURIComponent(collectionId)}`, { method: "DELETE" });
+}
+
 export async function uploadAsset(input: {
   file: File;
   scope: Exclude<AssetScope, "combined">;
@@ -79,6 +159,17 @@ export async function createTextAsset(input: {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ...input, metadata: {} }),
+  });
+}
+
+export async function updateAsset(input: {
+  asset_id: string;
+  name: string;
+}): Promise<AssetRecord> {
+  return apiRequest<AssetRecord>(`/api/assets/${encodeURIComponent(input.asset_id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: input.name }),
   });
 }
 

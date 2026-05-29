@@ -96,6 +96,8 @@ workflows/global/run_deepseek_echo_test.bat --auto
 
 真实用户等价路径验证必须使用可访问的真实输入资产或 URL；如果 URL 返回 403/404 或需要鉴权，不能作为通过证据。中文或其他非 ASCII 用户输入必须保真进入 CLI 和运行时快照；如果日志或快照中变成 `?` 或乱码，验证无效，需要改用 UTF-8 文件输入、JSON 文件或其他保真方式。真实路径成功证据必须同时包含 `task_succeeded`、关键节点成功、外部任务 id 或输出资产 URL，并说明输入来源。不能用“不同 workflow 成功”或“fake-router 端到端成功”替代真实用户路径。
 
+如果任务涉及网页 UI、任务详情、节点输入控件或用户明确要求真实交互测试，CLI / bat / WorkflowTestBuilder 只能作为无 UI 辅助验证，不能替代验收。最终必须优先用 Codex 内部浏览器连接真实后端和 UI，按用户路径点击、输入、提交、刷新或跳转确认结果；若内部浏览器不可用，必须说明阻塞原因和待人工验证步骤。
+
 涉及新增节点、运行时、资产或人工交互时，增加对应节点测试和全量 `python -m pytest -q`。
 
 ## Common Mistakes

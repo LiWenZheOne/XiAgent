@@ -66,13 +66,35 @@ DELETE /api/assets/{asset_id}
 
 ```text
 POST   /api/assets/collections
+GET    /api/assets/collections
 PATCH  /api/assets/collections/{collection_id}
 DELETE /api/assets/collections/{collection_id}
 POST   /api/assets/collections/{collection_id}/assets
 POST   /api/assets/tags
-POST   /api/assets/{asset_id}/tags
+GET    /api/assets/tags
+PATCH  /api/assets/tags/{tag_id}
+DELETE /api/assets/tags/{tag_id}
+GET    /api/assets/{asset_id}/tags
+POST   /api/assets/{asset_id}/tags/{tag_id}
+DELETE /api/assets/{asset_id}/tags/{tag_id}
 GET    /api/assets/search
 ```
+
+目录接口语义：
+
+- `POST /api/assets/collections`：输入 `scope`、可选 `project_id`、可选 `parent_id`、`name` 和可选 `description`，返回创建后的目录记录；项目目录必须通过当前用户的 `asset:write` 权限检查，父目录必须与目标 scope 和项目一致。
+- `PATCH /api/assets/collections/{collection_id}`：输入新的 `name` 和可选 `description`，返回更新后的目录记录；目录不存在返回 `asset_collection_not_found`，空名称返回 `asset_collection_name_required`，项目目录必须通过当前用户的 `asset:write` 权限检查。
+- `DELETE /api/assets/collections/{collection_id}`：删除目标目录及其子目录，并移除这些目录上的资产索引条目；资产本体保留，不做资产软删除。目录不存在返回 `asset_collection_not_found`，项目目录必须通过当前用户的 `asset:write` 权限检查。
+
+标签接口语义：
+
+- `POST /api/assets/tags`：输入 `scope`、可选 `project_id`、`name` 和可选 `description`，返回创建后的标签记录；项目标签必须通过当前用户的 `asset:write` 权限检查。
+- `GET /api/assets/tags`：按 `scope` 和可选 `project_id` 返回可用标签；`combined` scope 返回全局标签和当前项目标签，项目标签不得污染全局检索结构；返回项包含 `asset_count`，用于判断标签是否仍被资产使用。
+- `PATCH /api/assets/tags/{tag_id}`：输入新的 `name` 和可选 `description`，返回更新后的标签记录；标签不存在返回 `asset_tag_not_found`，空名称返回 `asset_tag_name_required`，项目标签必须通过当前用户的 `asset:write` 权限检查。
+- `DELETE /api/assets/tags/{tag_id}`：只允许删除 `asset_count=0` 的空标签；标签仍被资产使用时返回 `asset_tag_not_empty`，资产本体和既有索引关系均保留。标签不存在返回 `asset_tag_not_found`，项目标签必须通过当前用户的 `asset:write` 权限检查。
+- `GET /api/assets/{asset_id}/tags`：返回当前资产已贴标签列表；项目资产必须通过当前用户的 `asset:read` 权限检查。
+- `POST /api/assets/{asset_id}/tags/{tag_id}`：给资产贴标签，返回更新后的当前资产标签列表；项目资产必须通过 `asset:write` 权限检查，标签 scope 必须与资产 scope 一致。
+- `DELETE /api/assets/{asset_id}/tags/{tag_id}`：从资产移除标签，返回更新后的当前资产标签列表；项目资产必须通过 `asset:write` 权限检查，标签不存在返回 `asset_tag_not_found`。
 
 ## 前端页面映射
 
@@ -147,4 +169,3 @@ API 错误响应统一结构：
 - 使用项目工作流模板：检查项目访问权限。
 
 全局资产和全局模板第一版对登录用户可读。写入全局资产和全局模板第一版可以先限制为本地开发配置或管理员标记。
-

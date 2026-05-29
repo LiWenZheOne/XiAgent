@@ -348,6 +348,189 @@ def test_text_asset_create_and_search_endpoints(test_settings) -> None:
     assert result["items"][0]["asset_id"] == asset["asset_id"]
 
 
+def test_asset_collection_update_and_delete_endpoints(test_settings) -> None:
+    app = create_app(settings=test_settings)
+    with TestClient(app) as client:
+        client.post(
+            "/api/auth/register",
+            json={"username": "collection-editor", "password": "secret-123"},
+        )
+        headers = _auth_headers(client, username="collection-editor")
+        project = client.post(
+            "/api/projects",
+            json={"name": "Collection Project"},
+            headers=headers,
+        ).json()
+        parent_response = client.post(
+            "/api/assets/collections",
+            json={
+                "scope": "project",
+                "project_id": project["project_id"],
+                "name": "old folder",
+            },
+            headers=headers,
+        )
+        assert parent_response.status_code == 200
+        parent = parent_response.json()
+        child_response = client.post(
+            "/api/assets/collections",
+            json={
+                "scope": "project",
+                "project_id": project["project_id"],
+                "parent_id": parent["collection_id"],
+                "name": "child folder",
+            },
+            headers=headers,
+        )
+        assert child_response.status_code == 200
+
+        rename_response = client.patch(
+            f"/api/assets/collections/{parent['collection_id']}",
+            json={"name": "renamed folder"},
+            headers=headers,
+        )
+        list_after_rename = client.get(
+            "/api/assets/collections",
+            params={"scope": "project", "project_id": project["project_id"]},
+            headers=headers,
+        )
+        delete_response = client.delete(
+            f"/api/assets/collections/{parent['collection_id']}",
+            headers=headers,
+        )
+        list_after_delete = client.get(
+            "/api/assets/collections",
+            params={"scope": "project", "project_id": project["project_id"]},
+            headers=headers,
+        )
+
+    assert rename_response.status_code == 200
+    assert rename_response.json()["name"] == "renamed folder"
+    assert [item["name"] for item in list_after_rename.json()["items"]] == ["renamed folder", "child folder"]
+    assert delete_response.status_code == 200
+    assert delete_response.json() == {"deleted": True}
+    assert list_after_delete.json()["items"] == []
+
+
+def test_asset_tag_update_and_delete_endpoints(test_settings) -> None:
+    app = create_app(settings=test_settings)
+    with TestClient(app) as client:
+        client.post(
+            "/api/auth/register",
+            json={"username": "tag-editor", "password": "secret-123"},
+        )
+        headers = _auth_headers(client, username="tag-editor")
+        project = client.post(
+            "/api/projects",
+            json={"name": "Tag Project"},
+            headers=headers,
+        ).json()
+        create_response = client.post(
+            "/api/assets/tags",
+            json={
+                "scope": "project",
+                "project_id": project["project_id"],
+                "name": "old tag",
+            },
+            headers=headers,
+        )
+        assert create_response.status_code == 200
+        tag = create_response.json()
+
+        rename_response = client.patch(
+            f"/api/assets/tags/{tag['tag_id']}",
+            json={"name": "renamed tag"},
+            headers=headers,
+        )
+        list_after_rename = client.get(
+            "/api/assets/tags",
+            params={"scope": "project", "project_id": project["project_id"]},
+            headers=headers,
+        )
+        delete_response = client.delete(
+            f"/api/assets/tags/{tag['tag_id']}",
+            headers=headers,
+        )
+        list_after_delete = client.get(
+            "/api/assets/tags",
+            params={"scope": "project", "project_id": project["project_id"]},
+            headers=headers,
+        )
+
+    assert rename_response.status_code == 200
+    assert rename_response.json()["name"] == "renamed tag"
+    assert [item["name"] for item in list_after_rename.json()["items"]] == ["renamed tag"]
+    assert delete_response.status_code == 200
+    assert delete_response.json() == {"deleted": True}
+    assert list_after_delete.json()["items"] == []
+
+
+def test_asset_tag_attach_detach_and_empty_delete_endpoints(test_settings) -> None:
+    app = create_app(settings=test_settings)
+    with TestClient(app) as client:
+        client.post(
+            "/api/auth/register",
+            json={"username": "asset-tagger", "password": "secret-123"},
+        )
+        headers = _auth_headers(client, username="asset-tagger")
+        project = client.post(
+            "/api/projects",
+            json={"name": "Asset Tag Project"},
+            headers=headers,
+        ).json()
+        tag = client.post(
+            "/api/assets/tags",
+            json={"scope": "project", "project_id": project["project_id"], "name": "角色"},
+            headers=headers,
+        ).json()
+        asset = client.post(
+            "/api/assets/text",
+            json={
+                "scope": "project",
+                "project_id": project["project_id"],
+                "name": "hero notes",
+                "text": "hero profile",
+            },
+            headers=headers,
+        ).json()
+
+        attach_response = client.post(
+            f"/api/assets/{asset['asset_id']}/tags/{tag['tag_id']}",
+            headers=headers,
+        )
+        tags_after_attach = client.get(
+            "/api/assets/tags",
+            params={"scope": "project", "project_id": project["project_id"]},
+            headers=headers,
+        )
+        delete_non_empty_response = client.delete(
+            f"/api/assets/tags/{tag['tag_id']}",
+            headers=headers,
+        )
+        current_tags_response = client.get(
+            f"/api/assets/{asset['asset_id']}/tags",
+            headers=headers,
+        )
+        detach_response = client.delete(
+            f"/api/assets/{asset['asset_id']}/tags/{tag['tag_id']}",
+            headers=headers,
+        )
+        delete_empty_response = client.delete(
+            f"/api/assets/tags/{tag['tag_id']}",
+            headers=headers,
+        )
+
+    assert attach_response.status_code == 200
+    assert [item["tag_id"] for item in attach_response.json()["items"]] == [tag["tag_id"]]
+    assert tags_after_attach.json()["items"][0]["asset_count"] == 1
+    assert delete_non_empty_response.status_code == 400
+    assert delete_non_empty_response.json()["error"]["code"] == "asset_tag_not_empty"
+    assert [item["tag_id"] for item in current_tags_response.json()["items"]] == [tag["tag_id"]]
+    assert detach_response.status_code == 200
+    assert detach_response.json()["items"] == []
+    assert delete_empty_response.status_code == 200
+
+
 def test_file_asset_upload_returns_public_url_and_searches_by_tag(test_settings) -> None:
     app = create_app(settings=test_settings)
     with TestClient(app) as client:
@@ -397,6 +580,51 @@ def test_file_asset_upload_returns_public_url_and_searches_by_tag(test_settings)
         )
         assert search_response.status_code == 200
         assert search_response.json()["items"][0]["asset_id"] == asset["asset_id"]
+
+
+def test_asset_name_can_be_updated(test_settings) -> None:
+    app = create_app(settings=test_settings)
+    with TestClient(app) as client:
+        client.post(
+            "/api/auth/register",
+            json={"username": "asset-renamer", "password": "secret-123"},
+        )
+        headers = _auth_headers(client, username="asset-renamer")
+        upload_response = client.post(
+            "/api/assets/files",
+            data={
+                "scope": "global",
+                "name": "source-file.png",
+                "publish": "false",
+            },
+            files={"file": ("source-file.png", b"fake image", "image/png")},
+            headers=headers,
+        )
+        asset = upload_response.json()
+
+        rename_response = client.patch(
+            f"/api/assets/{asset['asset_id']}",
+            json={"name": "主角立绘"},
+            headers=headers,
+        )
+        search_response = client.get(
+            "/api/assets/search",
+            params={"scope": "global", "keyword": "主角"},
+            headers=headers,
+        )
+        invalid_response = client.patch(
+            f"/api/assets/{asset['asset_id']}",
+            json={"name": "   "},
+            headers=headers,
+        )
+
+    assert upload_response.status_code == 200
+    assert rename_response.status_code == 200
+    assert rename_response.json()["name"] == "主角立绘"
+    assert search_response.status_code == 200
+    assert search_response.json()["items"][0]["asset_id"] == asset["asset_id"]
+    assert invalid_response.status_code == 400
+    assert invalid_response.json()["error"]["code"] == "asset_name_required"
 
 
 def test_task_endpoints_create_succeeded_echo_task_and_read_it(test_settings) -> None:

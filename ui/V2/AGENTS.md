@@ -6,7 +6,7 @@
 
 ## 技术栈与入口
 
-- V2 使用 React 19、TypeScript、Vite、Vitest、Testing Library、Playwright。
+- V2 使用 React 19、TypeScript、Vite、Vitest、Testing Library。最终验收优先使用 Codex 内部浏览器。
 - 应用入口是 `src/app/App.tsx`，样式入口是 `src/styles/app.css`，API 客户端位于 `src/api/`。
 - UI 控件库位于 `src/node-ui/`，不得把可复用节点控件硬编码在页面主流程中。
 - 控件库浏览页是 `src/node-ui/ControlLibraryPage.tsx`，顶部导航已有“控件库”页签。
@@ -67,6 +67,7 @@
 - 任务详情中的节点输入、输出、等待交互优先通过 `src/node-ui/` 控件注册表渲染。
 - 页面不得直接显示 `input_schema`、`output_snapshot`、`public_url`、节点 ref、binding 路径或原始 JSON，除非实现明确的开发者调试视图。
 - 节点输入和输出采用上下堆叠布局；默认折叠输入和节点事件，只展开输出或错误区域，避免大输入、大输出横向溢出。
+- 节点可通过 `nodes[].ui.sections.<input|output|events>.default_open` 覆盖工作流级折叠默认值；需要用户直接填写输入的起始输入节点应在工作流配置中显式展开 input、折叠 output。
 - 新增交互控件必须覆盖 loading、empty、error、disabled、busy、waiting、submitted 状态。
 - 控件提交 payload 必须满足后端 manifest 的 `submit_schema` 和节点 `outputs`，不能为了前端方便提交 UI-only 字段。
 
@@ -83,7 +84,6 @@
 ```powershell
 npm run test
 npm run build
-npm run test:e2e
 ```
 
 涉及后端 manifest、工作流校验或节点默认 UI 时，同时在仓库根目录运行相关后端测试，例如：
@@ -92,6 +92,6 @@ npm run test:e2e
 python -m pytest tests/test_ui_control_catalog.py tests/test_workflow_validator.py tests/test_node_registry.py -q
 ```
 
-最终验收应使用真实后端和浏览器主流程确认：登录或注册、选择项目、创建任务、进入任务详情、触发或查看目标控件、确认没有普通用户不应理解的 JSON。
+最终验收应使用真实后端和 Codex 内部浏览器主流程确认：登录或注册、选择项目、创建任务、进入任务详情、触发或查看目标控件、确认没有普通用户不应理解的 JSON。外部浏览器自动化 CLI、旧 e2e 脚本、直接 API 调用、数据库造数、localStorage 预置或截图检查只能作为辅助回归证据，不能替代内部浏览器真实交互验收。
 验证工作流控件样式变更时，必须新建任务确认新任务持有的新 workflow snapshot 生效；如果验收目标是历史任务，则必须先明确更新该历史任务引用的 snapshot/config，不能通过修改旧控件实现绕过配置来源。
-修改工作流 YAML 后，真实浏览器验收前必须确认后端已重新加载工作流目录；当前后端 catalog 在服务启动时加载工作流，不能用未重启/未重载的后端进程作为新 snapshot 验收依据。
+修改工作流 YAML 后，Codex 内部浏览器验收前必须确认后端已重新加载工作流目录；当前后端 catalog 在服务启动时加载工作流，不能用未重启/未重载的后端进程作为新 snapshot 验收依据。

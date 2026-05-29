@@ -330,6 +330,107 @@ class SqliteAssetService(AssetService):
                 await cursor.close()
         return [_collection_from_row(row) for row in rows]
 
+    async def update_collection_node(
+        self,
+        *,
+        user_id: str,
+        collection_id: str,
+        name: str,
+        description: str | None = None,
+    ) -> AssetCollectionRecord:
+        clean_name = name.strip()
+        if not clean_name:
+            raise ValidationError(
+                "asset_collection_name_required",
+                "Asset collection name must not be empty",
+            )
+        now = _utc_now()
+        async with connect_db(self._database_path) as db:
+            existing = await _fetch_one(
+                db,
+                "select * from asset_collections where collection_id = ?",
+                (collection_id,),
+            )
+            if existing is None:
+                raise NotFoundError(
+                    "asset_collection_not_found",
+                    "Asset collection was not found",
+                    {"collection_id": collection_id},
+                )
+            await self._validate_write_scope(
+                user_id=user_id,
+                scope=existing["scope"],
+                project_id=existing["project_id"],
+            )
+            await db.execute(
+                """
+                update asset_collections
+                set name = ?, description = ?, updated_at = ?
+                where collection_id = ?
+                """,
+                (clean_name, description, now, collection_id),
+            )
+            row = await _fetch_one(
+                db,
+                "select * from asset_collections where collection_id = ?",
+                (collection_id,),
+            )
+        assert row is not None
+        return _collection_from_row(row)
+
+    async def delete_collection_node(self, *, user_id: str, collection_id: str) -> None:
+        async with connect_db(self._database_path) as db:
+            existing = await _fetch_one(
+                db,
+                "select * from asset_collections where collection_id = ?",
+                (collection_id,),
+            )
+            if existing is None:
+                raise NotFoundError(
+                    "asset_collection_not_found",
+                    "Asset collection was not found",
+                    {"collection_id": collection_id},
+                )
+            await self._validate_write_scope(
+                user_id=user_id,
+                scope=existing["scope"],
+                project_id=existing["project_id"],
+            )
+            cursor = await db.execute(
+                """
+                with recursive collection_tree(collection_id, depth) as (
+                  select collection_id, 0
+                  from asset_collections
+                  where collection_id = ?
+                  union all
+                  select child.collection_id, parent.depth + 1
+                  from asset_collections child
+                  join collection_tree parent on child.parent_id = parent.collection_id
+                )
+                select collection_id
+                from collection_tree
+                order by depth desc
+                """,
+                (collection_id,),
+            )
+            try:
+                rows = await cursor.fetchall()
+            finally:
+                await cursor.close()
+            collection_ids = [row["collection_id"] for row in rows]
+            if not collection_ids:
+                return
+            placeholders = ", ".join("?" for _ in collection_ids)
+            await db.execute(
+                f"delete from asset_index_entries where collection_id in ({placeholders})",
+                tuple(collection_ids),
+            )
+            for child_collection_id in collection_ids:
+                await db.execute(
+                    "delete from asset_collections where collection_id = ?",
+                    (child_collection_id,),
+                )
+
     async def create_tag(
         self,
         *,
@@ -366,14 +467,16 @@ class SqliteAssetService(AssetService):
         project_id: str | None,
     ) -> list[AssetTagRecord]:
         await self._validate_search_scope(user_id=user_id, scope=scope, project_id=project_id)
-        where, parameters = _scope_filter(scope=scope, project_id=project_id)
+        where, parameters = _qualified_scope_filter("tag", scope=scope, project_id=project_id)
         async with connect_db(self._database_path) as db:
             cursor = await db.execute(
                 f"""
-                select *
-                from asset_tags
+                select tag.*, count(distinct idx.asset_id) as asset_count
+                from asset_tags tag
+                left join asset_index_entries idx on idx.tag_id = tag.tag_id
                 where {' and '.join(where)}
-                order by created_at asc, tag_id asc
+                group by tag.tag_id
+                order by tag.created_at asc, tag.tag_id asc
                 """,
                 tuple(parameters),
             )
@@ -381,6 +484,150 @@ class SqliteAssetService(AssetService):
                 rows = await cursor.fetchall()
             finally:
                 await cursor.close()
+        return [_tag_from_row(row) for row in rows]
+
+    async def update_tag(
+        self,
+        *,
+        user_id: str,
+        tag_id: str,
+        name: str,
+        description: str | None = None,
+    ) -> AssetTagRecord:
+        clean_name = name.strip()
+        if not clean_name:
+            raise ValidationError("asset_tag_name_required", "Asset tag name must not be empty")
+        now = _utc_now()
+        async with connect_db(self._database_path) as db:
+            existing = await _fetch_one(
+                db,
+                "select * from asset_tags where tag_id = ?",
+                (tag_id,),
+            )
+            if existing is None:
+                raise NotFoundError("asset_tag_not_found", "Asset tag was not found", {"tag_id": tag_id})
+            await self._validate_write_scope(
+                user_id=user_id,
+                scope=existing["scope"],
+                project_id=existing["project_id"],
+            )
+            await db.execute(
+                """
+                update asset_tags
+                set name = ?, description = ?, updated_at = ?
+                where tag_id = ?
+                """,
+                (clean_name, description, now, tag_id),
+            )
+            row = await _fetch_one(db, "select * from asset_tags where tag_id = ?", (tag_id,))
+        assert row is not None
+        return _tag_from_row(row)
+
+    async def delete_tag(self, *, user_id: str, tag_id: str) -> None:
+        async with connect_db(self._database_path) as db:
+            existing = await _fetch_one(
+                db,
+                "select * from asset_tags where tag_id = ?",
+                (tag_id,),
+            )
+            if existing is None:
+                raise NotFoundError("asset_tag_not_found", "Asset tag was not found", {"tag_id": tag_id})
+            await self._validate_write_scope(
+                user_id=user_id,
+                scope=existing["scope"],
+                project_id=existing["project_id"],
+            )
+            usage = await _fetch_one(
+                db,
+                "select count(distinct asset_id) as asset_count from asset_index_entries where tag_id = ?",
+                (tag_id,),
+            )
+            asset_count = int(usage["asset_count"]) if usage is not None else 0
+            if asset_count:
+                raise ValidationError(
+                    "asset_tag_not_empty",
+                    "Asset tag is still assigned to assets",
+                    {"tag_id": tag_id, "asset_count": asset_count},
+                )
+            await db.execute("delete from asset_tags where tag_id = ?", (tag_id,))
+
+    async def list_asset_tags(
+        self,
+        *,
+        user_id: str,
+        asset_id: str,
+    ) -> list[AssetTagRecord]:
+        asset = await self.get_asset(user_id=user_id, asset_id=asset_id)
+        async with connect_db(self._database_path) as db:
+            rows = await _fetch_asset_tag_rows(db, asset_id=asset.asset_id)
+        return [_tag_from_row(row) for row in rows]
+
+    async def attach_asset_tag(
+        self,
+        *,
+        user_id: str,
+        asset_id: str,
+        tag_id: str,
+    ) -> list[AssetTagRecord]:
+        asset = await self.get_asset(user_id=user_id, asset_id=asset_id)
+        if asset.scope == "project":
+            await self._user_service.ensure_project_access(
+                user_id=user_id,
+                project_id=asset.project_id or "",
+                action="asset:write",
+            )
+        async with connect_db(self._database_path) as db:
+            await _validate_tag_scope(
+                db,
+                tag_id=tag_id,
+                scope=asset.scope,
+                project_id=asset.project_id,
+            )
+            existing = await _fetch_one(
+                db,
+                "select entry_id from asset_index_entries where asset_id = ? and tag_id = ?",
+                (asset.asset_id, tag_id),
+            )
+            if existing is None:
+                await _insert_index_entry(
+                    db,
+                    asset_id=asset.asset_id,
+                    scope=asset.scope,
+                    project_id=asset.project_id,
+                    collection_id=None,
+                    tag_id=tag_id,
+                    search_text=asset.name,
+                    now=_utc_now(),
+                )
+            rows = await _fetch_asset_tag_rows(db, asset_id=asset.asset_id)
+        return [_tag_from_row(row) for row in rows]
+
+    async def detach_asset_tag(
+        self,
+        *,
+        user_id: str,
+        asset_id: str,
+        tag_id: str,
+    ) -> list[AssetTagRecord]:
+        asset = await self.get_asset(user_id=user_id, asset_id=asset_id)
+        if asset.scope == "project":
+            await self._user_service.ensure_project_access(
+                user_id=user_id,
+                project_id=asset.project_id or "",
+                action="asset:write",
+            )
+        async with connect_db(self._database_path) as db:
+            await _validate_tag_scope(
+                db,
+                tag_id=tag_id,
+                scope=asset.scope,
+                project_id=asset.project_id,
+            )
+            await db.execute(
+                "delete from asset_index_entries where asset_id = ? and tag_id = ?",
+                (asset.asset_id, tag_id),
+            )
+            rows = await _fetch_asset_tag_rows(db, asset_id=asset.asset_id)
         return [_tag_from_row(row) for row in rows]
 
     async def get_asset(
@@ -462,6 +709,49 @@ class SqliteAssetService(AssetService):
             await db.execute(
                 "update assets set metadata_json = ?, updated_at = ? where asset_id = ?",
                 (_metadata_json(metadata), now, asset_id),
+            )
+            row = await _fetch_one(
+                db,
+                "select * from assets where asset_id = ? and deleted_at is null",
+                (asset_id,),
+            )
+
+        if row is None:
+            raise NotFoundError("asset_not_found", "Asset was not found", {"asset_id": asset_id})
+        return _asset_from_row(row)
+
+    async def update_asset(
+        self,
+        *,
+        user_id: str,
+        asset_id: str,
+        name: str,
+    ) -> AssetRecord:
+        clean_name = name.strip()
+        if not clean_name:
+            raise ValidationError("asset_name_required", "Asset name must not be empty")
+        asset = await self.get_asset(user_id=user_id, asset_id=asset_id)
+        if asset.scope == "project":
+            await self._user_service.ensure_project_access(
+                user_id=user_id,
+                project_id=asset.project_id or "",
+                action="asset:write",
+            )
+        now = _utc_now()
+        metadata_json = _metadata_json(asset.metadata)
+        search_text = f"{clean_name}\n{asset.text_content or ''}\n{metadata_json}"
+        async with connect_db(self._database_path) as db:
+            await db.execute(
+                "update assets set name = ?, updated_at = ? where asset_id = ?",
+                (clean_name, now, asset_id),
+            )
+            await db.execute(
+                "update asset_search_fts set search_text = ? where asset_id = ?",
+                (search_text, asset_id),
+            )
+            await db.execute(
+                "update asset_index_entries set search_text = ?, updated_at = ? where asset_id = ?",
+                (clean_name, now, asset_id),
             )
             row = await _fetch_one(
                 db,
@@ -866,6 +1156,25 @@ async def _fetch_one(
         await cursor.close()
 
 
+async def _fetch_asset_tag_rows(db: aiosqlite.Connection, *, asset_id: str) -> list[aiosqlite.Row]:
+    cursor = await db.execute(
+        """
+        select tag.*, count(distinct all_idx.asset_id) as asset_count
+        from asset_tags tag
+        join asset_index_entries idx on idx.tag_id = tag.tag_id
+        left join asset_index_entries all_idx on all_idx.tag_id = tag.tag_id
+        where idx.asset_id = ?
+        group by tag.tag_id
+        order by tag.created_at asc, tag.tag_id asc
+        """,
+        (asset_id,),
+    )
+    try:
+        return await cursor.fetchall()
+    finally:
+        await cursor.close()
+
+
 def _asset_from_row(row: aiosqlite.Row) -> AssetRecord:
     return AssetRecord(
         asset_id=row["asset_id"],
@@ -902,6 +1211,7 @@ def _collection_from_row(row: aiosqlite.Row) -> AssetCollectionRecord:
 
 
 def _tag_from_row(row: aiosqlite.Row) -> AssetTagRecord:
+    asset_count = row["asset_count"] if "asset_count" in row.keys() else 0
     return AssetTagRecord(
         tag_id=row["tag_id"],
         scope=row["scope"],
@@ -911,4 +1221,5 @@ def _tag_from_row(row: aiosqlite.Row) -> AssetTagRecord:
         created_by=row["created_by"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        asset_count=int(asset_count or 0),
     )

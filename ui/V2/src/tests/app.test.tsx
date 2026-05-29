@@ -144,6 +144,46 @@ function mockFetch() {
     created_at: string;
   }> = [];
   const deletedTaskIds = new Set<string>();
+  const uploadedAssetForms: FormData[] = [];
+  let assetCollections = [
+    { collection_id: "collection-scenes", name: "分镜素材", parent_id: null, asset_count: 2 },
+    { collection_id: "collection-characters", name: "角色素材", parent_id: "collection-scenes", asset_count: 1 },
+  ];
+  let assetRecords = [
+    {
+      asset_id: "asset-1",
+      asset_type: "file",
+      name: "参考图",
+      scope: "project",
+      project_id: "global",
+      mime_type: "image/png",
+      size_bytes: 1024,
+      metadata: { public_url: "https://cdn.example.com/ref.png", tags: ["角色"] },
+      created_at: "2026-05-27T08:01:00Z",
+    },
+    {
+      asset_id: "asset-global",
+      asset_type: "file",
+      name: "全局参考.png",
+      scope: "global",
+      project_id: null,
+      mime_type: "image/png",
+      size_bytes: 2048,
+      metadata: { public_url: "https://cdn.example.com/global.png" },
+      created_at: "2026-05-27T08:02:00Z",
+    },
+  ];
+  let assetTags: Array<{ tag_id: string; name: string; scope: string; project_id: string | null; asset_count: number }> = [
+    { tag_id: "tag-character", name: "角色", scope: "project", project_id: "global", asset_count: 1 },
+    { tag_id: "tag-empty", name: "空标签", scope: "project", project_id: "global", asset_count: 0 },
+    { tag_id: "tag-global", name: "全局通用", scope: "global", project_id: null, asset_count: 0 },
+  ];
+  let nextCreatedTagNumber = 2;
+  const assetTagLinks = new Set(["asset-1:tag-character"]);
+  const assetTagItems = () => assetTags.map((tag) => ({
+    ...tag,
+    asset_count: [...assetTagLinks].some((item) => item.endsWith(`:${tag.tag_id}`)) ? 1 : 0,
+  }));
 
   return vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -240,24 +280,118 @@ function mockFetch() {
       return jsonResponse(uiControlsResponse);
     }
     if (url.startsWith("/api/assets/search")) {
+      return jsonResponse({ items: assetRecords });
+    }
+    if (url === "/api/assets/files" && method === "POST") {
+      uploadedAssetForms.push(init?.body as FormData);
+      const form = init?.body as FormData;
       return jsonResponse({
-        items: [
-          {
-            asset_id: "asset-1",
-            asset_type: "file",
-            name: "参考图",
-            scope: "project",
-            project_id: "project-1",
-            mime_type: "image/png",
-            size_bytes: 1024,
-            metadata: { public_url: "https://cdn.example.com/ref.png", tags: ["角色"] },
-            created_at: "2026-05-27T08:01:00Z",
-          },
-        ],
+        asset_id: `asset-upload-${uploadedAssetForms.length}`,
+        asset_type: "file",
+        name: String(form.get("name") ?? "uploaded.png"),
+        scope: "project",
+        project_id: "global",
+        mime_type: "image/png",
+        size_bytes: 16,
+        metadata: { public_url: "https://cdn.example.com/uploaded.png" },
+        created_at: "2026-05-27T08:03:00Z",
       });
     }
-    if (url === "/api/assets/collections?scope=combined&project_id=global" || url === "/api/assets/collections?scope=combined&project_id=project-1") return jsonResponse({ items: [] });
-    if (url === "/api/assets/tags?scope=combined&project_id=global" || url === "/api/assets/tags?scope=combined&project_id=project-1") return jsonResponse({ items: [] });
+    if (url.startsWith("/api/assets/asset-") && method === "PATCH") {
+      const assetId = decodeURIComponent(url.split("/").pop() ?? "");
+      const body = JSON.parse(String(init?.body ?? "{}")) as { name: string };
+      assetRecords = assetRecords.map((asset) => asset.asset_id === assetId ? { ...asset, name: body.name } : asset);
+      return jsonResponse(assetRecords.find((asset) => asset.asset_id === assetId));
+    }
+    if (url === "/api/assets/collections" && method === "POST") {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { name: string; parent_id?: string | null };
+      const collection = {
+        collection_id: `collection-${assetCollections.length + 1}`,
+        name: body.name,
+        parent_id: body.parent_id ?? null,
+        asset_count: 0,
+      };
+      assetCollections = [...assetCollections, collection];
+      return jsonResponse(collection);
+    }
+    if (url.startsWith("/api/assets/collections/") && method === "PATCH") {
+      const collectionId = decodeURIComponent(url.split("/").pop() ?? "");
+      const body = JSON.parse(String(init?.body ?? "{}")) as { name: string };
+      assetCollections = assetCollections.map((collection) =>
+        collection.collection_id === collectionId ? { ...collection, name: body.name } : collection,
+      );
+      return jsonResponse(assetCollections.find((collection) => collection.collection_id === collectionId));
+    }
+    if (url.startsWith("/api/assets/collections/") && method === "DELETE") {
+      const collectionId = decodeURIComponent(url.split("/").pop() ?? "");
+      const deletedIds = new Set<string>([collectionId]);
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const collection of assetCollections) {
+          if (collection.parent_id && deletedIds.has(collection.parent_id) && !deletedIds.has(collection.collection_id)) {
+            deletedIds.add(collection.collection_id);
+            changed = true;
+          }
+        }
+      }
+      assetCollections = assetCollections.filter((collection) => !deletedIds.has(collection.collection_id));
+      return jsonResponse({ deleted: true });
+    }
+    if (
+      url === "/api/assets/collections?scope=combined&project_id=global" ||
+      url === "/api/assets/collections?scope=project&project_id=global" ||
+      url === "/api/assets/collections?scope=combined&project_id=project-1" ||
+      url === "/api/assets/collections?scope=project&project_id=project-1"
+    ) return jsonResponse({ items: assetCollections });
+    if (url === "/api/assets/asset-1/tags" && method === "GET") {
+      return jsonResponse({ items: assetTagItems().filter((tag) => assetTagLinks.has(`asset-1:${tag.tag_id}`)) });
+    }
+    if (url === "/api/assets/asset-global/tags" && method === "GET") {
+      return jsonResponse({ items: assetTagItems().filter((tag) => assetTagLinks.has(`asset-global:${tag.tag_id}`)) });
+    }
+    if (url.startsWith("/api/assets/asset-1/tags/") && method === "POST") {
+      const tagId = decodeURIComponent(url.split("/").pop() ?? "");
+      assetTagLinks.add(`asset-1:${tagId}`);
+      return jsonResponse({ items: assetTagItems().filter((tag) => assetTagLinks.has(`asset-1:${tag.tag_id}`)) });
+    }
+    if (url.startsWith("/api/assets/asset-1/tags/") && method === "DELETE") {
+      const tagId = decodeURIComponent(url.split("/").pop() ?? "");
+      assetTagLinks.delete(`asset-1:${tagId}`);
+      return jsonResponse({ items: assetTagItems().filter((tag) => assetTagLinks.has(`asset-1:${tag.tag_id}`)) });
+    }
+    if (url === "/api/assets/tags" && method === "POST") {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { name: string; scope: string; project_id?: string | null };
+      const tag = {
+        tag_id: `tag-${nextCreatedTagNumber++}`,
+        name: body.name,
+        scope: body.scope,
+        project_id: body.project_id ?? null,
+        asset_count: 0,
+      };
+      assetTags = [...assetTags, tag];
+      return jsonResponse(tag);
+    }
+    if (url.startsWith("/api/assets/tags/") && method === "PATCH") {
+      const tagId = decodeURIComponent(url.split("/").pop() ?? "");
+      const body = JSON.parse(String(init?.body ?? "{}")) as { name: string };
+      assetTags = assetTags.map((tag) => tag.tag_id === tagId ? { ...tag, name: body.name } : tag);
+      return jsonResponse(assetTags.find((tag) => tag.tag_id === tagId));
+    }
+    if (url.startsWith("/api/assets/tags/") && method === "DELETE") {
+      const tagId = decodeURIComponent(url.split("/").pop() ?? "");
+      if (assetTagItems().find((tag) => tag.tag_id === tagId)?.asset_count) {
+        return jsonResponse({ error: { code: "asset_tag_not_empty", message: "标签仍被资产使用" } }, 400);
+      }
+      assetTags = assetTags.filter((tag) => tag.tag_id !== tagId);
+      return jsonResponse({ deleted: true });
+    }
+    if (
+      url === "/api/assets/tags?scope=combined&project_id=global" ||
+      url === "/api/assets/tags?scope=project&project_id=global" ||
+      url === "/api/assets/tags?scope=combined&project_id=project-1" ||
+      url === "/api/assets/tags?scope=project&project_id=project-1"
+    ) return jsonResponse({ items: assetTagItems() });
     if (url === "/api/tasks/task-1?project_id=global" || url === "/api/tasks/task-2?project_id=global" || url === "/api/tasks/task-1?project_id=project-1" || url === "/api/tasks/task-2?project_id=project-1") {
       const createdTask = createdTasks.find((task) => task.task_id === "task-2");
       const projectId = url.includes("project_id=global") ? "global" : "project-1";
@@ -572,6 +706,10 @@ describe("XiAgent V2 app", () => {
                 },
               },
               ui: {
+                sections: {
+                  input: { default_open: true },
+                  output: { default_open: false },
+                },
                 controls: {
                   input: { control_id: "ui.input.schema_form.v1", variant: "default", mode: "input" },
                 },
@@ -611,20 +749,102 @@ describe("XiAgent V2 app", () => {
     await login();
     await userEvent.click(await screen.findByRole("button", { name: "打开 RunningHub Text To Image Test" }));
     const detail = await screen.findByLabelText("任务运行详情");
-    await userEvent.click(within(detail).getByText("输入"));
+    expect(within(detail).getByText("输入").closest("details")).toHaveAttribute("open");
+    expect(within(detail).getByText("输出").closest("details")).not.toHaveAttribute("open");
     const prompt = within(detail).getByLabelText("提示词");
     await userEvent.type(prompt, "真实浏览器输入");
     const submitButton = within(detail).getByRole("button", { name: "提交并继续" });
     fireEvent.click(submitButton);
     fireEvent.click(submitButton);
 
-    expect(within(detail).getByRole("button", { name: "提交中" })).toBeDisabled();
     expect(prompt).toHaveAttribute("readonly");
+    expect(within(screen.getByRole("button", { name: "打开 RunningHub Text To Image Test" })).getByText("运行中")).toBeInTheDocument();
+    expect(within(detail).getAllByText("运行中").length).toBeGreaterThanOrEqual(2);
     expect(fetchMock.mock.calls.filter(([url, init]) =>
       url === "/api/tasks/schema-task/interactions" && init?.method === "POST",
     )).toHaveLength(1);
 
     void jsonResponse({ task_id: "schema-task", project_id: "global", status: "running" }).then(resolveInteraction);
+  });
+
+  it("syncs the selected task row from task event stream refreshes", async () => {
+    let taskStatus = "waiting";
+    let nodeStatus = "waiting";
+    let streamController = null as unknown as ReadableStreamDefaultController<Uint8Array>;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        streamController = controller;
+      },
+    });
+    const baseFetch = mockFetch();
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url === "/api/tasks?project_id=global" && method === "GET") {
+        return jsonResponse({
+          items: [{
+            task_id: "schema-task",
+            project_id: "global",
+            workflow_id: "runninghub_text_to_image_test",
+            workflow_name: "RunningHub Text To Image Test",
+            workflow_version: "1.0.0",
+            status: "waiting",
+            current_node_id: "generate_image",
+            created_at: "2026-05-27T10:00:00Z",
+          }],
+        });
+      }
+      if (url === "/api/tasks/schema-task?project_id=global" && method === "GET") {
+        return jsonResponse({
+          task: {
+            task_id: "schema-task",
+            project_id: "global",
+            workflow_id: "runninghub_text_to_image_test",
+            workflow_name: "RunningHub Text To Image Test",
+            workflow_version: "1.0.0",
+            status: taskStatus,
+            current_node_id: "generate_image",
+            created_at: "2026-05-27T10:00:00Z",
+          },
+          workflow_snapshot: {
+            workflow: { id: "runninghub_text_to_image_test", version: "1.0.0", name: "RunningHub Text To Image Test" },
+            nodes: [{ id: "generate_image", ref: "ai.runninghub_text_to_image.v1", name: "生成图片" }],
+            edges: [],
+          },
+          node_executions: [{
+            node_execution_id: "schema-exec",
+            node_id: "generate_image",
+            node_ref: "ai.runninghub_text_to_image.v1",
+            status: nodeStatus,
+            input_snapshot: {},
+            output_snapshot: {},
+            attempt: 1,
+          }],
+          node_attempts: {},
+          events: [],
+        });
+      }
+      if (url === "/api/tasks/schema-task/stream?project_id=global" && method === "GET") {
+        return Promise.resolve(new Response(stream, { status: 200, headers: { "Content-Type": "text/event-stream" } }));
+      }
+      return baseFetch(input, init);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+    await login();
+    await userEvent.click(await screen.findByRole("button", { name: "打开 RunningHub Text To Image Test" }));
+
+    expect(within(screen.getByRole("button", { name: "打开 RunningHub Text To Image Test" })).getByText("等待用户")).toBeInTheDocument();
+    taskStatus = "succeeded";
+    nodeStatus = "succeeded";
+    streamController.enqueue(new TextEncoder().encode('event: task_succeeded\ndata: {"node_id":"generate_image"}\n\n'));
+
+    await waitFor(() => {
+      expect(within(screen.getByRole("button", { name: "打开 RunningHub Text To Image Test" })).getByText("成功")).toBeInTheDocument();
+    });
+    expect(within(screen.getByLabelText("任务运行详情")).getAllByText("成功").length).toBeGreaterThanOrEqual(2);
+    streamController.close();
   });
 
   it("refreshes task detail after a failed interaction response", async () => {
@@ -666,6 +886,270 @@ describe("XiAgent V2 app", () => {
       );
       expect(detailReads.length).toBeGreaterThan(detailReadCount);
     });
+  });
+
+  it("moves asset directory filtering into a left tree", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    render(<App />);
+    await login();
+
+    await userEvent.click(screen.getByRole("button", { name: "资产库" }));
+
+    const tree = await screen.findByRole("tree", { name: "资产目录" });
+    expect(screen.queryByRole("combobox", { name: "资产目录" })).not.toBeInTheDocument();
+    expect(within(tree).getByRole("treeitem", { name: "全部目录" })).toBeInTheDocument();
+    expect(within(tree).getByRole("treeitem", { name: /分镜素材/ })).toBeInTheDocument();
+    await userEvent.click(within(tree).getByRole("treeitem", { name: /角色素材/ }));
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(([url]) =>
+          url === "/api/assets/search?scope=combined&project_id=global&collection_id=collection-characters",
+        ),
+      ).toBe(true);
+    });
+  });
+
+  it("uses the project name in asset scope controls and supports project-only filtering", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    render(<App />);
+    await login();
+
+    await userEvent.click(screen.getByRole("button", { name: "资产库" }));
+
+    const combinedButton = await screen.findByRole("button", { name: "全局项目 + 全局" });
+    const projectButton = screen.getByRole("button", { name: "全局项目资产" });
+    const globalButton = screen.getByRole("button", { name: "全局资产" });
+    expect(screen.queryByRole("button", { name: "当前项目 + 全局" })).not.toBeInTheDocument();
+    expect(combinedButton).toHaveClass("asset-scope-button", "active-control");
+    expect(projectButton).toHaveClass("asset-scope-button");
+    expect(projectButton).not.toHaveClass("active-control");
+
+    await userEvent.click(projectButton);
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(([url]) => url === "/api/assets/search?scope=project&project_id=global"),
+      ).toBe(true);
+      expect(projectButton).toHaveClass("active-control");
+      expect(combinedButton).not.toHaveClass("active-control");
+      expect(globalButton).not.toHaveClass("active-control");
+    });
+  });
+
+  it("creates renames and deletes asset directories from the tree", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    render(<App />);
+    await login();
+
+    await userEvent.click(screen.getByRole("button", { name: "资产库" }));
+    const tree = await screen.findByRole("tree", { name: "资产目录" });
+    await userEvent.click(within(tree).getByRole("treeitem", { name: /分镜素材/ }));
+    await userEvent.click(screen.getByRole("button", { name: "新建子目录" }));
+    await userEvent.type(screen.getByLabelText("目录名称"), "镜头参考");
+    await userEvent.click(screen.getByRole("button", { name: "创建目录" }));
+
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(([url, init]) => url === "/api/assets/collections" && init?.method === "POST");
+      expect(post).toBeTruthy();
+      expect(JSON.parse(String(post?.[1]?.body))).toMatchObject({
+        scope: "project",
+        project_id: "global",
+        parent_id: "collection-scenes",
+        name: "镜头参考",
+      });
+    });
+
+    await screen.findByRole("treeitem", { name: /镜头参考/ });
+    await userEvent.click(within(tree).getByRole("treeitem", { name: /角色素材/ }));
+    await userEvent.click(screen.getByRole("button", { name: "重命名目录" }));
+    const renameInput = screen.getByLabelText("目录名称");
+    await userEvent.clear(renameInput);
+    await userEvent.type(renameInput, "主角素材");
+    await userEvent.click(screen.getByRole("button", { name: "保存目录" }));
+
+    await waitFor(() => {
+      const patch = fetchMock.mock.calls.find(([url, init]) =>
+        url === "/api/assets/collections/collection-characters" && init?.method === "PATCH",
+      );
+      expect(patch).toBeTruthy();
+      expect(JSON.parse(String(patch?.[1]?.body))).toMatchObject({ name: "主角素材" });
+    });
+
+    await screen.findByRole("treeitem", { name: /主角素材/ });
+    await userEvent.click(screen.getByRole("button", { name: "删除目录" }));
+    await userEvent.click(screen.getByRole("button", { name: "确认删除目录" }));
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(([url, init]) =>
+          url === "/api/assets/collections/collection-characters" && init?.method === "DELETE",
+        ),
+      ).toBe(true);
+      expect(screen.queryByRole("treeitem", { name: /主角素材/ })).not.toBeInTheDocument();
+    });
+  });
+
+  it("uploads files into the selected asset directory", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    render(<App />);
+    await login();
+
+    await userEvent.click(screen.getByRole("button", { name: "资产库" }));
+    const tree = await screen.findByRole("tree", { name: "资产目录" });
+    await userEvent.click(within(tree).getByRole("treeitem", { name: /角色素材/ }));
+    await userEvent.upload(screen.getByLabelText("上传文件"), new File(["fake image"], "uploaded.png", { type: "image/png" }));
+    await userEvent.type(screen.getByLabelText("上传资产名称"), "目录内资产");
+    await userEvent.click(screen.getByRole("button", { name: "上传到资产库" }));
+
+    await waitFor(() => {
+      const uploadCall = fetchMock.mock.calls.find(([url, init]) => url === "/api/assets/files" && init?.method === "POST");
+      expect(uploadCall).toBeTruthy();
+      const form = uploadCall?.[1]?.body as FormData;
+      expect(form.get("collection_ids")).toBe("collection-characters");
+    });
+  });
+
+  it("uploads files with a user-defined asset name", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    render(<App />);
+    await login();
+
+    await userEvent.click(screen.getByRole("button", { name: "资产库" }));
+    await userEvent.upload(screen.getByLabelText("上传文件"), new File(["fake image"], "source-file.png", { type: "image/png" }));
+    await userEvent.type(screen.getByLabelText("上传资产名称"), "主角立绘");
+    await userEvent.click(screen.getByRole("button", { name: "上传到资产库" }));
+
+    await waitFor(() => {
+      const uploadCall = fetchMock.mock.calls.find(([url, init]) => url === "/api/assets/files" && init?.method === "POST");
+      expect(uploadCall).toBeTruthy();
+      const form = uploadCall?.[1]?.body as FormData;
+      expect(form.get("name")).toBe("主角立绘");
+    });
+  });
+
+  it("renames an existing asset from the asset detail panel", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    render(<App />);
+    await login();
+
+    await userEvent.click(screen.getByRole("button", { name: "资产库" }));
+    expect(await screen.findByRole("heading", { name: "参考图" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "重命名资产" }));
+    const nameInput = screen.getByLabelText("资产名称");
+    await userEvent.clear(nameInput);
+    await userEvent.type(nameInput, "主角立绘");
+    await userEvent.click(screen.getByRole("button", { name: "保存资产名称" }));
+
+    await waitFor(() => {
+      const patchCall = fetchMock.mock.calls.find(([url, init]) => url === "/api/assets/asset-1" && init?.method === "PATCH");
+      expect(patchCall).toBeTruthy();
+      expect(JSON.parse(String(patchCall?.[1]?.body))).toMatchObject({ name: "主角立绘" });
+      expect(screen.getByRole("heading", { name: "主角立绘" })).toBeInTheDocument();
+    });
+  });
+
+  it("does not expose manual text asset creation in the asset detail panel", async () => {
+    render(<App />);
+    await login();
+
+    await userEvent.click(screen.getByRole("button", { name: "资产库" }));
+    const tree = await screen.findByRole("tree", { name: "资产目录" });
+    await userEvent.click(within(tree).getByRole("treeitem", { name: /角色素材/ }));
+
+    await screen.findByRole("group", { name: "资产操作" });
+    expect(screen.getByLabelText("上传文件")).toBeInTheDocument();
+    expect(screen.queryByText("文字资产名")).not.toBeInTheDocument();
+    expect(screen.queryByText("文字内容")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "创建文字资产" })).not.toBeInTheDocument();
+  });
+
+  it("manages library tag filters and asset detail tag assignment", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    render(<App />);
+    await login();
+
+    await userEvent.click(screen.getByRole("button", { name: "资产库" }));
+    const tagToolbar = await screen.findByRole("toolbar", { name: "资产库标签操作" });
+    const detailActions = await screen.findByRole("group", { name: "资产操作" });
+    expect(within(detailActions).getByRole("link", { name: "预览资产" })).toHaveClass("asset-action-button");
+    expect(within(detailActions).getByRole("button", { name: "复制引用" })).toHaveClass("asset-action-button");
+    expect(within(detailActions).getByRole("button", { name: "下载" })).toHaveClass("asset-action-button");
+    expect(within(detailActions).getByRole("button", { name: "软删除" })).toHaveClass("asset-action-button");
+    expect(within(tagToolbar).queryByRole("button", { name: "重命名标签" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("group", { name: "当前资产标签" })).toHaveTextContent("角色");
+
+    await userEvent.click(screen.getByLabelText("筛选标签 角色"));
+    expect(within(tagToolbar).getByRole("button", { name: "删除标签" })).toBeDisabled();
+    await userEvent.click(screen.getByLabelText("筛选标签 角色"));
+    await userEvent.click(screen.getByLabelText("筛选标签 空标签"));
+    expect(within(tagToolbar).getByRole("button", { name: "删除标签" })).toBeEnabled();
+    await userEvent.click(within(tagToolbar).getByRole("button", { name: "删除标签" }));
+    await userEvent.click(screen.getByRole("button", { name: "确认删除标签" }));
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(([url, init]) =>
+          url === "/api/assets/tags/tag-empty" && init?.method === "DELETE",
+        ),
+      ).toBe(true);
+      expect(screen.queryByLabelText("筛选标签 空标签")).not.toBeInTheDocument();
+    });
+
+    await userEvent.click(within(tagToolbar).getByRole("button", { name: "新建标签" }));
+    await userEvent.type(screen.getByLabelText("标签名称"), "场景参考");
+    await userEvent.click(screen.getByRole("button", { name: "创建标签" }));
+
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(([url, init]) => url === "/api/assets/tags" && init?.method === "POST");
+      expect(post).toBeTruthy();
+      expect(JSON.parse(String(post?.[1]?.body))).toMatchObject({
+        scope: "project",
+        project_id: "global",
+        name: "场景参考",
+      });
+    });
+
+    expect(await screen.findByLabelText("筛选标签 场景参考")).toBeChecked();
+    await userEvent.click(screen.getByRole("button", { name: "管理资产标签" }));
+    const dialog = await screen.findByRole("dialog", { name: "管理资产标签" });
+    await userEvent.type(within(dialog).getByLabelText("过滤标签"), "场景");
+    await userEvent.click(within(dialog).getByLabelText("给资产贴标签 场景参考"));
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(([url, init]) =>
+          url === "/api/assets/asset-1/tags/tag-2" && init?.method === "POST",
+        ),
+      ).toBe(true);
+    });
+
+    await userEvent.clear(within(dialog).getByLabelText("过滤标签"));
+    await userEvent.type(within(dialog).getByLabelText("过滤标签"), "角色");
+    await userEvent.click(within(dialog).getByLabelText("取消资产标签 角色"));
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(([url, init]) =>
+          url === "/api/assets/asset-1/tags/tag-character" && init?.method === "DELETE",
+        ),
+      ).toBe(true);
+      expect(within(dialog).queryByLabelText("取消资产标签 角色")).not.toBeInTheDocument();
+    });
+  });
+
+  it("only offers scope-compatible tags when assigning a global asset", async () => {
+    render(<App />);
+    await login();
+
+    await userEvent.click(screen.getByRole("button", { name: "资产库" }));
+    await userEvent.click(await screen.findByRole("button", { name: /全局参考\.png/ }));
+    await userEvent.click(screen.getByRole("button", { name: "管理资产标签" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "管理资产标签" });
+    expect(within(dialog).getByLabelText("给资产贴标签 全局通用")).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText("给资产贴标签 角色")).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText("给资产贴标签 空标签")).not.toBeInTheDocument();
   });
 
   it("opens the control library tab and lists registered node controls", async () => {

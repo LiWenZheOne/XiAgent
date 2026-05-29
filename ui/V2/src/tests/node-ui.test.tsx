@@ -368,6 +368,118 @@ describe("node-ui controls", () => {
     });
   });
 
+  it("filters task asset picker assets by selected project directories and tags", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      const parsed = new URL(url, "http://localhost");
+      if (parsed.pathname === "/api/projects") {
+        return jsonResponse({
+          items: [
+            { project_id: "global", name: "全局项目", owner_user_id: "user-1" },
+            { project_id: "project-1", name: "当前项目", owner_user_id: "user-1" },
+            { project_id: "project-2", name: "素材项目", owner_user_id: "user-1" },
+          ],
+        });
+      }
+      if (parsed.pathname === "/api/assets/collections") {
+        const projectId = parsed.searchParams.get("project_id");
+        return jsonResponse({
+          items: projectId === "project-2"
+            ? [{ collection_id: "collection-project", name: "项目目录", asset_count: 1 }]
+            : [{ collection_id: "collection-current", name: "当前目录", asset_count: 1 }],
+        });
+      }
+      if (parsed.pathname === "/api/assets/tags") {
+        const projectId = parsed.searchParams.get("project_id");
+        return jsonResponse({
+          items: projectId === "project-2"
+            ? [{ tag_id: "tag-project", name: "项目标签", scope: "project", project_id: "project-2", asset_count: 1 }]
+            : [{ tag_id: "tag-current", name: "当前标签", scope: "project", project_id: "project-1", asset_count: 1 }],
+        });
+      }
+      if (parsed.pathname === "/api/assets/search") {
+        const projectId = parsed.searchParams.get("project_id");
+        return jsonResponse({
+          items: [
+            {
+              asset_id: projectId === "project-2" ? "asset-project" : "asset-current",
+              asset_type: "file",
+              name: projectId === "project-2" ? "项目参考图" : "当前参考图",
+              scope: "project",
+              project_id: projectId,
+              mime_type: "image/png",
+              size_bytes: 1024,
+              metadata: { public_url: projectId === "project-2" ? "https://cdn.example.com/project.png" : "https://cdn.example.com/current.png" },
+              created_at: "2026-05-28T09:00:00Z",
+            },
+          ],
+        });
+      }
+      return jsonResponse({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const inputSchema: JsonSchema = {
+      type: "object",
+      properties: {
+        image_urls: { type: "array", title: "参考图", items: { type: "string" } },
+      },
+    };
+    const inputNode: TaskNodeExecution = {
+      node_execution_id: "exec-input",
+      node_id: "collect_user_input",
+      node_ref: "system.user_input.v1",
+      status: "waiting",
+      input_snapshot: {},
+      output_snapshot: null,
+      metadata: { input_schema: inputSchema, title: "启动参数" },
+    };
+
+    render(
+      <SchemaFormControl
+        config={{
+          control_id: "ui.input.schema_form.v1",
+          variant: "default",
+          mode: "input",
+          options: {
+            fields: {
+              image_urls: {
+                control_id: "ui.input.asset_image_picker.v1",
+                variant: "thumbnails",
+                mode: "input",
+                selection_mode: "multiple",
+                upload_scope: "project",
+              },
+            },
+          },
+        }}
+        node={inputNode}
+        onSubmit={vi.fn()}
+        projectId="project-1"
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "选择图片" }));
+    expect(await screen.findByRole("dialog", { name: "选择资产图片" })).toBeInTheDocument();
+
+    await userEvent.click(await screen.findByRole("button", { name: "选择资产项目：当前项目" }));
+    const projectDialog = screen.getByRole("dialog", { name: "选择资产项目" });
+    expect(within(projectDialog).getByRole("radio", { name: "全局项目" })).toBeInTheDocument();
+    await userEvent.click(within(projectDialog).getByRole("radio", { name: "素材项目" }));
+    await userEvent.click(within(projectDialog).getByRole("button", { name: "确认项目" }));
+
+    expect(await screen.findByRole("button", { name: "项目目录" })).toBeInTheDocument();
+    await userEvent.click(await screen.findByLabelText("筛选标签 项目标签"));
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([calledUrl]) => {
+        const called = new URL(String(calledUrl), "http://localhost");
+        return called.pathname === "/api/assets/search"
+          && called.searchParams.get("project_id") === "project-2"
+          && called.searchParams.get("tag_ids") === "tag-project";
+      })).toBe(true);
+    });
+  });
+
   it("renders submitted schema form values with the same controls in readonly mode", () => {
     const inputSchema: JsonSchema = {
       type: "object",

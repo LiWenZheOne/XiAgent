@@ -1,7 +1,8 @@
 import { type ChangeEvent, useEffect, useMemo, useState } from "react";
 
 import { listAssetCollections, listAssetTags, searchAssets, uploadAsset } from "../../api/assets";
-import type { AssetCollection, AssetRecord, AssetScope, AssetTag, JsonSchema, NodeUiControlConfig, WorkflowNodeSpec } from "../../api/types";
+import { listProjects } from "../../api/projects";
+import type { AssetCollection, AssetRecord, AssetScope, AssetTag, JsonSchema, NodeUiControlConfig, ProjectRecord, WorkflowNodeSpec } from "../../api/types";
 import { buildSchemaFields, type SchemaField } from "../../utils/display";
 import type { NodeUiControlProps } from "../types";
 
@@ -258,6 +259,11 @@ function AssetImagePickerDialog({
   const [assets, setAssets] = useState<AssetRecord[]>([]);
   const [collections, setCollections] = useState<AssetCollection[]>([]);
   const [tags, setTags] = useState<AssetTag[]>([]);
+  const [projects, setProjects] = useState<ProjectRecord[]>([]);
+  const [selectedProjectId, setSelectedProjectId] = useState(initialAssetLibraryProjectId(projectId));
+  const [draftProjectId, setDraftProjectId] = useState(initialAssetLibraryProjectId(projectId));
+  const [projectDialogOpen, setProjectDialogOpen] = useState(false);
+  const [projectLoading, setProjectLoading] = useState(false);
   const [keyword, setKeyword] = useState("");
   const [collectionId, setCollectionId] = useState("");
   const [tagIds, setTagIds] = useState<string[]>([]);
@@ -266,9 +272,42 @@ function AssetImagePickerDialog({
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
-  const uploadAssetScope = assetScope(projectId, uploadScope);
-  const libraryScope = assetLibraryScope(projectId);
-  const libraryProjectId = libraryScope === "combined" ? projectId : undefined;
+  const projectOptions = useMemo(() => assetProjectOptions(projects), [projects]);
+  const selectedProject = projectOptions.find((item) => item.project_id === selectedProjectId);
+  const selectedProjectName = selectedProject?.name?.trim() || (selectedProjectId === "global" ? "全局项目" : "项目资产");
+  const libraryScope = assetLibraryScope(selectedProjectId);
+  const libraryProjectId = libraryScope === "combined" ? selectedProjectId : undefined;
+  const uploadAssetScope = assetScope(selectedProjectId, uploadScope);
+
+  useEffect(() => {
+    const nextProjectId = initialAssetLibraryProjectId(projectId);
+    setSelectedProjectId(nextProjectId);
+    setDraftProjectId(nextProjectId);
+    setCollectionId("");
+    setTagIds([]);
+  }, [projectId]);
+
+  useEffect(() => {
+    let active = true;
+    setProjectLoading(true);
+    listProjects()
+      .then((items) => {
+        if (!active) return;
+        const options = assetProjectOptions(items);
+        setProjects(items);
+        setSelectedProjectId((current) => options.some((project) => project.project_id === current) ? current : options[0]?.project_id ?? "global");
+        setDraftProjectId((current) => options.some((project) => project.project_id === current) ? current : options[0]?.project_id ?? "global");
+      })
+      .catch((error) => {
+        if (active) setMessage(readableError(error, "项目列表暂不可用。"));
+      })
+      .finally(() => {
+        if (active) setProjectLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -279,6 +318,8 @@ function AssetImagePickerDialog({
       if (!active) return;
       setCollections(nextCollections);
       setTags(nextTags);
+      setCollectionId((current) => nextCollections.some((collection) => collection.collection_id === current) ? current : "");
+      setTagIds((current) => current.filter((tagId) => nextTags.some((tag) => tag.tag_id === tagId)));
     }).catch((error) => {
       if (active) setMessage(readableError(error, "资产目录或标签暂不可用。"));
     });
@@ -317,12 +358,24 @@ function AssetImagePickerDialog({
     setDraft((current) => current.includes(url) ? current.filter((item) => item !== url) : [...current, url]);
   }
 
+  function openProjectDialog() {
+    setDraftProjectId(selectedProjectId);
+    setProjectDialogOpen(true);
+  }
+
+  function confirmProjectSelection() {
+    setSelectedProjectId(draftProjectId);
+    setCollectionId("");
+    setTagIds([]);
+    setProjectDialogOpen(false);
+  }
+
   async function uploadSelectedFile() {
     if (!file) return;
     const uploaded = await uploadAsset({
       file,
       scope: uploadAssetScope,
-      project_id: uploadAssetScope === "project" ? projectId : undefined,
+      project_id: uploadAssetScope === "project" ? selectedProjectId : undefined,
       publish: true,
       collection_ids: collectionId ? [collectionId] : undefined,
       tag_ids: tagIds,
@@ -348,44 +401,87 @@ function AssetImagePickerDialog({
         </div>
 
         {tab === "library" ? (
-          <div className="asset-picker-body">
-            <aside className="asset-picker-tree">
-              <button className={collectionId === "" ? "active" : ""} type="button" onClick={() => setCollectionId("")}>全部目录</button>
-              {collections.map((collection) => (
-                <button className={collectionId === collection.collection_id ? "active" : ""} key={collection.collection_id} type="button" onClick={() => setCollectionId(collection.collection_id)}>
-                  {collection.name}
+          <>
+            <div className="asset-picker-project-row">
+              <div className="asset-picker-project-summary">
+                <span className="eyebrow">资产项目</span>
+                <button className="asset-project-select-button" type="button" aria-label={`选择资产项目：${selectedProjectName}`} onClick={openProjectDialog}>
+                  <strong>{selectedProjectName}</strong>
+                  <span>{projectLoading ? "加载中" : "切换"}</span>
                 </button>
-              ))}
-            </aside>
-            <section className="asset-picker-results">
-              <input aria-label="搜索资产" placeholder="搜索资产" value={keyword} onChange={(event) => setKeyword(event.target.value)} />
-              <div className="tag-filter-group">
-                {tags.map((tag) => {
-                  const checked = tagIds.includes(tag.tag_id);
-                  return (
-                    <label className={checked ? "tag-filter active" : "tag-filter"} key={tag.tag_id}>
-                      <input checked={checked} type="checkbox" onChange={(event) => setTagIds((current) => event.target.checked ? [...current, tag.tag_id] : current.filter((item) => item !== tag.tag_id))} />
-                      <span>{tag.name}</span>
-                    </label>
-                  );
-                })}
               </div>
-              {message ? <p className="form-error">{message}</p> : null}
-              {loading ? <p className="muted">正在加载资产...</p> : null}
-              <div className="asset-check-grid">
-                {assets.map((asset) => {
-                  const url = asset.metadata.public_url ?? "";
-                  const checked = draft.includes(url);
-                  return (
-                    <button className={checked ? "asset-check-card active" : "asset-check-card"} key={asset.asset_id} type="button" onClick={() => toggleUrl(url)}>
-                      <img src={url} alt={asset.name} />
-                      <span>{asset.name}</span>
-                    </button>
-                  );
-                })}
+            </div>
+            {projectDialogOpen ? (
+              <div className="asset-project-dialog-backdrop">
+                <section className="asset-project-dialog" role="dialog" aria-label="选择资产项目">
+                  <header className="asset-picker-header">
+                    <h4>选择资产项目</h4>
+                    <button className="ghost-button" type="button" onClick={() => setProjectDialogOpen(false)}>关闭</button>
+                  </header>
+                  <div className="asset-project-options" role="radiogroup" aria-label="资产项目">
+                    {projectOptions.map((project) => (
+                      <label className={draftProjectId === project.project_id ? "asset-project-option active" : "asset-project-option"} key={project.project_id}>
+                        <input
+                          aria-label={project.name}
+                          checked={draftProjectId === project.project_id}
+                          name="asset-library-project"
+                          type="radio"
+                          value={project.project_id}
+                          onChange={() => setDraftProjectId(project.project_id)}
+                        />
+                        <span>{project.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <footer className="asset-picker-footer">
+                    <button className="secondary-button" type="button" onClick={() => setProjectDialogOpen(false)}>取消</button>
+                    <button className="primary-button" type="button" onClick={confirmProjectSelection}>确认项目</button>
+                  </footer>
+                </section>
               </div>
-            </section>
-          </div>
+            ) : null}
+            <div className="asset-picker-body">
+              <aside className="asset-picker-tree">
+                <button className={collectionId === "" ? "active" : ""} type="button" onClick={() => setCollectionId("")}>全部目录</button>
+                {collections.map((collection) => (
+                  <button className={collectionId === collection.collection_id ? "active" : ""} key={collection.collection_id} type="button" onClick={() => setCollectionId(collection.collection_id)}>
+                    {collection.name}
+                  </button>
+                ))}
+              </aside>
+              <section className="asset-picker-results">
+                <input aria-label="搜索资产" placeholder="搜索资产" value={keyword} onChange={(event) => setKeyword(event.target.value)} />
+                <div className="asset-picker-tag-section">
+                  <span className="eyebrow">标签过滤</span>
+                  <div className="tag-filter-group">
+                    {tags.length ? tags.map((tag) => {
+                      const checked = tagIds.includes(tag.tag_id);
+                      return (
+                        <label className={checked ? "tag-filter active" : "tag-filter"} key={tag.tag_id}>
+                          <input aria-label={`筛选标签 ${tag.name}`} checked={checked} type="checkbox" onChange={(event) => setTagIds((current) => event.target.checked ? [...current, tag.tag_id] : current.filter((item) => item !== tag.tag_id))} />
+                          <span>{tag.name}</span>
+                        </label>
+                      );
+                    }) : <span className="muted">暂无标签</span>}
+                  </div>
+                </div>
+                {message ? <p className="form-error">{message}</p> : null}
+                {loading ? <p className="muted">正在加载资产...</p> : null}
+                <div className="asset-check-grid">
+                  {assets.map((asset) => {
+                    const url = asset.metadata.public_url ?? "";
+                    const checked = draft.includes(url);
+                    return (
+                      <button className={checked ? "asset-check-card active" : "asset-check-card"} key={asset.asset_id} type="button" onClick={() => toggleUrl(url)}>
+                        <img src={url} alt={asset.name} />
+                        <span>{asset.name}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            </div>
+          </>
         ) : (
           <div className="asset-upload-panel">
             <label className="compact-field">
@@ -510,6 +606,15 @@ function assetScope(projectId: string | undefined, uploadScope: string): Exclude
 
 function assetLibraryScope(projectId: string | undefined): AssetScope {
   return !projectId || projectId === "global" ? "global" : "combined";
+}
+
+function initialAssetLibraryProjectId(projectId: string | undefined): string {
+  return projectId || "global";
+}
+
+function assetProjectOptions(projects: ProjectRecord[]): ProjectRecord[] {
+  if (projects.some((project) => project.project_id === "global")) return projects;
+  return [{ project_id: "global", name: "全局项目", owner_user_id: "system" }, ...projects];
 }
 
 function controlOptionReader(config?: NodeUiControlConfig): (key: string) => unknown {

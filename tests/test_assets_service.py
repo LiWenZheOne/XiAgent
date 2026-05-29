@@ -216,6 +216,50 @@ async def test_get_asset_content_returns_text_and_file_content(test_settings) ->
     assert file_content.text_content is None
 
 
+async def test_update_asset_renames_asset_and_searches_by_new_name(test_settings) -> None:
+    await migrate(test_settings.database_path)
+    users = SqliteUserService(test_settings.database_path)
+    user = await users.create_user(username="alice", password="secret-123")
+    assets = SqliteAssetService(
+        database_path=test_settings.database_path,
+        storage_dir=test_settings.asset_storage_dir,
+        user_service=users,
+    )
+    asset = await assets.import_file_asset(
+        user_id=user.user_id,
+        scope="global",
+        project_id=None,
+        file_name="source-file.png",
+        content_type="image/png",
+        content=b"fake image",
+        metadata={},
+    )
+
+    renamed = await assets.update_asset(
+        user_id=user.user_id,
+        asset_id=asset.asset_id,
+        name="主角立绘",
+    )
+    search_result = await assets.search_assets(
+        user_id=user.user_id,
+        scope="global",
+        project_id=None,
+        keyword="主角",
+    )
+
+    assert renamed.name == "主角立绘"
+    assert [item.asset_id for item in search_result.items] == [asset.asset_id]
+
+    with pytest.raises(ValidationError) as exc_info:
+        await assets.update_asset(
+            user_id=user.user_id,
+            asset_id=asset.asset_id,
+            name="   ",
+        )
+
+    assert exc_info.value.code == "asset_name_required"
+
+
 async def test_get_project_asset_rejects_mismatched_project_context(test_settings) -> None:
     await migrate(test_settings.database_path)
     users = SqliteUserService(test_settings.database_path)
@@ -334,6 +378,263 @@ async def test_create_collection_rejects_cross_project_parent(test_settings) -> 
         )
 
     assert exc_info.value.code == "asset_collection_scope_mismatch"
+
+
+async def test_update_collection_node_renames_collection(test_settings) -> None:
+    await migrate(test_settings.database_path)
+    users = SqliteUserService(test_settings.database_path)
+    user = await users.create_user(username="alice", password="secret-123")
+    project = await users.create_project(owner_user_id=user.user_id, name="project A")
+    assets = SqliteAssetService(
+        database_path=test_settings.database_path,
+        storage_dir=test_settings.asset_storage_dir,
+        user_service=users,
+    )
+    collection = await assets.create_collection_node(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project.project_id,
+        parent_id=None,
+        name="old name",
+    )
+
+    renamed = await assets.update_collection_node(
+        user_id=user.user_id,
+        collection_id=collection.collection_id,
+        name="new name",
+    )
+    collections = await assets.list_collection_nodes(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project.project_id,
+    )
+
+    assert renamed.name == "new name"
+    assert collections[0].name == "new name"
+    assert collections[0].updated_at >= collection.updated_at
+
+
+async def test_delete_collection_node_removes_descendants_and_keeps_assets(test_settings) -> None:
+    await migrate(test_settings.database_path)
+    users = SqliteUserService(test_settings.database_path)
+    user = await users.create_user(username="alice", password="secret-123")
+    project = await users.create_project(owner_user_id=user.user_id, name="project A")
+    assets = SqliteAssetService(
+        database_path=test_settings.database_path,
+        storage_dir=test_settings.asset_storage_dir,
+        user_service=users,
+    )
+    parent = await assets.create_collection_node(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project.project_id,
+        parent_id=None,
+        name="parent",
+    )
+    child = await assets.create_collection_node(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project.project_id,
+        parent_id=parent.collection_id,
+        name="child",
+    )
+    asset = await assets.create_text_asset(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project.project_id,
+        name="scene notes",
+        text="indexed content",
+        metadata={},
+    )
+    await assets.import_file_asset(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project.project_id,
+        file_name="storyboard.png",
+        content_type="image/png",
+        content=b"fake image",
+        metadata={},
+        collection_ids=[child.collection_id],
+    )
+
+    await assets.delete_collection_node(user_id=user.user_id, collection_id=parent.collection_id)
+
+    assert await assets.list_collection_nodes(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project.project_id,
+    ) == []
+    unfiltered = await assets.search_assets(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project.project_id,
+    )
+    parent_filtered = await assets.search_assets(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project.project_id,
+        collection_id=parent.collection_id,
+    )
+
+    assert {item.name for item in unfiltered.items} == {"scene notes", "storyboard.png"}
+    assert asset.asset_id in {item.asset_id for item in unfiltered.items}
+    assert parent_filtered.items == []
+
+
+async def test_update_tag_renames_tag(test_settings) -> None:
+    await migrate(test_settings.database_path)
+    users = SqliteUserService(test_settings.database_path)
+    user = await users.create_user(username="alice", password="secret-123")
+    project = await users.create_project(owner_user_id=user.user_id, name="project A")
+    assets = SqliteAssetService(
+        database_path=test_settings.database_path,
+        storage_dir=test_settings.asset_storage_dir,
+        user_service=users,
+    )
+    tag = await assets.create_tag(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project.project_id,
+        name="old tag",
+    )
+
+    renamed = await assets.update_tag(
+        user_id=user.user_id,
+        tag_id=tag.tag_id,
+        name="new tag",
+    )
+    tags = await assets.list_tags(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project.project_id,
+    )
+
+    assert renamed.name == "new tag"
+    assert tags[0].name == "new tag"
+    assert tags[0].updated_at >= tag.updated_at
+
+
+async def test_attach_and_detach_asset_tag_updates_filtering_and_counts(test_settings) -> None:
+    await migrate(test_settings.database_path)
+    users = SqliteUserService(test_settings.database_path)
+    user = await users.create_user(username="alice", password="secret-123")
+    project = await users.create_project(owner_user_id=user.user_id, name="project A")
+    assets = SqliteAssetService(
+        database_path=test_settings.database_path,
+        storage_dir=test_settings.asset_storage_dir,
+        user_service=users,
+    )
+    tag = await assets.create_tag(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project.project_id,
+        name="character",
+    )
+    asset = await assets.create_text_asset(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project.project_id,
+        name="hero notes",
+        text="hero profile",
+        metadata={},
+    )
+
+    attached_tags = await assets.attach_asset_tag(
+        user_id=user.user_id,
+        asset_id=asset.asset_id,
+        tag_id=tag.tag_id,
+    )
+    filtered_after_attach = await assets.search_assets(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project.project_id,
+        tag_ids=[tag.tag_id],
+    )
+    tags_after_attach = await assets.list_tags(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project.project_id,
+    )
+
+    detached_tags = await assets.detach_asset_tag(
+        user_id=user.user_id,
+        asset_id=asset.asset_id,
+        tag_id=tag.tag_id,
+    )
+    filtered_after_detach = await assets.search_assets(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project.project_id,
+        tag_ids=[tag.tag_id],
+    )
+    tags_after_detach = await assets.list_tags(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project.project_id,
+    )
+
+    assert [item.tag_id for item in attached_tags] == [tag.tag_id]
+    assert [item.asset_id for item in filtered_after_attach.items] == [asset.asset_id]
+    assert tags_after_attach[0].asset_count == 1
+    assert detached_tags == []
+    assert filtered_after_detach.items == []
+    assert tags_after_detach[0].asset_count == 0
+
+
+async def test_delete_tag_requires_empty_tag(test_settings) -> None:
+    await migrate(test_settings.database_path)
+    users = SqliteUserService(test_settings.database_path)
+    user = await users.create_user(username="alice", password="secret-123")
+    project = await users.create_project(owner_user_id=user.user_id, name="project A")
+    assets = SqliteAssetService(
+        database_path=test_settings.database_path,
+        storage_dir=test_settings.asset_storage_dir,
+        user_service=users,
+    )
+    used_tag = await assets.create_tag(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project.project_id,
+        name="used",
+    )
+    empty_tag = await assets.create_tag(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project.project_id,
+        name="empty",
+    )
+    await assets.create_text_asset(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project.project_id,
+        name="scene notes",
+        text="tagged text",
+        metadata={},
+    )
+    asset = (await assets.search_assets(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project.project_id,
+    )).items[0]
+    await assets.attach_asset_tag(
+        user_id=user.user_id,
+        asset_id=asset.asset_id,
+        tag_id=used_tag.tag_id,
+    )
+
+    with pytest.raises(ValidationError) as exc_info:
+        await assets.delete_tag(user_id=user.user_id, tag_id=used_tag.tag_id)
+
+    await assets.delete_tag(user_id=user.user_id, tag_id=empty_tag.tag_id)
+
+    remaining_tags = await assets.list_tags(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project.project_id,
+    )
+
+    assert exc_info.value.code == "asset_tag_not_empty"
+    assert [item.tag_id for item in remaining_tags] == [used_tag.tag_id]
 
 
 async def test_create_text_asset_preserves_original_text_and_size(test_settings) -> None:

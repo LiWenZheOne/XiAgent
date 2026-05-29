@@ -6,7 +6,7 @@
 
 ## 技术栈
 
-- React 19、TypeScript、Vite、Vitest、Testing Library、Playwright。
+- React 19、TypeScript、Vite、Vitest、Testing Library。最终验收优先使用 Codex 内部浏览器。
 - 入口：`ui/V2/src/app/App.tsx`。
 - 样式：`ui/V2/src/styles/app.css`。
 - API 层：`ui/V2/src/api/`。
@@ -32,6 +32,7 @@
 - 主导航为顶部条，任务工作台为三栏布局：左侧项目/任务，中间工作区，右侧运行上下文；窄屏通过媒体查询降为单列。
 - 卡片只用于任务、工作流、项目、资产、节点等独立对象；不要把页面大区块层层套卡片。
 - 文本必须在按钮、卡片、表单和状态条内完整可读，移动宽度不得互相遮挡。
+- 资产卡片必须能容纳超长无空格文件名：卡片不得被文件名撑宽，缩略图必须限制在卡片内部，文件名使用断行而不是横向溢出。
 
 ## 数据接入规则
 
@@ -40,7 +41,14 @@
 - 创建任务调用 `/api/tasks` 时，body 必须包含当前项目 `project_id` 和选中的工作流契约；业务 `input_data` 不得作为创建任务前置表单要求。
 - 工作流必填入参在任务创建后的起始输入节点中填写，提交后由后端固化为 `$workflow.input`。
 - 工作流列表调用 `/api/workflows?project_id=<current>`；不能用无项目上下文的全部工作流列表驱动用户创建任务。
-- 资产查询使用当前项目与 scope，例如 `scope=combined&project_id=<current>`。
+- 资产查询使用当前项目与 scope，例如 `scope=combined&project_id=<current>`；资产库范围选择必须提供“项目名资产”“项目名 + 全局”“全局资产”三种模式，按钮文案直接使用当前项目名，并提供清晰可见的选中态。
+- 资产库目录使用左侧树形目录选择，不在顶部工具条使用下拉目录过滤；目录增删改必须调用真实 `/api/assets/collections` 接口，并保持当前项目或全局 scope 语义。
+- 上传文件到资产库时必须要求用户填写资产名称，并把该名称作为 `name` 传给 `/api/assets/files`；同时把当前选中目录作为 `collection_ids` 传给 `/api/assets/files`，未选目录时才允许上传到目录根并只出现在“全部目录”。
+- 资产详情必须提供现有资产重命名入口，调用真实 `/api/assets/{asset_id}` 更新资产 `name`，不能要求用户重新上传文件来改名。
+- 资产库不提供手工填写“文字资产名/文字内容”的创建入口；txt、Word 等文字资料按普通文件上传，后续由资产解析能力处理内容。
+- 资产标签过滤和标签新增/删除放在资产库抬头区域；删除标签必须调用真实 `/api/assets/tags/{tag_id}` 接口，且只允许删除未被资产贴过的空标签。
+- 资产详情只负责给当前资产贴标签和去标签，必须使用真实 `/api/assets/{asset_id}/tags` 接口；标签选择弹窗必须支持关键词过滤，且只能展示与当前资产 `scope/project_id` 兼容的标签，详情区不得提供新增、重命名或删除标签入口。
+- 资产详情里的预览、复制引用、下载、软删除必须使用统一的操作区和一致按钮样式，不要拆成多行风格不同的链接/按钮。
 
 ## 节点与控件规则
 
@@ -60,13 +68,14 @@
   - `controls/ImageChoiceThreeControl.tsx` 支持图片三选一的 `equal_grid`、`hero_list`、`hover_focus` 变体。
   - `controls/SchemaFormControl.tsx` 支持 `ui.input.schema_form.v1`，用于任务详情里的起始输入节点、普通等待输入节点，以及提交成功后的 readonly 参数快照展示。
   - `controls/SchemaFormControl.tsx` 会根据 JSON Schema 字段生成可读标签、placeholder 和 hover 提示；固定枚举字段三个及以内渲染为单选选项组，超过三个渲染为下拉框，不得退回普通文本输入。
-  - `ui.input.asset_image_picker.v1` 是 schema 表单内的字段级资产图片控件，负责资产库选择、本地上传到资产库后取 URL，并按字段 schema 写入字符串或 URL 数组。
+  - `ui.input.asset_image_picker.v1` 是 schema 表单内的字段级资产图片控件，负责资产库选择、本地上传到资产库后取 URL，并按字段 schema 写入字符串或 URL 数组；资产库页签必须提供项目选择弹窗，项目列表来自 `/api/projects` 并包含 `global` 与用户自建项目，确认项目后目录、标签和资产搜索使用同一项目上下文，项目上下文使用 `scope=combined&project_id=<selected>`，全局上下文使用 `scope=global`。
   - 每个控件有稳定 `control_id`。
   - 工作流或节点配置只引用控件 ID、variant、mode、bindings。
   - 控件输入输出必须匹配工作流 schema、节点 descriptor 和运行时交互 payload。
   - 新控件必须补测试，并在本文件记录用途、payload 约束和控件库预览 fixture。
 - 任务详情页的节点输入、输出通过 `ui/V2/src/node-ui/` 控件注册表解析；等待交互优先使用控件注册表，未声明交互控件时按节点输出 schema 使用页面级 fallback。
 - 节点输入和输出采用上下堆叠布局，不使用左右双栏；默认折叠输入和节点事件，只展开输出或错误区域，避免大输入、大输出节点横向溢出。
+- 节点可通过 `nodes[].ui.sections.<input|output|events>.default_open` 覆盖工作流级折叠默认值；需要用户直接填写输入的起始输入节点应在工作流配置中显式展开 input、折叠 output。
 - 顶部导航已有“控件库”页签，用于浏览可用控件、变体、能力标签、绑定要求和预览 fixture；每个 manifest 控件都必须能在该页直观看到节点中的展示样子，字段级控件可通过承载它的节点控件预览展示。
 - `system.user_choice.v1` 在没有工作流显式配置时使用 V2 默认三选一控件；工作流仍可通过 `nodes[].ui.controls.interaction` 改为首图大列表或 hover 放大变体。
 
@@ -84,7 +93,6 @@
 ```powershell
 npm run test
 npm run build
-npm run test:e2e
 ```
 
 涉及后端契约时，至少运行相关后端测试，例如：
@@ -93,9 +101,9 @@ npm run test:e2e
 python -m pytest tests/test_api_smoke.py tests/test_users_service.py tests/test_runtime_service.py -q
 ```
 
-最终验收必须用真实浏览器和真实后端完成一条主流程：注册/登录、确认当前项目为全局项目、创建任务、进入任务详情、确认页面没有用户不需要理解的 JSON。
+最终验收必须用 Codex 内部浏览器和真实后端完成一条主流程：注册/登录、确认当前项目为全局项目、创建任务、进入任务详情、确认页面没有用户不需要理解的 JSON。外部浏览器自动化 CLI、旧 e2e 脚本、直接 API 调用、数据库造数、localStorage 预置或截图检查只能作为辅助回归证据，不能替代内部浏览器真实交互验收。
 涉及工作流控件配置变更时，验收主流程必须创建新任务并验证该任务详情使用新的 workflow snapshot；如果使用历史任务验收，必须先说明并执行快照配置迁移，不能用旧控件代码兼容来替代配置生效验证。
-修改工作流 YAML 后，浏览器验收前必须确认后端已重新加载工作流目录；当前 WorkflowCatalog 在服务启动时加载，未重启/未重载的后端会继续为新任务生成旧 snapshot。
+修改工作流 YAML 后，Codex 内部浏览器验收前必须确认后端已重新加载工作流目录；当前 WorkflowCatalog 在服务启动时加载，未重启/未重载的后端会继续为新任务生成旧 snapshot。
 
 ## 维护要求
 
