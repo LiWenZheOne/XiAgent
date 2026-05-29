@@ -1,0 +1,4 @@
+=== F3.6: Grep for GeminiModelConfig|GeminiChatProvider in xiagent/ ===
+Command: Get-ChildItem -Path "xiagent" -Recurse -Filter "*.py" | Select-String -Pattern "GeminiModelConfig|GeminiChatProvider" -SimpleMatch
+
+Result: 0 matches found (no output). PASS.

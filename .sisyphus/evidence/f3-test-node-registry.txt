@@ -1,0 +1,22 @@
+=== F3.2: python -m pytest tests/test_node_registry.py -xvs ===
+Status: 10 PASSED
+Exit Code: 0
+
+Output:
+============================= test session starts =============================
+platform win32 -- Python 3.13.5, pytest-9.0.2, pluggy-1.6.0
+rootdir: E:\ai\XIAgent\XiAgent
+plugins: anyio-4.10.0, langsmith-0.4.15, asyncio-1.3.0
+
+tests/test_node_registry.py::test_register_and_get_node PASSED
+tests/test_node_registry.py::test_duplicate_node_ref_is_rejected PASSED
+tests/test_node_registry.py::test_registering_non_base_node_is_rejected PASSED
+tests/test_node_registry.py::test_list_returns_nodes_in_registration_order PASSED
+tests/test_node_registry.py::test_build_node_registry_registers_builtin_nodes PASSED
+tests/test_node_registry.py::test_build_node_registry_uses_settings_deepseek_model PASSED
+tests/test_node_registry.py::test_build_node_registry_uses_settings_runninghub_models PASSED
+tests/test_node_registry.py::test_node_context_asset_service_is_core_service_interface PASSED
+tests/test_node_registry.py::test_human_approval_returns_waiting_with_requested_inputs PASSED
+tests/test_node_registry.py::test_echo_tool_returns_inputs PASSED
+
+============================= 10 passed in 0.90s ==============================

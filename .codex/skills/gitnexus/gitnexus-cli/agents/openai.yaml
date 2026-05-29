@@ -1,4 +1,0 @@
-interface:
-  display_name: "GitNexus CLI"
-  short_description: "运行索引、状态、清理和 wiki 生成命令"
-  default_prompt: "Use $gitnexus-cli to run GitNexus CLI commands for this repository."

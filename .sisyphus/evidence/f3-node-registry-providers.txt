@@ -1,0 +1,14 @@
+=== F3.5: python -c "from xiagent.nodes import build_node_registry; from xiagent.infrastructure.config import load_settings; ... verify providers" ===
+Status: Verified via check_registry.py script
+
+GeminiVisionNode _provider: openai_compatible
+GeminiVisionNode _model: gemini-3-flash-preview
+
+Key AI node registrations:
+  ai.gemini_vision.v1: _provider=openai_compatible, _model=gemini-3-flash-preview
+  ai.deepseek_chat.v1: _provider=deepseek, _model=deepseek-v4-flash
+  ai.runninghub_image_to_image.v1: _provider=runninghub_image, _model=nano-banana2-gemini31flash/image-to-image-channel-low-price
+
+ChatModelRouter providers registered: ['openai_compatible']
+openai_compatible in providers: True
+Total nodes in registry: 22

@@ -1,4 +1,0 @@
-interface:
-  display_name: "GitNexus 使用指南"
-  short_description: "查询 GitNexus 工具、资源和图谱用法"
-  default_prompt: "Use $gitnexus-guide to explain the available GitNexus tools and workflows."

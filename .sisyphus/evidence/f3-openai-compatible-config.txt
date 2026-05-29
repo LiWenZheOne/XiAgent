@@ -1,0 +1,3 @@
+=== F3.3: python -c "from xiagent.models.types import OpenAICompatibleModelConfig; c = OpenAICompatibleModelConfig(); print('base_url:', c.base_url)" ===
+Status: Exit Code 0
+Output: base_url: https://api.vectorengine.cn

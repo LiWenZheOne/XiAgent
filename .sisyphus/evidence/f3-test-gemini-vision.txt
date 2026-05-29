@@ -1,0 +1,27 @@
+=== F3.1: python -m pytest tests/test_gemini_provider.py tests/test_gemini_vision_node.py -xvs ===
+Status: 15 PASSED
+Exit Code: 0
+
+Output:
+============================= test session starts =============================
+platform win32 -- Python 3.13.5, pytest-9.0.2, pluggy-1.6.0
+rootdir: E:\ai\XIAgent\XiAgent
+plugins: anyio-4.10.0, langsmith-0.4.15, asyncio-1.3.0
+
+tests/test_gemini_provider.py::test_gemini_provider_requires_api_key PASSED
+tests/test_gemini_provider.py::test_gemini_provider_sends_multimodal_messages PASSED
+tests/test_gemini_provider.py::test_gemini_provider_handles_api_error PASSED
+tests/test_gemini_provider.py::test_gemini_provider_client_factory_injection PASSED
+tests/test_gemini_vision_node.py::test_gemini_vision_node_rejects_empty_image_urls PASSED
+tests/test_gemini_vision_node.py::test_gemini_vision_node_rejects_empty_prompt PASSED
+tests/test_gemini_vision_node.py::test_gemini_vision_node_extracts_caption PASSED
+tests/test_gemini_vision_node.py::test_gemini_vision_node_handles_missing_caption PASSED
+tests/test_gemini_vision_node.py::test_gemini_vision_node_handles_api_timeout PASSED
+tests/test_gemini_vision_node.py::test_gemini_vision_node_max_attempts_retry PASSED
+tests/test_gemini_vision_node.py::test_gemini_vision_handles_malformed_xml PASSED
+tests/test_gemini_vision_node.py::test_gemini_vision_handles_empty_response PASSED
+tests/test_gemini_vision_node.py::test_gemini_vision_handles_no_tags_at_all PASSED
+tests/test_gemini_vision_node.py::test_gemini_vision_multiple_caption_tags PASSED
+tests/test_gemini_vision_node.py::test_gemini_vision_handles_safety_blocked_response PASSED
+
+============================= 15 passed in 0.66s ==============================

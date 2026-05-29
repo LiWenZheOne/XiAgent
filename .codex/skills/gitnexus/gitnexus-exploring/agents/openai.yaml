@@ -1,4 +1,0 @@
-interface:
-  display_name: "GitNexus 代码探索"
-  short_description: "探索架构、调用关系和执行流程"
-  default_prompt: "Use $gitnexus-exploring to understand how a part of this codebase works."
