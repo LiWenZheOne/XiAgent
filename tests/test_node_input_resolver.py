@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from xiagent.core.errors import ValidationError
@@ -52,6 +54,35 @@ def test_input_resolver_uses_submitted_user_inputs() -> None:
     )
 
     assert resolved == {"prompt": "雨夜城市", "style": "cinematic"}
+
+
+def test_input_resolver_renders_template_objects_as_valid_json() -> None:
+    resolved = resolve_node_inputs(
+        {
+            "prompt": {
+                "template": "Segments:\n{segments_json}",
+                "vars": {"segments_json": {"from": "$nodes.split.output.segments"}},
+            }
+        },
+        node_outputs={
+            "split": {
+                "segments": [
+                    {
+                        "index": 0,
+                        "text": "何涛说道：“这话也有道理。”",
+                    }
+                ]
+            }
+        },
+    )
+
+    rendered_json = resolved["prompt"].removeprefix("Segments:\n")
+    assert json.loads(rendered_json) == [
+        {
+            "index": 0,
+            "text": "何涛说道：“这话也有道理。”",
+        }
+    ]
 
 
 def test_input_resolver_requires_submitted_user_input() -> None:

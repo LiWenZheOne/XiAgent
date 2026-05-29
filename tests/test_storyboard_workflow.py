@@ -71,6 +71,7 @@ def test_storyboard_workflow_contract_is_serial_and_uses_expected_nodes(test_set
     assert nodes_by_id["split_script"]["inputs"]["script"] == {
         "from": "$nodes.collect_storyboard_input.output.script"
     }
+    assert nodes_by_id["split_script"]["inputs"]["max_segments"] == {"value": 1}
     assert nodes_by_id["describe_panels"]["inputs"]["prompt"]["vars"]["segments_context"] == {
         "from": "$nodes.assemble_context.output.context_string"
     }
@@ -78,6 +79,12 @@ def test_storyboard_workflow_contract_is_serial_and_uses_expected_nodes(test_set
         "type": "array",
         "minItems": 1,
         "items": {"type": "string", "minLength": 1},
+    }
+    assert nodes_by_id["collect_storyboard_input"]["ui"]["sections"]["input"] == {
+        "default_open": True
+    }
+    assert nodes_by_id["collect_storyboard_input"]["ui"]["sections"]["output"] == {
+        "default_open": False
     }
     assert nodes_by_id["assemble_prompt"]["inputs"]["image_urls"] == {
         "from": "$nodes.collect_assets.output.image_urls"
@@ -94,6 +101,7 @@ def test_storyboard_workflow_contract_is_serial_and_uses_expected_nodes(test_set
     assert nodes_by_id["generate_image"]["inputs"]["negative_prompt"] == {
         "from": "$nodes.assemble_prompt.output.negative_prompt"
     }
+    assert nodes_by_id["analyze_characters"]["inputs"]["max_attempts"] == {"value": 2}
     assert nodes_by_id["generate_image"]["inputs"]["poll_interval_seconds"] == {"value": 2}
     assert nodes_by_id["generate_image"]["inputs"]["poll_timeout_seconds"] == {"value": 720}
 

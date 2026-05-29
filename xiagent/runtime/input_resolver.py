@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from typing import Any
 
@@ -82,11 +83,13 @@ def resolve_input_spec(
                 details={"vars": variables},
             )
         resolved_vars = {
-            name: resolve_input_spec(
-                variable_spec,
-                input_name=name,
-                node_outputs=node_outputs,
-                user_input=user_input,
+            name: _format_template_value(
+                resolve_input_spec(
+                    variable_spec,
+                    input_name=name,
+                    node_outputs=node_outputs,
+                    user_input=user_input,
+                )
             )
             for name, variable_spec in variables.items()
         }
@@ -100,6 +103,12 @@ def resolve_input_spec(
             ) from exc
 
     _raise_invalid_reference(str(input_spec))
+
+
+def _format_template_value(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False, sort_keys=True)
 
 
 def resolve_path(

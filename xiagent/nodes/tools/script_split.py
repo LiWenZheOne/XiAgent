@@ -21,6 +21,7 @@ class ScriptSplitNode(BaseNode):
                 "type": "object",
                 "properties": {
                     "script": {"type": "string", "minLength": 1},
+                    "max_segments": {"type": "integer", "minimum": 1},
                 },
                 "required": ["script"],
                 "additionalProperties": False,
@@ -65,6 +66,20 @@ class ScriptSplitNode(BaseNode):
                 message="Script cannot be empty",
             )
 
+        max_segments = inputs.get("max_segments")
+        if (
+            max_segments is not None
+            and (
+                not isinstance(max_segments, int)
+                or isinstance(max_segments, bool)
+                or max_segments < 1
+            )
+        ):
+            raise ValidationError(
+                code="max_segments_invalid",
+                message="max_segments must be an integer greater than or equal to 1",
+            )
+
         segments: list[dict[str, Any]] = []
         for raw_part in re.split(r"(?:\r?\n){2,}", script):
             text = raw_part.strip()
@@ -96,6 +111,8 @@ class ScriptSplitNode(BaseNode):
                     "panel_count_max": panel_max,
                 }
             )
+            if max_segments is not None and len(segments) >= max_segments:
+                break
 
         return NodeResult(
             status="succeeded",

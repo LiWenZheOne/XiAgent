@@ -93,6 +93,18 @@ async def test_script_split_uses_blank_lines_for_unmarked_script(test_settings) 
     assert [segment["panel_hint"] for segment in result.output["segments"]] == ["1", "1", "1"]
 
 
+async def test_script_split_can_limit_segment_count(test_settings) -> None:
+    node = build_node_registry(test_settings).get("tool.script_split.v1")
+
+    result = await node.run(
+        ctx=None,
+        inputs={"script": "第一段\n\n第二段\n\n第三段", "max_segments": 1},
+    )
+
+    assert result.output["count"] == 1
+    assert [segment["text"] for segment in result.output["segments"]] == ["第一段"]
+
+
 async def test_storyboard_prompt_assembler_builds_prompt_and_defaults(test_settings) -> None:
     node = build_node_registry(test_settings).get("tool.storyboard_prompt_assembler.v1")
     image_urls = ["https://assets.test/character.png"]

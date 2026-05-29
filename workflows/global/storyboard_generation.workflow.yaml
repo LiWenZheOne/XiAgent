@@ -77,12 +77,19 @@ nodes:
           control_id: ui.input.schema_form.v1
           variant: default
           mode: input
+      sections:
+        input:
+          default_open: true
+        output:
+          default_open: false
 
   - id: split_script
     ref: tool.script_split.v1
     inputs:
       script:
         from: "$nodes.collect_storyboard_input.output.script"
+      max_segments:
+        value: 1
     outputs:
       type: object
       required: ["count", "segments"]
@@ -157,6 +164,8 @@ nodes:
             from: "$nodes.split_script.output.count"
           segments_json:
             from: "$nodes.split_script.output.segments"
+      max_attempts:
+        value: 2
     outputs:
       type: object
       required: ["segment_analyses"]
