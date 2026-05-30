@@ -120,7 +120,7 @@ runtime 不再支持 `system.workflow_input.v1`。工作流业务数据不得使
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **XiAgent** (5268 symbols, 10735 relationships, 276 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **XiAgent** (5907 symbols, 11988 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
