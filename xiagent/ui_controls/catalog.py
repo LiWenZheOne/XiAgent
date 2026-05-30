@@ -214,12 +214,39 @@ def build_builtin_ui_control_catalog() -> UiControlCatalog:
                                         "additionalProperties": True,
                                     },
                                 },
+                                "target_asset_key": {"type": "string"},
+                                "created_asset_ids": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                },
+                                "prompt_results": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "additionalProperties": True,
+                                    },
+                                },
                             },
                             "additionalProperties": True,
                         },
                     ),
                 ),
                 description="展示角色、地点、道具资产卡片，支持逐卡上传图片并只生成未上传资产。",
+            ),
+            UiControlDescriptor(
+                control_id="ui.display.asset_task_summary.v1",
+                version="1.0.0",
+                name="Asset Task Summary",
+                kind="output",
+                tags=("asset", "summary", "download", "zip", "readonly"),
+                variants=(
+                    UiControlVariant(
+                        name="catalog_complete",
+                        label="资产编目完成概况",
+                        modes=("readonly",),
+                    ),
+                ),
+                description="资产编目完成页只读概况控件，支持导出最终资产图像压缩包。",
             ),
             UiControlDescriptor(
                 control_id="ui.interaction.asset_summary_table.v1",

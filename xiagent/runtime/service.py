@@ -260,6 +260,74 @@ class SqliteRuntimeService:
             )
             raise
 
+    async def save_waiting_node_draft(
+        self,
+        *,
+        user_id: str,
+        project_id: str,
+        task_id: str,
+        node_id: str,
+        input: dict[str, Any],
+    ) -> TaskRecord:
+        await self._user_service.ensure_project_access(
+            user_id=user_id,
+            project_id=project_id,
+            action="task:resume",
+        )
+        task, _contract = await self._get_task_and_contract(task_id)
+        _ensure_task_belongs_to_project(task, user_id=user_id, project_id=project_id)
+        if task.status != "waiting":
+            raise ValidationError(
+                code="task_not_waiting",
+                message="Task is not waiting for draft input",
+                details={"task_id": task_id, "status": task.status},
+            )
+
+        waiting_execution = await self._get_waiting_execution(task_id, node_id)
+        current_input = (
+            dict(waiting_execution.input_snapshot)
+            if isinstance(waiting_execution.input_snapshot, dict)
+            else {}
+        )
+        draft_input = current_input | dict(input)
+        now = _utc_now()
+        async with connect_db(self._database_path) as db:
+            cursor = await db.execute(
+                """
+                update node_executions
+                set input_snapshot_json = ?, updated_at = ?
+                where task_id = ? and node_id = ? and status = 'waiting'
+                """,
+                (dump_json(draft_input), now, task_id, node_id),
+            )
+            if cursor.rowcount != 1:
+                await cursor.close()
+                raise ValidationError(
+                    code="node_not_waiting",
+                    message="Node is not waiting for draft input",
+                    details={"task_id": task_id, "node_id": node_id},
+                )
+            await cursor.close()
+            executions = await _fetch_node_executions(db, task_id)
+            current_view = build_current_view("waiting", executions)
+            await db.execute(
+                """
+                update tasks
+                set current_view_json = ?, updated_at = ?
+                where task_id = ?
+                """,
+                (dump_json(current_view), now, task_id),
+            )
+            await insert_event(
+                db,
+                task_id=task_id,
+                event_type="node_draft_saved",
+                payload={"node_id": node_id},
+                created_at=now,
+            )
+
+        return await self._get_task_by_id(task_id)
+
     async def list_node_executions(
         self,
         *,
@@ -342,6 +410,7 @@ class SqliteRuntimeService:
         project_id: str,
         task_id: str,
         node_id: str,
+        rerun_revision_note: str = "",
     ) -> TaskRecord:
         await self._user_service.ensure_project_access(
             user_id=user_id,
@@ -381,7 +450,7 @@ class SqliteRuntimeService:
                 db,
                 task_id=task_id,
                 event_type="node_rerun_started",
-                payload={"node_id": node_id},
+                payload=_rerun_started_payload(node_id=node_id, rerun_revision_note=rerun_revision_note),
                 created_at=now,
             )
             await insert_event(
@@ -593,13 +662,16 @@ class SqliteRuntimeService:
         input_schema: dict[str, Any],
         user_input: dict[str, Any],
     ) -> TaskRecord:
-        validate_json_value(input_schema, user_input)
+        validate_json_value(_resume_user_input_schema(input_schema, node_def.get("outputs", {})), user_input)
         node_outputs = await self._load_node_outputs(task.task_id)
         inputs = resolve_node_inputs(
             node_def.get("inputs", {}),
             node_outputs,
             user_input=user_input,
         )
+        for input_name in _declared_output_property_names(node_def.get("outputs", {})):
+            if input_name in user_input:
+                inputs[input_name] = user_input[input_name]
         now = _utc_now()
         async with connect_db(self._database_path) as db:
             await db.execute(
@@ -1149,6 +1221,31 @@ def _node_user_input_schema(
     }
 
 
+def _resume_user_input_schema(
+    input_schema: Mapping[str, Any],
+    output_schema: Any,
+) -> dict[str, Any]:
+    schema = dict(input_schema)
+    properties = dict(schema.get("properties", {})) if isinstance(schema.get("properties"), Mapping) else {}
+    output_properties = output_schema.get("properties") if isinstance(output_schema, Mapping) else None
+    if isinstance(output_properties, Mapping):
+        for name, output_property in output_properties.items():
+            if isinstance(name, str) and name not in properties and isinstance(output_property, Mapping):
+                properties[name] = dict(output_property)
+    schema["properties"] = properties
+    schema["additionalProperties"] = False
+    return schema
+
+
+def _declared_output_property_names(output_schema: Any) -> list[str]:
+    if not isinstance(output_schema, Mapping):
+        return []
+    properties = output_schema.get("properties")
+    if not isinstance(properties, Mapping):
+        return []
+    return [name for name in properties if isinstance(name, str)]
+
+
 def _resolve_non_user_node_inputs(
     input_specs: Any,
     node_outputs: dict[str, dict[str, Any]],
@@ -1317,6 +1414,14 @@ def _downstream_node_ids(contract: dict[str, Any], node_id: str) -> set[str]:
             downstream.add(next_node_id)
             stack.append(next_node_id)
     return downstream
+
+
+def _rerun_started_payload(*, node_id: str, rerun_revision_note: str) -> dict[str, str]:
+    payload = {"node_id": node_id}
+    clean_revision_note = rerun_revision_note.strip()
+    if clean_revision_note:
+        payload["rerun_revision_note"] = clean_revision_note
+    return payload
 
 
 def _loads_contract(value: str) -> dict[str, Any]:

@@ -40,8 +40,19 @@ class ParallelDeepSeekStructuredJsonNode(BaseNode):
                 "type": "object",
                 "properties": {
                     "items": {
-                        "type": "array",
-                        "items": {"type": "object"},
+                        "oneOf": [
+                            {
+                                "type": "array",
+                                "items": {"type": "object"},
+                            },
+                            {
+                                "type": "object",
+                                "additionalProperties": {
+                                    "type": "array",
+                                    "items": {"type": "object"},
+                                },
+                            },
+                        ],
                     },
                     "system": {"type": "string"},
                     "prompt_template": {"type": "string", "minLength": 1},
@@ -65,11 +76,11 @@ class ParallelDeepSeekStructuredJsonNode(BaseNode):
         )
 
     async def run(self, ctx: NodeContext | None, inputs: Mapping[str, Any]) -> NodeResult:
-        items = inputs.get("items")
-        if not isinstance(items, list) or len(items) == 0:
+        items = _normalise_items(inputs.get("items"))
+        if not items:
             raise ValidationError(
                 code="parallel_llm_items_required",
-                message="items must be a non-empty array",
+                message="items must be a non-empty array or an object containing non-empty arrays",
             )
 
         prompt_template = inputs.get("prompt_template")
@@ -162,3 +173,26 @@ class ParallelDeepSeekStructuredJsonNode(BaseNode):
             status="succeeded",
             output={"results": list(results)},
         )
+
+
+def _normalise_items(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, dict)]
+
+    if not isinstance(value, Mapping):
+        return []
+
+    ordered_keys = ["characters", "assets", "props"]
+    remaining_keys = [key for key in value.keys() if key not in ordered_keys]
+    items: list[dict[str, Any]] = []
+    for key in [*ordered_keys, *remaining_keys]:
+        group = value.get(key)
+        if not isinstance(group, list):
+            continue
+        for item in group:
+            if not isinstance(item, dict):
+                continue
+            normalised = dict(item)
+            normalised.setdefault("_source_collection", key)
+            items.append(normalised)
+    return items

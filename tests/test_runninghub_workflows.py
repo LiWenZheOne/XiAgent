@@ -85,8 +85,8 @@ async def test_runninghub_image_to_image_workflow_runs_with_user_level_input(
     result = await runner.run_workflow_file(
         Path("workflows/global/runninghub_image_to_image_test.workflow.yaml"),
         input_data={
-            "image_urls": [
-                "https://www.runninghub.cn/view?filename=174ba2c54b8af1fdd5a01370049dd6407a693d8b05b4717079698e87680e038e.png"
+            "image_refs": [
+                {"kind": "data_uri", "data": "data:image/png;base64,aW1hZ2UtYnl0ZXM="}
             ],
             "prompt": (
                 "Transform this sketch into a detailed, full-color illustration in the "
@@ -107,9 +107,7 @@ async def test_runninghub_image_to_image_workflow_runs_with_user_level_input(
     ]
     assert router.requests[0].provider == "runninghub_image"
     assert router.requests[0].metadata == {
-        "image_urls": [
-            "https://www.runninghub.cn/view?filename=174ba2c54b8af1fdd5a01370049dd6407a693d8b05b4717079698e87680e038e.png"
-        ],
+        "images": ["data:image/png;base64,aW1hZ2UtYnl0ZXM="],
         "aspect_ratio": "9:16",
         "resolution": "1k",
     }
@@ -279,7 +277,7 @@ async def test_v1_node_still_works() -> None:
         None,
         {
             "prompt": "Transform this sketch into Ming Dynasty ink-wash Wuxia.",
-            "image_urls": ["https://runninghub.test/input.png"],
+            "image_refs": [{"kind": "data_uri", "data": "data:image/png;base64,aW1hZ2UtYnl0ZXM="}],
             "aspect_ratio": "9:16",
             "resolution": "1k",
         },
@@ -294,7 +292,7 @@ async def test_v1_node_still_works() -> None:
     assert router.requests[0].provider == "runninghub_image"
     # V1 input/output schema unchanged
     assert router.requests[0].metadata == {
-        "image_urls": ["https://runninghub.test/input.png"],
+        "images": ["data:image/png;base64,aW1hZ2UtYnl0ZXM="],
         "aspect_ratio": "9:16",
         "resolution": "1k",
     }

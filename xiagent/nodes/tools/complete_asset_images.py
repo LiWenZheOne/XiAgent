@@ -31,6 +31,7 @@ class CompleteAssetImagesNode(BaseNode):
                         "type": "array",
                         "items": {"type": "object", "additionalProperties": True},
                     },
+                    "target_asset_key": {"type": "string"},
                 },
                 "additionalProperties": True,
             },
@@ -52,6 +53,7 @@ class CompleteAssetImagesNode(BaseNode):
         prompt_results = _dict_list(inputs.get("prompt_results"))
         manual_images = _manual_images(inputs.get("manual_images"), prompt_results)
         auto_images = _dict_list(inputs.get("auto_images"))
+        target_asset_key = _optional_text(inputs.get("target_asset_key"))
         uploaded_keys = {
             key
             for image in manual_images
@@ -59,11 +61,18 @@ class CompleteAssetImagesNode(BaseNode):
         }
         uploaded_keys.discard("")
         uploaded_count = len(uploaded_keys) if uploaded_keys else len(manual_images)
-        missing_prompt_results = [
-            item
-            for index, item in enumerate(prompt_results)
-            if not _prompt_has_image(item, index, uploaded_keys, uploaded_count)
-        ]
+        if target_asset_key:
+            missing_prompt_results = [
+                item
+                for item in prompt_results
+                if _prompt_matches_target(item, target_asset_key)
+            ]
+        else:
+            missing_prompt_results = [
+                item
+                for index, item in enumerate(prompt_results)
+                if not _prompt_has_image(item, index, uploaded_keys, uploaded_count)
+            ]
         requested_generation = inputs.get("decision") == "generate_missing"
         next_action = "generate_missing" if requested_generation and missing_prompt_results else "finish"
 
@@ -121,11 +130,36 @@ def _asset_keys(image: Mapping[str, Any]) -> set[str]:
     return keys
 
 
-def _prompt_key(prompt: Mapping[str, Any]) -> str:
+def _optional_text(value: Any) -> str | None:
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _prompt_keys(prompt: Mapping[str, Any]) -> set[str]:
+    keys: set[str] = set()
     for key in ("asset_key", "full_name", "name"):
         value = prompt.get(key)
         if isinstance(value, str) and value.strip():
-            return value.strip()
+            keys.add(value.strip())
+    asset_type = prompt.get("asset_type")
+    name = prompt.get("full_name") or prompt.get("name")
+    if isinstance(asset_type, str) and asset_type.strip() and isinstance(name, str) and name.strip():
+        keys.add(f"{asset_type.strip()}:{name.strip()}")
+    return keys
+
+
+def _prompt_matches_target(prompt: Mapping[str, Any], target_asset_key: str) -> bool:
+    target = target_asset_key.strip()
+    if not target:
+        return False
+    for key in _prompt_keys(prompt):
+        if key == target or key.startswith(f"{target}_") or key.endswith(f":{target}"):
+            return True
+    return False
+
+
+def _prompt_key(prompt: Mapping[str, Any]) -> str:
+    for key in _prompt_keys(prompt):
+        return key
     return ""
 
 

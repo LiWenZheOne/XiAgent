@@ -14,6 +14,7 @@ def test_builtin_ui_controls_have_unique_ids() -> None:
     assert len({control.control_id for control in controls}) == len(controls)
     assert "ui.choice.image_three.v1" in {control.control_id for control in controls}
     assert "ui.display.image_viewer.v1" in {control.control_id for control in controls}
+    assert "ui.display.asset_task_summary.v1" in {control.control_id for control in controls}
     assert "ui.input.schema_form.v1" in {control.control_id for control in controls}
     assert "ui.input.asset_image_picker.v1" in {control.control_id for control in controls}
 

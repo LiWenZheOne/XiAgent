@@ -7,6 +7,7 @@ import pytest
 from xiagent.core.errors import ValidationError
 from xiagent.infrastructure.migrations import migrate
 from xiagent.nodes.registry import NodeRegistry
+from xiagent.nodes.system.human_approval import HumanApprovalNode
 from xiagent.nodes.tools.echo_tool import EchoToolNode
 from xiagent.runtime.service import SqliteRuntimeService
 from xiagent.users.service import SqliteUserService
@@ -134,6 +135,114 @@ async def test_invalid_node_user_input_keeps_task_waiting(test_settings) -> None
     assert executions[0].status == "waiting"
     assert executions[0].input_snapshot == {}
     assert executions[0].output_snapshot == {}
+
+
+@pytest.mark.asyncio
+async def test_waiting_interaction_accepts_declared_output_payload_overrides(test_settings) -> None:
+    runtime, user_id, project_id = await _runtime(test_settings)
+    runtime._node_registry.register(HumanApprovalNode())
+    contract = {
+        "workflow": {
+            "id": "approval-with-editable-output",
+            "version": "1.0.0",
+            "scope": "global",
+            "name": "Approval With Editable Output",
+            "input_schema": {"type": "object", "additionalProperties": False},
+        },
+        "nodes": [
+            {
+                "id": "review",
+                "ref": "system.human_approval.v1",
+                "inputs": {
+                    "prompt_results": {"value": [{"full_name": "林冲", "prompt": "原提示词"}]},
+                    "decision": {
+                        "from_user": True,
+                        "schema": {"type": "string", "enum": ["finish", "generate_missing"]},
+                    },
+                    "asset_images": {
+                        "from_user": True,
+                        "schema": {
+                            "type": "array",
+                            "items": {"type": "object", "additionalProperties": True},
+                        },
+                    },
+                    "target_asset_key": {"value": ""},
+                },
+                "outputs": {
+                    "type": "object",
+                    "required": ["decision", "asset_images"],
+                    "properties": {
+                        "decision": {"type": "string"},
+                        "asset_images": {
+                            "type": "array",
+                            "items": {"type": "object", "additionalProperties": True},
+                        },
+                        "prompt_results": {
+                            "type": "array",
+                            "items": {"type": "object", "additionalProperties": True},
+                        },
+                        "target_asset_key": {"type": "string"},
+                    },
+                    "additionalProperties": True,
+                },
+            }
+        ],
+        "edges": [{"from": "START", "to": "review"}, {"from": "review", "to": "END"}],
+    }
+
+    task = await runtime.create_task_from_contract(
+        user_id=user_id,
+        project_id=project_id,
+        contract=contract,
+        input_data={},
+    )
+
+    assert task.status == "waiting"
+    resumed = await runtime.resume_task(
+        user_id=user_id,
+        project_id=project_id,
+        task_id=task.task_id,
+        node_id="review",
+        input={
+            "decision": "generate_missing",
+            "asset_images": [],
+            "prompt_results": [{"full_name": "林冲", "prompt": "编辑后提示词"}],
+            "target_asset_key": "林冲",
+        },
+    )
+
+    assert resumed.status == "succeeded"
+    executions = await runtime.list_node_executions(
+        user_id=user_id,
+        project_id=project_id,
+        task_id=task.task_id,
+    )
+    assert executions[0].output_snapshot["prompt_results"] == [
+        {"full_name": "林冲", "prompt": "编辑后提示词"}
+    ]
+    assert executions[0].output_snapshot["target_asset_key"] == "林冲"
+
+
+@pytest.mark.asyncio
+async def test_waiting_interaction_rejects_undeclared_extra_payload(test_settings) -> None:
+    runtime, user_id, project_id = await _runtime(test_settings)
+    task = await runtime.create_task_from_contract(
+        user_id=user_id,
+        project_id=project_id,
+        contract=_user_input_echo_contract(),
+        input_data={},
+    )
+
+    with pytest.raises(ValidationError) as exc_info:
+        await runtime.resume_task(
+            user_id=user_id,
+            project_id=project_id,
+            task_id=task.task_id,
+            node_id="echo",
+            input={"topic": "雨夜城市", "unexpected": True},
+        )
+
+    assert exc_info.value.code == "json_value_validation_failed"
 
 
 async def _runtime(test_settings) -> tuple[SqliteRuntimeService, str, str]:

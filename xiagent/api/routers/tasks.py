@@ -31,10 +31,20 @@ class ResumeTaskRequest(BaseModel):
     input: dict[str, Any]
 
 
+class DraftInteractionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_id: str
+    node_id: str
+    input: dict[str, Any]
+
+
 class RerunNodeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     project_id: str
+    rerun_notice: str = ""
+    rerun_revision_note: str = ""
 
 
 @router.post("")
@@ -181,6 +191,23 @@ async def create_task_interaction(
     return asdict(task)
 
 
+@router.put("/{task_id}/interactions/draft")
+async def save_task_interaction_draft(
+    task_id: str,
+    request: DraftInteractionRequest,
+    services: Annotated[ApiServices, Depends(get_services)],
+    current_user: Annotated[UserRecord, Depends(get_current_user)],
+) -> dict:
+    task = await services.runtime.save_waiting_node_draft(
+        user_id=current_user.user_id,
+        project_id=request.project_id,
+        task_id=task_id,
+        node_id=request.node_id,
+        input=request.input,
+    )
+    return asdict(task)
+
+
 @router.post("/{task_id}/nodes/{node_id}/rerun")
 async def rerun_task_node(
     task_id: str,
@@ -194,6 +221,7 @@ async def rerun_task_node(
         project_id=request.project_id,
         task_id=task_id,
         node_id=node_id,
+        rerun_revision_note=request.rerun_revision_note or request.rerun_notice,
     )
     return asdict(task)
 

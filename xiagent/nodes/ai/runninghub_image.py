@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from typing import Any
 
 from xiagent.core.errors import ValidationError
 from xiagent.models import ChatMessage, ChatModelRouter, ChatRequest, ChatResponse
+from xiagent.nodes.ai.image_references import (
+    image_ref_schema,
+    image_refs_schema,
+    resolve_image_ref,
+    resolve_image_refs,
+)
 from xiagent.nodes.base import BaseNode, NodeContext, NodeDescriptor, NodeResult
 
 _OUTPUT_SCHEMA = {
@@ -75,6 +82,7 @@ class _RunningHubImageNodeBase(BaseNode):
     async def run(self, ctx: NodeContext | None, inputs: Mapping[str, Any]) -> NodeResult:
         prompt = _required_text(inputs, "prompt", "runninghub_prompt_required")
         metadata = self._metadata(inputs)
+        metadata = await _metadata_with_resolved_images(ctx, metadata)
         response = await self._model_router.chat(
             ChatRequest(
                 provider=self._provider,
@@ -116,25 +124,20 @@ class RunningHubImageToImageNode(_RunningHubImageNodeBase):
         "type": "object",
         "properties": {
             "prompt": {"type": "string", "minLength": 1},
-            "image_urls": {
-                "type": "array",
-                "items": {"type": "string", "minLength": 1},
-                "minItems": 1,
-            },
-            "image_url": {"type": "string", "minLength": 1},
+            "image_refs": image_refs_schema(),
             "aspect_ratio": {"type": "string", "minLength": 1},
             "aspectRatio": {"type": "string", "minLength": 1},
             "resolution": {"type": "string", "minLength": 1},
             "poll_interval_seconds": {"type": "number", "minimum": 0},
             "poll_timeout_seconds": {"type": "number", "minimum": 0},
         },
-        "required": ["prompt", "image_urls"],
+        "required": ["prompt", "image_refs"],
         "additionalProperties": False,
     }
 
     def _metadata(self, inputs: Mapping[str, Any]) -> dict[str, Any]:
         metadata = super()._metadata(inputs)
-        metadata["image_urls"] = _image_urls(inputs)
+        metadata["image_refs"] = _image_refs(inputs)
         return metadata
 
 
@@ -152,15 +155,17 @@ class RunningHubImageToImageNodeV2(BaseNode):
                     "properties": {
                         "full_name": {"type": "string", "minLength": 1},
                         "prompt": {"type": "string", "minLength": 1},
-                        "reference_image_url": {"type": "string", "minLength": 1},
+                        "reference_image_ref": image_ref_schema(),
                     },
-                    "required": ["full_name", "prompt", "reference_image_url"],
+                    "required": ["full_name", "prompt", "reference_image_ref"],
                     "additionalProperties": False,
                 },
                 "minItems": 1,
             },
             "aspect_ratio": {"type": "string", "minLength": 1},
             "aspectRatio": {"type": "string", "minLength": 1},
+            "prompt_prefix": {"type": "string"},
+            "prompt_suffix": {"type": "string"},
             "resolution": {"type": "string", "minLength": 1},
             "poll_interval_seconds": {"type": "number", "minimum": 0},
             "poll_timeout_seconds": {"type": "number", "minimum": 0},
@@ -197,17 +202,17 @@ class RunningHubImageToImageNodeV2(BaseNode):
         prompt_results = _required_prompt_results(inputs)
         metadata_base = self._metadata(inputs)
 
-        asset_images: list[dict[str, Any]] = []
-        for item in prompt_results:
+        async def generate_one(item: Mapping[str, Any]) -> dict[str, Any]:
             full_name = _required_text(item, "full_name", "runninghub_full_name_required")
-            prompt = _required_text(item, "prompt", "runninghub_prompt_required")
-            reference_image_url = _required_text(
-                item, "reference_image_url", "runninghub_reference_image_url_required"
+            prompt = _image_to_image_prompt(
+                _required_text(item, "prompt", "runninghub_prompt_required"),
+                inputs,
             )
+            reference_image_ref = item.get("reference_image_ref")
 
             char_metadata = dict(metadata_base)
-            char_metadata["reference_image_url"] = reference_image_url
-            char_metadata["image_urls"] = [reference_image_url]
+            char_metadata["reference_image_ref"] = reference_image_ref
+            char_metadata["images"] = [await resolve_image_ref(ctx, reference_image_ref)]
 
             response = await self._model_router.chat(
                 ChatRequest(
@@ -233,11 +238,13 @@ class RunningHubImageToImageNodeV2(BaseNode):
             if isinstance(asset_id, str):
                 asset_result["asset_id"] = asset_id
 
-            asset_images.append(asset_result)
+            return asset_result
+
+        asset_images = await asyncio.gather(*(generate_one(item) for item in prompt_results))
 
         return NodeResult(
             status="succeeded",
-            output={"asset_images": asset_images},
+            output={"asset_images": list(asset_images)},
         )
 
     def _metadata(self, inputs: Mapping[str, Any]) -> dict[str, Any]:
@@ -257,6 +264,26 @@ class RunningHubImageToImageNodeV2(BaseNode):
         if poll_timeout_seconds is not None:
             metadata["poll_timeout_seconds"] = poll_timeout_seconds
         return metadata
+
+
+def _image_to_image_prompt(prompt: str, inputs: Mapping[str, Any]) -> str:
+    prefix = _optional_text(inputs, "prompt_prefix") or ""
+    suffix = _optional_text(inputs, "prompt_suffix") or ""
+    body = f"{prefix.strip()}{prompt.strip()}" if prefix else prompt.strip()
+    return f"{body}，{suffix.strip()}" if suffix else body
+
+
+async def _metadata_with_resolved_images(
+    ctx: NodeContext | None,
+    metadata: dict[str, Any],
+) -> dict[str, Any]:
+    image_refs = metadata.get("image_refs")
+    if image_refs is None:
+        return metadata
+    resolved = dict(metadata)
+    resolved.pop("image_refs", None)
+    resolved["images"] = await resolve_image_refs(ctx, image_refs)
+    return resolved
 
 
 class RunningHubTextToImageNode(_RunningHubImageNodeBase):
@@ -298,23 +325,6 @@ def _optional_number(inputs: Mapping[str, Any], key: str) -> int | float | None:
     if isinstance(value, bool):
         return None
     return value if isinstance(value, int | float) else None
-
-
-def _image_urls(inputs: Mapping[str, Any]) -> list[str]:
-    value = inputs.get("image_urls", inputs.get("imageUrls"))
-    if isinstance(value, str) and value.strip():
-        return [value]
-    if isinstance(value, list):
-        image_urls = [item for item in value if isinstance(item, str) and item.strip()]
-        if image_urls:
-            return image_urls
-    image_url = _optional_text(inputs, "image_url")
-    if image_url is not None:
-        return [image_url]
-    raise ValidationError(
-        code="runninghub_image_urls_required",
-        message="RunningHub image-to-image requires at least one image URL",
-    )
 
 
 def _response_output(response: ChatResponse) -> dict[str, Any]:
@@ -370,6 +380,16 @@ def _required_prompt_results(inputs: Mapping[str, Any]) -> list[Mapping[str, Any
             message="prompt_results must be a non-empty array",
         )
     return value
+
+
+def _image_refs(inputs: Mapping[str, Any]) -> list[Any]:
+    value = inputs.get("image_refs")
+    if isinstance(value, list) and value:
+        return value
+    raise ValidationError(
+        code="image_refs_required",
+        message="RunningHub image-to-image requires at least one image reference",
+    )
 
 
 class RunningHubImageToImageNodeV3(BaseNode):

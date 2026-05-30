@@ -11,6 +11,7 @@ from xiagent.nodes.system.user_choice import SystemUserChoiceNode
 from xiagent.nodes.tools.echo_tool import EchoToolNode
 from xiagent.nodes.tools.complete_asset_images import CompleteAssetImagesNode
 from xiagent.nodes.tools.enrich_characters import EnrichCharactersNode
+from xiagent.nodes.tools.filter_assets_for_generation import FilterAssetsForGenerationNode
 
 
 def test_register_and_get_node() -> None:
@@ -61,6 +62,7 @@ def test_build_node_registry_registers_builtin_nodes(test_settings) -> None:
         "tool.asset_lookup.v1",
         "tool.create_text_asset.v1",
         "tool.enrich_characters.v1",
+        "tool.filter_assets_for_generation.v1",
         "tool.extract_panel_image_urls.v1",
         "tool.runninghub_workflow_images.v1",
         "tool.storyboard_prompt_assembler.v1",
@@ -68,6 +70,7 @@ def test_build_node_registry_registers_builtin_nodes(test_settings) -> None:
         "ai.assign_assets_to_segments.v1",
         "ai.deepseek_chat.v1",
         "ai.deepseek_structured_json.v1",
+        "ai.asset_draft_from_description.v1",
         "ai.parallel_deepseek_structured_json.v1",
         "ai.runninghub_image_to_image.v1",
         "ai.runninghub_image_to_image.v2",
@@ -79,6 +82,46 @@ def test_build_node_registry_registers_builtin_nodes(test_settings) -> None:
     }
 
 
+async def test_filter_assets_for_generation_removes_existing_assets() -> None:
+    node = FilterAssetsForGenerationNode()
+
+    result = await node.run(
+        None,
+        {
+            "approved_assets": {
+                "characters": [
+                    {
+                        "type": "character",
+                        "name": "林冲",
+                        "matched": True,
+                        "matched_asset_id": "asset-linchong",
+                        "matched_asset_name": "林冲",
+                    },
+                    {
+                        "type": "character",
+                        "name": "鲁智深",
+                        "matched": False,
+                        "matched_asset_id": None,
+                        "matched_asset_name": "",
+                    },
+                ],
+                "assets": [
+                    {"type": "asset", "name": "野猪林", "matched": True, "matched_asset_name": "野猪林"},
+                    {"type": "asset", "name": "山神庙", "matched": False},
+                ],
+                "props": [
+                    {"type": "prop", "name": "水火棍", "matched": False},
+                ],
+            }
+        },
+    )
+
+    assert result.output["asset_count"] == 3
+    assert [item["name"] for item in result.output["approved_assets"]["characters"]] == ["鲁智深"]
+    assert [item["name"] for item in result.output["approved_assets"]["assets"]] == ["山神庙"]
+    assert [item["name"] for item in result.output["approved_assets"]["props"]] == ["水火棍"]
+
+
 async def test_complete_asset_images_prepares_only_missing_prompts() -> None:
     node = CompleteAssetImagesNode()
 
@@ -87,8 +130,8 @@ async def test_complete_asset_images_prepares_only_missing_prompts() -> None:
         {
             "decision": "generate_missing",
             "prompt_results": [
-                {"full_name": "林冲", "prompt": "生成林冲", "reference_image_url": "https://cdn.test/template.png"},
-                {"full_name": "鲁智深", "prompt": "生成鲁智深", "reference_image_url": "https://cdn.test/template.png"},
+                {"full_name": "林冲", "prompt": "生成林冲", "reference_image_ref": {"kind": "asset", "asset_id": "template", "role": "reference"}},
+                {"full_name": "鲁智深", "prompt": "生成鲁智深", "reference_image_ref": {"kind": "asset", "asset_id": "template", "role": "reference"}},
             ],
             "manual_images": ["https://cdn.test/linchong.png"],
         },
@@ -104,7 +147,7 @@ async def test_complete_asset_images_prepares_only_missing_prompts() -> None:
         }
     ]
     assert result.output["missing_prompt_results"] == [
-        {"full_name": "鲁智深", "prompt": "生成鲁智深", "reference_image_url": "https://cdn.test/template.png"}
+        {"full_name": "鲁智深", "prompt": "生成鲁智深", "reference_image_ref": {"kind": "asset", "asset_id": "template", "role": "reference"}}
     ]
 
 
@@ -116,8 +159,8 @@ async def test_complete_asset_images_matches_uploaded_cards_by_asset_key() -> No
         {
             "decision": "generate_missing",
             "prompt_results": [
-                {"full_name": "林冲", "prompt": "生成林冲", "reference_image_url": "https://cdn.test/template.png"},
-                {"full_name": "鲁智深", "prompt": "生成鲁智深", "reference_image_url": "https://cdn.test/template.png"},
+                {"full_name": "林冲", "prompt": "生成林冲", "reference_image_ref": {"kind": "asset", "asset_id": "template", "role": "reference"}},
+                {"full_name": "鲁智深", "prompt": "生成鲁智深", "reference_image_ref": {"kind": "asset", "asset_id": "template", "role": "reference"}},
             ],
             "manual_images": [
                 {
@@ -134,7 +177,7 @@ async def test_complete_asset_images_matches_uploaded_cards_by_asset_key() -> No
     assert result.output["next_action"] == "generate_missing"
     assert result.output["missing_count"] == 1
     assert result.output["missing_prompt_results"] == [
-        {"full_name": "林冲", "prompt": "生成林冲", "reference_image_url": "https://cdn.test/template.png"}
+        {"full_name": "林冲", "prompt": "生成林冲", "reference_image_ref": {"kind": "asset", "asset_id": "template", "role": "reference"}}
     ]
 
 
@@ -146,7 +189,7 @@ async def test_complete_asset_images_matches_prefixed_asset_key_by_full_name() -
         {
             "decision": "generate_missing",
             "prompt_results": [
-                {"full_name": "花枪", "prompt": "生成花枪", "reference_image_url": "https://cdn.test/prop-ref.png"},
+                {"full_name": "花枪", "prompt": "生成花枪", "reference_image_ref": {"kind": "asset", "asset_id": "prop-ref", "role": "reference"}},
             ],
             "manual_images": [
                 {
@@ -165,7 +208,39 @@ async def test_complete_asset_images_matches_prefixed_asset_key_by_full_name() -
     assert result.output["missing_prompt_results"] == []
 
 
-async def test_enrich_characters_carries_matched_asset_image_url() -> None:
+async def test_complete_asset_images_targets_single_card_for_regeneration() -> None:
+    node = CompleteAssetImagesNode()
+
+    result = await node.run(
+        None,
+        {
+            "decision": "generate_missing",
+            "target_asset_key": "鲁智深",
+            "prompt_results": [
+                {"full_name": "林冲", "prompt": "生成林冲", "reference_image_ref": {"kind": "asset", "asset_id": "template", "role": "reference"}},
+                {"full_name": "鲁智深_僧衣", "prompt": "生成鲁智深僧衣", "reference_image_ref": {"kind": "asset", "asset_id": "template", "role": "reference"}},
+                {"full_name": "水火棍", "prompt": "生成水火棍", "reference_image_ref": {"kind": "asset", "asset_id": "template", "role": "reference"}},
+            ],
+            "manual_images": [
+                {
+                    "asset_type": "character",
+                    "asset_key": "林冲",
+                    "full_name": "林冲",
+                    "image_url": "https://cdn.test/linchong.png",
+                    "source": "manual_upload",
+                }
+            ],
+        },
+    )
+
+    assert result.output["next_action"] == "generate_missing"
+    assert result.output["missing_count"] == 1
+    assert result.output["missing_prompt_results"] == [
+        {"full_name": "鲁智深_僧衣", "prompt": "生成鲁智深僧衣", "reference_image_ref": {"kind": "asset", "asset_id": "template", "role": "reference"}}
+    ]
+
+
+async def test_enrich_characters_carries_matched_asset_ref() -> None:
     node = EnrichCharactersNode()
 
     result = await node.run(
@@ -176,13 +251,22 @@ async def test_enrich_characters_carries_matched_asset_image_url() -> None:
                 {
                     "asset_id": "asset_prop_1",
                     "name": "花枪",
-                    "metadata": {"public_url": "https://cdn.test/huagang-ref.png"},
+                    "metadata": {
+                        "public_url": "https://cdn.test/huagang-ref.png",
+                        "appearance_description": "一杆银亮花枪，红缨醒目，枪身细长。",
+                    },
                 }
             ],
         },
     )
 
-    assert result.output["characters"][0]["matched_asset_image_url"] == "https://cdn.test/huagang-ref.png"
+    assert result.output["characters"][0]["matched_asset_ref"] == {
+        "kind": "asset",
+        "asset_id": "asset_prop_1",
+        "role": "reference",
+    }
+    assert result.output["characters"][0]["matched_asset_appearance_description"] == "一杆银亮花枪，红缨醒目，枪身细长。"
+    assert result.output["characters"][0]["reference_appearance_description"] == "一杆银亮花枪，红缨醒目，枪身细长。"
 
 
 async def test_complete_asset_images_merges_manual_and_generated_images() -> None:

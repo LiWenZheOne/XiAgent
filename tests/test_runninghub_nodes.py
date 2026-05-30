@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -130,7 +131,7 @@ async def test_image_to_image_node_converts_inputs_to_chat_request_and_calls_rou
         ctx=None,
         inputs={
             "prompt": "Transform this sketch into Ming Dynasty ink-wash Wuxia.",
-            "image_urls": ["https://runninghub.test/input.png"],
+            "image_refs": [{"kind": "data_uri", "data": "data:image/png;base64,aW1hZ2UtYnl0ZXM="}],
             "aspect_ratio": "9:16",
             "resolution": "1k",
             "poll_interval_seconds": 0,
@@ -147,7 +148,7 @@ async def test_image_to_image_node_converts_inputs_to_chat_request_and_calls_rou
         ("user", "Transform this sketch into Ming Dynasty ink-wash Wuxia.")
     ]
     assert request.metadata == {
-        "image_urls": ["https://runninghub.test/input.png"],
+        "images": ["data:image/png;base64,aW1hZ2UtYnl0ZXM="],
         "aspect_ratio": "9:16",
         "resolution": "1k",
         "poll_interval_seconds": 0,
@@ -165,7 +166,7 @@ async def test_image_to_image_node_converts_inputs_to_chat_request_and_calls_rou
     assert result.metadata["provider"] == "runninghub_image"
 
 
-async def test_image_to_image_node_accepts_single_image_url_alias() -> None:
+async def test_image_to_image_node_resolves_image_refs() -> None:
     RunningHubImageToImageNode, _ = _node_classes()
     router = FakeRouter()
     node = RunningHubImageToImageNode(
@@ -178,11 +179,11 @@ async def test_image_to_image_node_accepts_single_image_url_alias() -> None:
         ctx=None,
         inputs={
             "prompt": "colorize",
-            "image_url": "https://runninghub.test/input.png",
+            "image_refs": [{"kind": "data_uri", "data": "data:image/png;base64,aW1hZ2UtYnl0ZXM="}],
         },
     )
 
-    assert router.requests[0].metadata["image_urls"] == ["https://runninghub.test/input.png"]
+    assert router.requests[0].metadata["images"] == ["data:image/png;base64,aW1hZ2UtYnl0ZXM="]
 
 
 async def test_text_to_image_node_converts_inputs_to_chat_request_and_calls_router() -> None:
@@ -221,6 +222,128 @@ async def test_text_to_image_node_converts_inputs_to_chat_request_and_calls_rout
     assert result.output["results"] == [{"url": "https://cdn.runninghub.test/output.png"}]
 
 
+async def test_image_to_image_v2_wraps_prompt_with_fixed_prefix_and_suffix() -> None:
+    from xiagent.nodes.ai.runninghub_image import RunningHubImageToImageNodeV2
+
+    router = FakeRouter()
+    node = RunningHubImageToImageNodeV2(
+        model_router=router,
+        provider="runninghub_image",
+        model="runninghub-image-model",
+    )
+
+    result = await node.run(
+        ctx=None,
+        inputs={
+            "prompt_results": [
+                {
+                    "full_name": "林冲_囚服",
+                    "prompt": "深灰粗布囚服，旧毡笠，面部轮廓清晰，保留八十万禁军教头的挺拔体态",
+                    "reference_image_ref": {"kind": "data_uri", "data": "data:image/png;base64,aW1hZ2UtYnl0ZXM="},
+                }
+            ],
+            "prompt_prefix": "将图中角色改成",
+            "prompt_suffix": "保持风格和其它特征不变",
+        },
+    )
+
+    assert result.output["asset_images"][0]["full_name"] == "林冲_囚服"
+    assert router.requests[0].messages[0].content == (
+        "将图中角色改成深灰粗布囚服，旧毡笠，面部轮廓清晰，保留八十万禁军教头的挺拔体态，保持风格和其它特征不变"
+    )
+
+
+async def test_image_to_image_v2_converts_asset_reference_to_base64_image() -> None:
+    from xiagent.nodes.ai.runninghub_image import RunningHubImageToImageNodeV2
+    from xiagent.nodes.base import NodeContext
+
+    class FakeAssetService:
+        async def search_assets(self, **_: Any) -> Any:
+            return SimpleNamespace(
+                items=[
+                    SimpleNamespace(
+                        asset_id="asset-ref",
+                        project_id=None,
+                        storage_uri="aa/bb/reference.png",
+                        metadata={
+                            "public_url": "https://assets.local.invalid/aa/bb/reference.png"
+                        },
+                    )
+                ],
+                total=1,
+            )
+
+        async def get_asset_content(self, **_: Any) -> Any:
+            return SimpleNamespace(
+                bytes_content=b"image-bytes",
+                content_type="image/png",
+            )
+
+    router = FakeRouter()
+    node = RunningHubImageToImageNodeV2(
+        model_router=router,
+        provider="runninghub_image",
+        model="runninghub-image-model",
+    )
+
+    await node.run(
+        ctx=NodeContext(
+            user_id="user-1",
+            project_id="global",
+            task_id="task-1",
+            node_id="generate_images",
+            node_execution_id="exec-1",
+            config={},
+            output_schema=node.describe().output_schema,
+            asset_service=FakeAssetService(),  # type: ignore[arg-type]
+            event_sink=None,
+            logger=None,
+        ),
+        inputs={
+            "prompt_results": [
+                {
+                    "full_name": "林冲_囚服",
+                    "prompt": "深灰粗布囚服。",
+                    "reference_image_ref": {"kind": "asset", "asset_id": "asset-ref"},
+                }
+            ],
+        },
+    )
+
+    request_metadata = router.requests[0].metadata
+    assert request_metadata["images"] == ["data:image/png;base64,aW1hZ2UtYnl0ZXM="]
+    assert "image_urls" not in request_metadata
+    assert request_metadata["reference_image_ref"] == {"kind": "asset", "asset_id": "asset-ref"}
+
+
+async def test_image_to_image_v2_rejects_unresolved_reference_url() -> None:
+    from xiagent.nodes.ai.runninghub_image import RunningHubImageToImageNodeV2
+
+    router = FakeRouter()
+    node = RunningHubImageToImageNodeV2(
+        model_router=router,
+        provider="runninghub_image",
+        model="runninghub-image-model",
+    )
+
+    with pytest.raises(ValidationError) as exc:
+        await node.run(
+            ctx=None,
+            inputs={
+                "prompt_results": [
+                    {
+                        "full_name": "林冲_囚服",
+                        "prompt": "深灰粗布囚服。",
+                        "reference_image_ref": "https://runninghub.test/linchong.png",
+                    }
+                ],
+            },
+        )
+
+    assert exc.value.code == "image_ref_invalid"
+    assert router.requests == []
+
+
 async def test_runninghub_node_standardizes_provider_results_in_public_output() -> None:
     RunningHubImageToImageNode, _ = _node_classes()
     node = RunningHubImageToImageNode(
@@ -233,7 +356,7 @@ async def test_runninghub_node_standardizes_provider_results_in_public_output() 
         ctx=None,
         inputs={
             "prompt": "colorize",
-            "image_url": "https://runninghub.test/input.png",
+            "image_refs": [{"kind": "data_uri", "data": "data:image/png;base64,aW1hZ2UtYnl0ZXM="}],
         },
     )
 
@@ -271,7 +394,7 @@ async def test_runninghub_nodes_require_non_empty_prompt(node_name: str) -> None
     assert router.requests == []
 
 
-async def test_image_to_image_node_requires_image_urls() -> None:
+async def test_image_to_image_node_requires_image_refs() -> None:
     RunningHubImageToImageNode, _ = _node_classes()
     router = FakeRouter()
     node = RunningHubImageToImageNode(
@@ -283,7 +406,7 @@ async def test_image_to_image_node_requires_image_urls() -> None:
     with pytest.raises(ValidationError) as exc:
         await node.run(ctx=None, inputs={"prompt": "colorize"})
 
-    assert exc.value.code == "runninghub_image_urls_required"
+    assert exc.value.code == "image_refs_required"
     assert router.requests == []
 
 
@@ -300,7 +423,7 @@ async def test_runninghub_node_propagates_router_errors() -> None:
             ctx=None,
             inputs={
                 "prompt": "colorize",
-                "image_url": "https://runninghub.test/input.png",
+                "image_refs": [{"kind": "data_uri", "data": "data:image/png;base64,aW1hZ2UtYnl0ZXM="}],
             },
         )
 
@@ -327,7 +450,7 @@ def test_runninghub_descriptors_expose_stable_workflow_contracts() -> None:
 
     assert image_descriptor.ref == "ai.runninghub_image_to_image.v1"
     assert text_descriptor.ref == "ai.runninghub_text_to_image.v1"
-    assert image_descriptor.input_schema["required"] == ["prompt", "image_urls"]
+    assert image_descriptor.input_schema["required"] == ["prompt", "image_refs"]
     assert text_descriptor.input_schema["required"] == ["prompt"]
     assert image_descriptor.input_schema["properties"]["poll_timeout_seconds"] == {
         "type": "number",

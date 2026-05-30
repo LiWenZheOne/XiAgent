@@ -7,6 +7,7 @@ from typing import Any
 from urllib.request import Request, urlopen
 
 from xiagent.core.errors import ExternalServiceError, ValidationError, XiAgentError
+from xiagent.infrastructure.api_logging import log_api_request, log_api_response
 from xiagent.models.router import ChatModelProvider
 from xiagent.models.types import (
     ChatRequest,
@@ -104,7 +105,13 @@ class RunningHubImageProvider(ChatModelProvider):
 
     def _request_payload(self, request: ChatRequest) -> dict[str, Any]:
         prompt = self._prompt(request)
-        image_urls = self._image_urls(request.metadata)
+        images = self._images(request.metadata)
+        if not images:
+            raise ValidationError(
+                code="runninghub_images_missing",
+                message="RunningHub image data URIs are required",
+                details={"provider": self._provider_name},
+            )
         aspect_ratio = self._metadata_text(request.metadata, "aspect_ratio")
         aspect_ratio = (
             aspect_ratio
@@ -115,12 +122,13 @@ class RunningHubImageProvider(ChatModelProvider):
             self._metadata_text(request.metadata, "resolution")
             or getattr(self._config, "default_resolution", "1k")
         )
-        return {
-            "imageUrls": image_urls,
+        payload = {
             "prompt": prompt,
             "aspectRatio": aspect_ratio,
             "resolution": resolution,
+            "imageUrls": images,
         }
+        return payload
 
     def _prompt(self, request: ChatRequest) -> str:
         metadata_prompt = self._metadata_text(request.metadata, "prompt")
@@ -137,29 +145,27 @@ class RunningHubImageProvider(ChatModelProvider):
             )
         return prompt
 
-    def _image_urls(self, metadata: dict[str, Any]) -> list[str]:
-        value = metadata.get("image_urls", metadata.get("imageUrls"))
-        if isinstance(value, str) and value:
+    def _images(self, metadata: dict[str, Any]) -> list[str]:
+        value = metadata.get("images")
+        if isinstance(value, str) and value.startswith("data:image/"):
             return [value]
         if isinstance(value, list):
-            image_urls = [item for item in value if isinstance(item, str) and item]
-            if image_urls:
-                return image_urls
-        image_url = self._metadata_text(metadata, "image_url")
-        if image_url:
-            return [image_url]
-        raise ValidationError(
-            code="runninghub_image_urls_missing",
-            message="RunningHub image URLs are required",
-            details={"provider": self._provider_name},
-        )
+            images = [
+                item
+                for item in value
+                if isinstance(item, str) and item.startswith("data:image/")
+            ]
+            if images:
+                return images
+        return []
 
     def _metadata_text(self, metadata: dict[str, Any], key: str) -> str | None:
         value = metadata.get(key)
         return value if isinstance(value, str) and value else None
 
     async def _post_json(self, url: str, payload: dict[str, Any]) -> dict[str, Any]:
-        return await self._http_client.post_json(
+        log_api_request(provider=self._provider_name, url=url, payload=payload)
+        response = await self._http_client.post_json(
             url,
             headers={
                 "Authorization": f"Bearer {self._config.api_key}",
@@ -167,6 +173,8 @@ class RunningHubImageProvider(ChatModelProvider):
             },
             payload=payload,
         )
+        log_api_response(provider=self._provider_name, url=url, payload=response)
+        return response
 
     async def _poll_until_complete(
         self,
@@ -192,7 +200,9 @@ class RunningHubImageProvider(ChatModelProvider):
                 return current
             if status == "FAILED":
                 self._raise_failed(current)
-            if current.get("results"):
+            if self._error_code(current):
+                self._raise_failed(current)
+            if self._results(current):
                 return current
             if not task_id:
                 raise ExternalServiceError(
@@ -235,19 +245,22 @@ class RunningHubImageProvider(ChatModelProvider):
     def _raise_failed(self, response: dict[str, Any]) -> None:
         details: dict[str, Any] = {
             "provider": self._provider_name,
-            "status": "FAILED",
+            "status": self._status(response) or "FAILED",
         }
-        error_code = response.get("errorCode")
+        error_code = self._error_code(response)
         if isinstance(error_code, str) and error_code:
             details["error_code"] = error_code
+        error_message = self._error_message(response)
+        if isinstance(error_message, str) and error_message:
+            details["error_message"] = error_message
         raise ExternalServiceError(
             code=self._request_failed_code,
-            message="RunningHub image request failed",
+            message=error_message or "RunningHub image request failed",
             details=details,
         )
 
     def _chat_response(self, *, request: ChatRequest, result: dict[str, Any]) -> ChatResponse:
-        results = result.get("results")
+        results = self._results(result)
         if not isinstance(results, list) or not results:
             raise ExternalServiceError(
                 code=self._result_missing_code,
@@ -256,7 +269,8 @@ class RunningHubImageProvider(ChatModelProvider):
             )
         first_result = results[0] if isinstance(results[0], dict) else {}
         text = self._result_text(result, first_result)
-        usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
+        response_usage = self._response_value(result, "usage")
+        usage = response_usage if isinstance(response_usage, dict) else {}
         return ChatResponse(
             text=text,
             model=request.model or self._config.model,
@@ -285,12 +299,40 @@ class RunningHubImageProvider(ChatModelProvider):
         )
 
     def _task_id(self, response: dict[str, Any]) -> str | None:
-        task_id = response.get("taskId")
+        task_id = self._response_value(response, "taskId", "task_id", "task_id_str", "id")
         return task_id if isinstance(task_id, str) and task_id else None
 
     def _status(self, response: dict[str, Any]) -> str:
-        status = response.get("status")
+        status = self._response_value(response, "status", "taskStatus")
         return status.upper() if isinstance(status, str) else ""
+
+    def _results(self, response: dict[str, Any]) -> Any:
+        return self._response_value(response, "results", "result", "outputs")
+
+    def _error_code(self, response: dict[str, Any]) -> str | None:
+        value = self._response_value(response, "errorCode", "error_code", "code")
+        if value in (0, "0"):
+            return None
+        if isinstance(value, int):
+            return str(value)
+        return value if isinstance(value, str) and value else None
+
+    def _error_message(self, response: dict[str, Any]) -> str | None:
+        value = self._response_value(response, "errorMessage", "error_message", "message", "msg")
+        return value if isinstance(value, str) and value else None
+
+    def _response_value(self, response: dict[str, Any], *keys: str) -> Any:
+        for key in keys:
+            value = response.get(key)
+            if value not in (None, ""):
+                return value
+        data = response.get("data")
+        if isinstance(data, dict):
+            for key in keys:
+                value = data.get(key)
+                if value not in (None, ""):
+                    return value
+        return None
 
     def _task_url(self) -> str:
         endpoint = self._config.endpoint
@@ -445,9 +487,15 @@ class RunningHubWorkflowProvider(ChatModelProvider):
             if self._config.api_key:
                 headers["Authorization"] = f"Bearer {self._config.api_key}"
             files = {"file": ("image.png", image_data, "image/png")}
+            log_api_request(
+                provider=self._provider_name,
+                url=upload_url,
+                payload={"file_name": "image.png", "size_bytes": len(image_data)},
+            )
             resp = await client.post(upload_url, headers=headers, files=files)
             resp.raise_for_status()
             result: dict[str, Any] = resp.json()
+            log_api_response(provider=self._provider_name, url=upload_url, payload=result)
 
         download_url = result.get("data", {}).get("download_url", "")
         if not download_url:
@@ -516,7 +564,8 @@ class RunningHubWorkflowProvider(ChatModelProvider):
     # --- helpers reused from RunningHubImageProvider ---
 
     async def _post_json(self, url: str, payload: dict[str, Any]) -> dict[str, Any]:
-        return await self._http_client.post_json(
+        log_api_request(provider=self._provider_name, url=url, payload=payload)
+        response = await self._http_client.post_json(
             url,
             headers={
                 "Authorization": f"Bearer {self._config.api_key}",
@@ -524,6 +573,8 @@ class RunningHubWorkflowProvider(ChatModelProvider):
             },
             payload=payload,
         )
+        log_api_response(provider=self._provider_name, url=url, payload=response)
+        return response
 
     async def _poll_until_complete(
         self,

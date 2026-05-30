@@ -1116,6 +1116,7 @@ async def test_rerun_node_creates_new_attempt_and_rebuilds_downstream_current_vi
         project_id=project_id,
         task_id=task.task_id,
         node_id="produce",
+        rerun_revision_note="注意保持输出格式。",
     )
 
     executions = await runtime.list_node_executions(
@@ -1148,6 +1149,8 @@ async def test_rerun_node_creates_new_attempt_and_rebuilds_downstream_current_vi
     }
     assert "node_rerun_started" in [event.event_type for event in events]
     assert "downstream_cleared" in [event.event_type for event in events]
+    rerun_event = next(event for event in events if event.event_type == "node_rerun_started")
+    assert rerun_event.payload == {"node_id": "produce", "rerun_revision_note": "注意保持输出格式。"}
 
 
 async def test_resume_with_invalid_output_keeps_task_waiting(test_settings) -> None:

@@ -257,7 +257,7 @@ async def test_runninghub_image_provider_submits_and_polls_generation() -> None:
         model="runninghub-image-test-model",
         messages=[ChatMessage(role="user", content="turn the sketch into ink wash art")],
         metadata={
-            "image_urls": ["https://example.test/input.png"],
+            "images": ["data:image/png;base64,aW1hZ2UtYnl0ZXM="],
             "aspect_ratio": "1:1",
             "resolution": "2k",
         },
@@ -273,7 +273,7 @@ async def test_runninghub_image_provider_submits_and_polls_generation() -> None:
                 "Content-Type": "application/json",
             },
             "payload": {
-                "imageUrls": ["https://example.test/input.png"],
+                "imageUrls": ["data:image/png;base64,aW1hZ2UtYnl0ZXM="],
                 "prompt": "turn the sketch into ink wash art",
                 "aspectRatio": "1:1",
                 "resolution": "2k",
@@ -298,6 +298,113 @@ async def test_runninghub_image_provider_submits_and_polls_generation() -> None:
         "results": [{"url": "https://example.test/output.png", "outputType": "png"}],
     }
     assert "test-runninghub-key" not in str(response.metadata)
+
+
+async def test_runninghub_image_provider_accepts_wrapped_data_response() -> None:
+    from xiagent.models import ChatMessage, ChatRequest, RunningHubImageModelConfig
+    from xiagent.models.providers.runninghub import RunningHubImageProvider
+
+    http_client = FakeRunningHubHttpClient(
+        [
+            {
+                "code": 0,
+                "msg": "success",
+                "data": {
+                    "taskId": "wrapped-task-1",
+                    "status": "RUNNING",
+                    "results": None,
+                },
+            },
+            {
+                "code": 0,
+                "msg": "success",
+                "data": {
+                    "taskId": "wrapped-task-1",
+                    "status": "SUCCESS",
+                    "results": [{"url": "https://example.test/wrapped-output.png"}],
+                    "usage": {"consumeCoins": "1"},
+                },
+            },
+        ]
+    )
+    provider = RunningHubImageProvider(
+        config=RunningHubImageModelConfig(
+            api_key="test-runninghub-key",
+            base_url="https://runninghub.test",
+            model="runninghub-image-test-model",
+            endpoint="/test/image-to-image",
+            poll_interval_seconds=0,
+            poll_timeout_seconds=1,
+        ),
+        http_client=http_client,
+    )
+    request = ChatRequest(
+        provider="runninghub_image",
+        model="runninghub-image-test-model",
+        messages=[ChatMessage(role="user", content="paint it")],
+        metadata={"images": ["data:image/png;base64,aW1hZ2UtYnl0ZXM="]},
+    )
+
+    response = await provider.chat(request)
+
+    assert response.text == "https://example.test/wrapped-output.png"
+    assert response.usage == {"consumeCoins": "1"}
+    assert response.metadata["task_id"] == "wrapped-task-1"
+    assert response.metadata["status"] == "SUCCESS"
+    assert [call["payload"] for call in http_client.calls] == [
+        {
+            "imageUrls": ["data:image/png;base64,aW1hZ2UtYnl0ZXM="],
+            "prompt": "paint it",
+            "aspectRatio": "9:16",
+            "resolution": "1k",
+        },
+        {"taskId": "wrapped-task-1"},
+    ]
+
+
+async def test_runninghub_image_provider_sends_base64_data_uris_as_image_urls() -> None:
+    from xiagent.models import ChatMessage, ChatRequest, RunningHubImageModelConfig
+    from xiagent.models.providers.runninghub import RunningHubImageProvider
+
+    http_client = FakeRunningHubHttpClient(
+        [
+            {
+                "taskId": "task-base64-1",
+                "status": "SUCCESS",
+                "results": [{"url": "https://example.test/base64-output.png"}],
+            },
+        ]
+    )
+    provider = RunningHubImageProvider(
+        config=RunningHubImageModelConfig(
+            api_key="test-runninghub-key",
+            base_url="https://runninghub.test",
+            model="runninghub-image-test-model",
+            endpoint="/test/image-to-image",
+            poll_interval_seconds=0,
+            poll_timeout_seconds=1,
+        ),
+        http_client=http_client,
+    )
+    data_uri = "data:image/png;base64,aW1hZ2UtYnl0ZXM="
+    request = ChatRequest(
+        provider="runninghub_image",
+        model="runninghub-image-test-model",
+        messages=[ChatMessage(role="user", content="paint it")],
+        metadata={
+            "images": [data_uri],
+        },
+    )
+
+    response = await provider.chat(request)
+
+    assert response.text == "https://example.test/base64-output.png"
+    assert http_client.calls[0]["payload"] == {
+        "imageUrls": [data_uri],
+        "prompt": "paint it",
+        "aspectRatio": "9:16",
+        "resolution": "1k",
+    }
 
 
 async def test_runninghub_image_provider_uses_request_polling_overrides() -> None:
@@ -334,7 +441,7 @@ async def test_runninghub_image_provider_uses_request_polling_overrides() -> Non
         model="runninghub-image-test-model",
         messages=[ChatMessage(role="user", content="turn the sketch into ink wash art")],
         metadata={
-            "image_urls": ["https://example.test/input.png"],
+            "images": ["data:image/png;base64,aW1hZ2UtYnl0ZXM="],
             "poll_interval_seconds": 0,
             "poll_timeout_seconds": 1,
         },
@@ -345,7 +452,7 @@ async def test_runninghub_image_provider_uses_request_polling_overrides() -> Non
     assert response.text == "https://example.test/slow-output.png"
     assert [call["payload"] for call in http_client.calls] == [
         {
-            "imageUrls": ["https://example.test/input.png"],
+            "imageUrls": ["data:image/png;base64,aW1hZ2UtYnl0ZXM="],
             "prompt": "turn the sketch into ink wash art",
             "aspectRatio": "9:16",
             "resolution": "1k",
@@ -381,7 +488,7 @@ async def test_runninghub_image_provider_rejects_empty_result_url() -> None:
         provider="runninghub_image",
         model="runninghub-image-test-model",
         messages=[ChatMessage(role="user", content="paint it")],
-        metadata={"image_urls": ["https://example.test/input.png"]},
+        metadata={"images": ["data:image/png;base64,aW1hZ2UtYnl0ZXM="]},
     )
 
     with pytest.raises(ExternalServiceError) as exc:
@@ -391,6 +498,51 @@ async def test_runninghub_image_provider_rejects_empty_result_url() -> None:
     assert exc.value.details == {
         "provider": "runninghub_image",
         "task_id": "task-empty-result",
+    }
+
+
+async def test_runninghub_image_provider_surfaces_submission_errors_without_task_id() -> None:
+    from xiagent.models import ChatMessage, ChatRequest, RunningHubImageModelConfig
+    from xiagent.models.providers.runninghub import RunningHubImageProvider
+
+    provider = RunningHubImageProvider(
+        config=RunningHubImageModelConfig(
+            api_key="test-runninghub-key",
+            base_url="https://runninghub.test",
+            model="runninghub-image-test-model",
+            endpoint="/test/image-to-image",
+            poll_interval_seconds=0,
+            poll_timeout_seconds=1,
+        ),
+        http_client=FakeRunningHubHttpClient(
+            [
+                {
+                    "taskId": "",
+                    "status": "",
+                    "errorCode": "1007",
+                    "errorMessage": "field 'resolution' value 2048x2048 is not in the allowed options",
+                    "results": None,
+                }
+            ]
+        ),
+    )
+    request = ChatRequest(
+        provider="runninghub_image",
+        model="runninghub-image-test-model",
+        messages=[ChatMessage(role="user", content="paint it")],
+        metadata={"images": ["data:image/png;base64,aW1hZ2UtYnl0ZXM="]},
+    )
+
+    with pytest.raises(ExternalServiceError) as exc:
+        await provider.chat(request)
+
+    assert exc.value.code == "runninghub_image_request_failed"
+    assert "2048x2048" in exc.value.message
+    assert exc.value.details == {
+        "provider": "runninghub_image",
+        "status": "FAILED",
+        "error_code": "1007",
+        "error_message": "field 'resolution' value 2048x2048 is not in the allowed options",
     }
 
 
@@ -514,7 +666,7 @@ async def test_runninghub_text_to_image_provider_requires_key_and_prompt() -> No
     assert exc.value.details == {"provider": "runninghub_text_to_image"}
 
 
-async def test_runninghub_image_provider_requires_key_and_image_urls() -> None:
+async def test_runninghub_image_provider_requires_key_and_images() -> None:
     from xiagent.core.errors import ValidationError
     from xiagent.models import ChatMessage, ChatRequest, RunningHubImageModelConfig
     from xiagent.models.providers.runninghub import RunningHubImageProvider
@@ -524,7 +676,7 @@ async def test_runninghub_image_provider_requires_key_and_image_urls() -> None:
         provider="runninghub_image",
         model="runninghub-image-test-model",
         messages=[ChatMessage(role="user", content="paint it")],
-        metadata={"image_urls": ["https://example.test/input.png"]},
+        metadata={"images": ["data:image/png;base64,aW1hZ2UtYnl0ZXM="]},
     )
 
     with pytest.raises(ValidationError) as exc:
@@ -543,7 +695,7 @@ async def test_runninghub_image_provider_requires_key_and_image_urls() -> None:
     with pytest.raises(ValidationError) as exc:
         await provider.chat(request)
 
-    assert exc.value.code == "runninghub_image_urls_missing"
+    assert exc.value.code == "runninghub_images_missing"
     assert exc.value.details == {"provider": "runninghub_image"}
 
 
@@ -559,7 +711,7 @@ async def test_runninghub_image_provider_wraps_failures_without_secret_details()
         provider="runninghub_image",
         model="runninghub-image-test-model",
         messages=[ChatMessage(role="user", content="paint it")],
-        metadata={"image_urls": ["https://example.test/input.png"]},
+        metadata={"images": ["data:image/png;base64,aW1hZ2UtYnl0ZXM="]},
     )
 
     with pytest.raises(ExternalServiceError) as exc:

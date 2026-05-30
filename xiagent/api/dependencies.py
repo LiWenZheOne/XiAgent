@@ -6,6 +6,7 @@ from typing import Annotated
 
 from fastapi import Depends, Header, Request
 
+from xiagent.api.image_generation import ImageGenerationStore
 from xiagent.assets.service import SqliteAssetService
 from xiagent.core.errors import AuthenticationError, NotFoundError, ValidationError
 from xiagent.infrastructure.config import Settings
@@ -33,6 +34,7 @@ class ApiServices:
     runtime: SqliteRuntimeService
     workflows: WorkflowCatalog
     ui_controls: UiControlCatalog
+    image_generations: ImageGenerationStore
     access_tokens: dict[str, str] = field(default_factory=dict)
 
     def issue_access_token(self, *, user_id: str) -> str:
@@ -60,6 +62,7 @@ def build_services(settings: Settings) -> ApiServices:
     )
     node_registry = build_node_registry(settings)
     ui_controls = build_builtin_ui_control_catalog()
+    image_generations = ImageGenerationStore()
     runtime = SqliteRuntimeService(
         database_path=settings.database_path,
         user_service=users,
@@ -76,6 +79,7 @@ def build_services(settings: Settings) -> ApiServices:
         runtime=runtime,
         workflows=workflows,
         ui_controls=ui_controls,
+        image_generations=image_generations,
     )
 
 

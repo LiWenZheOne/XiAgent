@@ -107,7 +107,7 @@ async def test_script_split_can_limit_segment_count(test_settings) -> None:
 
 async def test_storyboard_prompt_assembler_builds_prompt_and_defaults(test_settings) -> None:
     node = build_node_registry(test_settings).get("tool.storyboard_prompt_assembler.v1")
-    image_urls = ["https://assets.test/character.png"]
+    image_refs = [{"kind": "data_uri", "data": "data:image/png;base64,AAAA", "role": "reference"}]
 
     result = await node.run(
         ctx=None,
@@ -117,12 +117,12 @@ async def test_storyboard_prompt_assembler_builds_prompt_and_defaults(test_setti
             "constraints": "保持角色服装和发型一致，不要添加文字。",
             "generation_rules": "风格指令\n参考《罗小黑战记》。\n角色一致性约束\n- 达摩/不倒翁体型。",
             "negative_prompt": "low quality",
-            "image_urls": image_urls,
+            "image_refs": image_refs,
         },
     )
 
     assert result.status == "succeeded"
-    assert result.output["image_urls"] == image_urls
+    assert result.output["image_refs"] == image_refs
     assert result.output["aspect_ratio"] == "16:9"
     assert result.output["resolution"] == "2K"
     assert "negative_prompt" in result.output
@@ -152,7 +152,7 @@ async def test_storyboard_prompt_assembler_allows_render_options(test_settings) 
             "style": "写实厚涂",
             "constraints": "低饱和度",
             "negative_prompt": "low quality",
-            "image_urls": ["https://assets.test/reference.png"],
+            "image_refs": [{"kind": "data_uri", "data": "data:image/png;base64,BBBB", "role": "reference"}],
             "aspect_ratio": "9:16",
             "resolution": "1K",
         },
@@ -162,7 +162,7 @@ async def test_storyboard_prompt_assembler_allows_render_options(test_settings) 
     assert result.output["resolution"] == "1K"
 
 
-async def test_storyboard_prompt_assembler_rejects_empty_image_urls(test_settings) -> None:
+async def test_storyboard_prompt_assembler_rejects_empty_image_refs(test_settings) -> None:
     node = build_node_registry(test_settings).get("tool.storyboard_prompt_assembler.v1")
 
     with pytest.raises(ValidationError) as exc:
@@ -172,11 +172,11 @@ async def test_storyboard_prompt_assembler_rejects_empty_image_urls(test_setting
                 "description": "近景，角色握紧信物。",
                 "style": "写实厚涂",
                 "constraints": "低饱和度",
-                "image_urls": [],
+                "image_refs": [],
             },
         )
 
-    assert exc.value.code == "image_urls_required"
+    assert exc.value.code == "image_refs_required"
 
 
 async def test_deepseek_structured_json_parses_plain_json(test_settings) -> None:

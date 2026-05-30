@@ -80,7 +80,7 @@ async def test_parallel_node_empty_items_raises() -> None:
         model="test-model",
     )
 
-    with pytest.raises(ValidationError, match="items must be a non-empty array"):
+    with pytest.raises(ValidationError, match="items must be a non-empty array or an object containing non-empty arrays"):
         await node.run(
             None,
             {
@@ -88,6 +88,46 @@ async def test_parallel_node_empty_items_raises() -> None:
                 "prompt_template": "Process: {item}",
             },
         )
+
+
+@pytest.mark.asyncio
+async def test_parallel_node_processes_object_groups_in_asset_order() -> None:
+    responses = [
+        '{"result": "character"}',
+        '{"result": "asset"}',
+        '{"result": "prop"}',
+    ]
+    router = FakeParallelRouter(responses)
+    node = ParallelDeepSeekStructuredJsonNode(
+        model_router=router,
+        provider="deepseek",
+        model="test-model",
+    )
+
+    result = await node.run(
+        None,
+        {
+            "items": {
+                "props": [{"name": "官刀"}],
+                "characters": [{"name": "林冲"}],
+                "assets": [{"name": "山神庙"}],
+            },
+            "prompt_template": "Process: {item}",
+            "max_attempts": 1,
+        },
+    )
+
+    assert result.status == "succeeded"
+    assert result.output["results"] == [
+        {"result": "character"},
+        {"result": "asset"},
+        {"result": "prop"},
+    ]
+    assert len(router.requests) == 3
+    prompts = [request.messages[-1].content for request in router.requests]
+    assert "林冲" in prompts[0]
+    assert "山神庙" in prompts[1]
+    assert "官刀" in prompts[2]
 
 
 @pytest.mark.asyncio

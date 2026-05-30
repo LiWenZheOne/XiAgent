@@ -101,6 +101,13 @@ class EnrichCharactersNode(BaseNode):
                     "variant": variant_tag,
                     "metadata": metadata,
                 }
+                image_url = _asset_image_url(asset)
+                if image_url:
+                    variant_info["storage_uri"] = image_url
+                    variant_info["image_url"] = image_url
+                appearance_description = _asset_appearance_description(asset)
+                if appearance_description:
+                    variant_info["appearance_description"] = appearance_description
                 name_to_variants.setdefault(char_name, []).append(variant_info)
 
         enriched: list[dict[str, Any]] = []
@@ -119,9 +126,13 @@ class EnrichCharactersNode(BaseNode):
                 result["matched"] = True
                 result["matched_asset_id"] = asset.get("asset_id")
                 result["matched_asset_name"] = asset.get("name", "")
-                image_url = _asset_image_url(asset)
-                if image_url:
-                    result["matched_asset_image_url"] = image_url
+                image_ref = _asset_image_ref(asset)
+                if image_ref is not None:
+                    result["matched_asset_ref"] = image_ref
+                appearance_description = _asset_appearance_description(asset)
+                if appearance_description:
+                    result["matched_asset_appearance_description"] = appearance_description
+                    result["reference_appearance_description"] = appearance_description
             else:
                 # 2. Semantic match fallback
                 semantic = name_to_semantic.get(full_name)
@@ -129,9 +140,13 @@ class EnrichCharactersNode(BaseNode):
                     result["matched"] = True
                     result["matched_asset_id"] = semantic.get("matched_asset_id")
                     result["matched_asset_name"] = semantic.get("matched_asset_name", "")
-                    image_url = _asset_image_url(semantic)
-                    if image_url:
-                        result["matched_asset_image_url"] = image_url
+                    image_ref = _asset_image_ref(semantic)
+                    if image_ref is not None:
+                        result["matched_asset_ref"] = image_ref
+                    appearance_description = _asset_appearance_description(semantic)
+                    if appearance_description:
+                        result["matched_asset_appearance_description"] = appearance_description
+                        result["reference_appearance_description"] = appearance_description
                 else:
                     result["matched"] = False
                     result["matched_asset_id"] = None
@@ -163,6 +178,42 @@ def _asset_image_url(asset: Mapping[str, Any]) -> str | None:
         object_storage = metadata.get("object_storage")
         if isinstance(object_storage, Mapping):
             value = object_storage.get("public_url")
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+
+    return None
+
+
+def _asset_image_ref(asset: Mapping[str, Any]) -> dict[str, Any] | None:
+    asset_id = asset.get("asset_id") or asset.get("matched_asset_id")
+    if isinstance(asset_id, str) and asset_id.strip():
+        return {"kind": "asset", "asset_id": asset_id.strip(), "role": "reference"}
+    return None
+
+
+def _asset_appearance_description(asset: Mapping[str, Any]) -> str | None:
+    for key in (
+        "appearance_description",
+        "visual_description",
+        "variant_description",
+        "description",
+        "prompt",
+        "text_content",
+    ):
+        value = asset.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    metadata = asset.get("metadata")
+    if isinstance(metadata, Mapping):
+        for key in (
+            "appearance_description",
+            "visual_description",
+            "variant_description",
+            "description",
+            "prompt",
+        ):
+            value = metadata.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
 

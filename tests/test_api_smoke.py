@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import replace
 
 from fastapi.testclient import TestClient
@@ -8,6 +9,7 @@ from fastapi.testclient import TestClient
 from xiagent.api.app import create_app
 from xiagent.infrastructure.database import connect_db
 from xiagent.infrastructure.migrations import migrate
+from xiagent.models import ChatModelRouter, ChatRequest, ChatResponse
 
 
 def _auth_headers(
@@ -225,6 +227,148 @@ def test_auth_me_endpoint_returns_current_user(test_settings) -> None:
     assert response.status_code == 200
     assert response.json()["user_id"] == user["user_id"]
     assert response.json()["username"] == "session-user"
+
+
+def test_asset_draft_endpoint_uses_structured_llm_with_user_context(test_settings) -> None:
+    class FakeDraftRouter(ChatModelRouter):
+        def __init__(self) -> None:
+            super().__init__()
+            self.requests: list[ChatRequest] = []
+
+        async def chat(self, request: ChatRequest) -> ChatResponse:
+            self.requests.append(request)
+            return ChatResponse(
+                text=json.dumps(
+                    {
+                        "assets": [
+                            {
+                                "type": "character",
+                                "name": "武松",
+                                "matched": False,
+                                "matched_asset_id": None,
+                                "matched_asset_name": "",
+                                "aliases": "行者",
+                                "summary": "梁山好汉",
+                                "character_status": "途经景阳冈",
+                                "variant_name": "默认",
+                                "variant_description": "劲装短打",
+                                "accessories": "哨棒",
+                            },
+                            {
+                                "type": "location",
+                                "name": "官兵船",
+                                "matched": False,
+                                "matched_asset_id": None,
+                                "matched_asset_name": "",
+                                "description": "官兵在水上使用的船只。",
+                                "location_type": "水上",
+                                "time_of_day": "",
+                            }
+                        ],
+                        "confidence": 0.86,
+                        "reasoning": "根据用户描述和原文补全多个资产字段。",
+                    },
+                    ensure_ascii=False,
+                ),
+                model=request.model,
+            )
+
+    app = create_app(settings=test_settings)
+    with TestClient(app) as client:
+        client.post(
+            "/api/auth/register",
+            json={"username": "draft-user", "password": "secret-123"},
+        )
+        headers = _auth_headers(client, username="draft-user")
+        fake_router = FakeDraftRouter()
+        node = app.state.services.node_registry.get("ai.asset_draft_from_description.v1")
+        node._model_router = fake_router  # noqa: SLF001
+
+        response = client.post(
+            "/api/assets/draft-from-description",
+            headers=headers,
+            json={
+                "project_id": "global",
+                "description": "增加一个拿哨棒的武松和官兵船",
+                "script": "武松提着哨棒走过景阳冈。",
+                "background": "水浒传",
+                "current_assets": {"characters": []},
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["assets"][0]["name"] == "武松"
+    assert body["assets"][1]["type"] == "location"
+    assert body["assets"][0]["matched"] is False
+    assert fake_router.requests
+    prompt = "\n".join(str(message.content) for message in fake_router.requests[0].messages)
+    assert "用户描述的新资产需求" in prompt
+    assert "武松提着哨棒" in prompt
+
+
+def test_asset_generate_image_endpoint_returns_single_generated_image(test_settings) -> None:
+    class FakeImageRouter(ChatModelRouter):
+        def __init__(self) -> None:
+            super().__init__()
+            self.requests: list[ChatRequest] = []
+
+        async def chat(self, request: ChatRequest) -> ChatResponse:
+            self.requests.append(request)
+            return ChatResponse(
+                text="https://cdn.example.com/generated-linchong.png",
+                model=request.model,
+                metadata={"task_id": "rh-1", "variant": "image-to-image"},
+            )
+
+    app = create_app(settings=test_settings)
+    with TestClient(app) as client:
+        client.post(
+            "/api/auth/register",
+            json={"username": "image-user", "password": "secret-123"},
+        )
+        headers = _auth_headers(client, username="image-user")
+        fake_router = FakeImageRouter()
+        node = app.state.services.node_registry.get("ai.runninghub_image_to_image.v2")
+        node._model_router = fake_router  # noqa: SLF001
+
+        response = client.post(
+            "/api/assets/generate-image",
+            headers=headers,
+            json={
+                "project_id": "global",
+                "prompt_result": {
+                    "full_name": "林冲_囚服",
+                    "prompt": "身着囚服，头戴毡笠。",
+                    "reference_image_ref": {
+                        "kind": "data_uri",
+                        "data": "data:image/png;base64,aW1hZ2UtYnl0ZXM=",
+                    },
+                },
+                "aspect_ratio": "1:1",
+                "resolution": "2k",
+            },
+        )
+        body = response.json()
+        status_response = client.get(
+            f"/api/assets/generate-image/{body['generation_id']}",
+            headers=headers,
+        )
+
+    assert response.status_code == 200
+    assert body["generation_id"].startswith("image_generation_")
+    assert body["status"] in {"queued", "running", "succeeded"}
+    assert status_response.status_code == 200
+    status_body = status_response.json()
+    assert status_body["status"] == "succeeded"
+    assert status_body["result"]["full_name"] == "林冲_囚服"
+    assert status_body["result"]["image_url"] == "https://cdn.example.com/generated-linchong.png"
+    assert status_body["result"]["source"] == "ai_generated"
+    assert status_body["result"]["runninghub_task_id"] == "rh-1"
+    assert fake_router.requests
+    assert fake_router.requests[0].metadata["images"] == [
+        "data:image/png;base64,aW1hZ2UtYnl0ZXM="
+    ]
 
 
 def test_global_project_is_default_shared_project_and_supports_user_tasks(test_settings) -> None:

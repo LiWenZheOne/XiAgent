@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from xiagent.core.errors import ValidationError
+from xiagent.nodes.ai.image_references import image_refs_schema
 from xiagent.nodes.base import BaseNode, NodeContext, NodeDescriptor, NodeResult
 
 
@@ -22,15 +23,11 @@ class StoryboardPromptAssemblerNode(BaseNode):
                     "constraints": {"type": "string", "minLength": 1},
                     "generation_rules": {"type": "string", "minLength": 1},
                     "negative_prompt": {"type": "string", "minLength": 1},
-                    "image_urls": {
-                        "type": "array",
-                        "minItems": 1,
-                        "items": {"type": "string", "minLength": 1},
-                    },
+                    "image_refs": image_refs_schema(),
                     "aspect_ratio": {"type": "string", "minLength": 1},
                     "resolution": {"type": "string", "minLength": 1},
                 },
-                "required": ["description", "style", "constraints", "image_urls"],
+                "required": ["description", "style", "constraints", "image_refs"],
                 "additionalProperties": False,
             },
             output_schema={
@@ -38,15 +35,11 @@ class StoryboardPromptAssemblerNode(BaseNode):
                 "properties": {
                     "prompt": {"type": "string", "minLength": 1},
                     "negative_prompt": {"type": "string", "minLength": 1},
-                    "image_urls": {
-                        "type": "array",
-                        "minItems": 1,
-                        "items": {"type": "string", "minLength": 1},
-                    },
+                    "image_refs": image_refs_schema(),
                     "aspect_ratio": {"type": "string", "minLength": 1},
                     "resolution": {"type": "string", "minLength": 1},
                 },
-                "required": ["prompt", "negative_prompt", "image_urls", "aspect_ratio", "resolution"],
+                "required": ["prompt", "negative_prompt", "image_refs", "aspect_ratio", "resolution"],
                 "additionalProperties": False,
             },
             description="Assemble a final image generation prompt for storyboard panels.",
@@ -56,7 +49,7 @@ class StoryboardPromptAssemblerNode(BaseNode):
         description = _required_text(inputs, "description")
         style = _required_text(inputs, "style")
         constraints = _required_text(inputs, "constraints")
-        image_urls = _image_urls(inputs)
+        image_refs = _image_refs(inputs)
         aspect_ratio = _optional_text(inputs, "aspect_ratio") or "16:9"
         resolution = _optional_text(inputs, "resolution") or "2K"
         generation_rules = _optional_text(inputs, "generation_rules")
@@ -79,7 +72,7 @@ class StoryboardPromptAssemblerNode(BaseNode):
             output={
                 "prompt": prompt,
                 "negative_prompt": negative_prompt,
-                "image_urls": image_urls,
+                "image_refs": image_refs,
                 "aspect_ratio": aspect_ratio,
                 "resolution": resolution,
             },
@@ -99,11 +92,7 @@ class StoryboardPromptAssemblerNodeV2(BaseNode):
                     "description": {"type": "string", "minLength": 1},
                     "style": {"type": "string", "minLength": 1},
                     "constraints": {"type": "string", "minLength": 1},
-                    "image_urls": {
-                        "type": "array",
-                        "minItems": 1,
-                        "items": {"type": "string", "minLength": 1},
-                    },
+                    "image_refs": image_refs_schema(),
                     "aspect_ratio": {"type": "string", "minLength": 1},
                     "resolution": {"type": "string", "minLength": 1},
                     "generation_rules": {"type": "string", "minLength": 1},
@@ -113,30 +102,23 @@ class StoryboardPromptAssemblerNodeV2(BaseNode):
                         "type": "object",
                         "properties": {
                             "corrected_prompt": {"type": "string"},
-                            "corrected_image_urls": {
-                                "type": "array",
-                                "items": {"type": "string", "minLength": 1},
-                            },
+                            "corrected_image_refs": image_refs_schema(),
                         },
                         "additionalProperties": False,
                     },
                 },
-                "required": ["description", "style", "constraints", "image_urls"],
+                "required": ["description", "style", "constraints", "image_refs"],
                 "additionalProperties": False,
             },
             output_schema={
                 "type": "object",
                 "properties": {
                     "prompt": {"type": "string", "minLength": 1},
-                    "image_urls": {
-                        "type": "array",
-                        "minItems": 1,
-                        "items": {"type": "string", "minLength": 1},
-                    },
+                    "image_refs": image_refs_schema(),
                     "aspect_ratio": {"type": "string", "minLength": 1},
                     "resolution": {"type": "string", "minLength": 1},
                 },
-                "required": ["prompt", "image_urls", "aspect_ratio", "resolution"],
+                "required": ["prompt", "image_refs", "aspect_ratio", "resolution"],
                 "additionalProperties": False,
             },
             description="Assemble a final image generation prompt for storyboard panels (v2, no negative_prompt).",
@@ -146,7 +128,7 @@ class StoryboardPromptAssemblerNodeV2(BaseNode):
         description = _required_text(inputs, "description")
         style = _required_text(inputs, "style")
         constraints = _required_text(inputs, "constraints")
-        image_urls = _image_urls(inputs)
+        image_refs = _image_refs(inputs)
         aspect_ratio = _optional_text(inputs, "aspect_ratio") or "16:9"
         resolution = _optional_text(inputs, "resolution") or "2K"
 
@@ -171,17 +153,17 @@ class StoryboardPromptAssemblerNodeV2(BaseNode):
         if segment_context:
             prompt = f"{prompt}\n\n在场资产约束\n- {segment_context}"
 
-        # Apply manual overrides for image_urls
-        if isinstance(manual_overrides, dict) and isinstance(manual_overrides.get("corrected_image_urls"), list):
-            corrected = [u.strip() for u in manual_overrides["corrected_image_urls"] if isinstance(u, str) and u.strip()]
+        # Apply manual overrides for image_refs
+        if isinstance(manual_overrides, dict):
+            corrected = _optional_image_refs(manual_overrides.get("corrected_image_refs"))
             if corrected:
-                image_urls = corrected
+                image_refs = corrected
 
         return NodeResult(
             status="succeeded",
             output={
                 "prompt": prompt,
-                "image_urls": image_urls,
+                "image_refs": image_refs,
                 "aspect_ratio": aspect_ratio,
                 "resolution": resolution,
             },
@@ -227,17 +209,36 @@ def _prompt_parts(
     return parts
 
 
-def _image_urls(inputs: Mapping[str, Any]) -> list[str]:
-    value = inputs.get("image_urls")
+def _image_refs(inputs: Mapping[str, Any]) -> list[dict[str, Any]]:
+    value = inputs.get("image_refs")
+    image_refs = _optional_image_refs(value)
+    if not image_refs:
+        raise ValidationError(
+            code="image_refs_required",
+            message="image_refs must include at least one image reference",
+        )
+    return image_refs
+
+
+def _optional_image_refs(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, list):
-        raise ValidationError(
-            code="image_urls_required",
-            message="image_urls must be an array",
-        )
-    image_urls = [item.strip() for item in value if isinstance(item, str) and item.strip()]
-    if not image_urls:
-        raise ValidationError(
-            code="image_urls_required",
-            message="image_urls must include at least one URL",
-        )
-    return image_urls
+        return []
+    image_refs: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, Mapping):
+            continue
+        kind = item.get("kind")
+        if kind == "asset":
+            asset_id = item.get("asset_id")
+            if isinstance(asset_id, str) and asset_id.strip():
+                image_refs.append({"kind": "asset", "asset_id": asset_id.strip(), "role": _role(item)})
+        elif kind == "data_uri":
+            data = item.get("data")
+            if isinstance(data, str) and data.startswith("data:image/"):
+                image_refs.append({"kind": "data_uri", "data": data, "role": _role(item)})
+    return image_refs
+
+
+def _role(item: Mapping[str, Any]) -> str:
+    role = item.get("role")
+    return role.strip() if isinstance(role, str) and role.strip() else "reference"
