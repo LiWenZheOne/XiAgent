@@ -20,7 +20,7 @@ import {
 import { getCurrentUser, login, register } from "../api/auth";
 import { ApiError, clearAccessToken, getAccessToken } from "../api/client";
 import { createProject, listProjects } from "../api/projects";
-import { createTask, deleteTask, getTask, listTasks, rerunNode, streamTaskEvents, submitInteraction } from "../api/tasks";
+import { createTask, deleteTask, getTask, listTasks, rerunNode, saveInteractionDraft, streamTaskEvents, submitInteraction } from "../api/tasks";
 import type {
   AssetRecord,
   AssetCollection,
@@ -703,10 +703,12 @@ function TaskDetailPanel({
   const [error, setError] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
   const [rerunCandidateNodeId, setRerunCandidateNodeId] = useState<string | null>(null);
+  const [rerunRevisionNote, setRerunRevisionNote] = useState("");
   const [rerunningNodeId, setRerunningNodeId] = useState("");
   const [rerunError, setRerunError] = useState("");
   const [liveEvents, setLiveEvents] = useState<TaskEvent[]>([]);
   const [revealedNodeOrder, setRevealedNodeOrder] = useState<Record<string, number>>({});
+  const [pendingTransitionNodeId, setPendingTransitionNodeId] = useState<string | null>(null);
   const revealSequenceRef = useRef(0);
   const revealedNodeOrderRef = useRef<Record<string, number>>({});
   const stepRevealModeRef = useRef(false);
@@ -723,6 +725,7 @@ function TaskDetailPanel({
     liveRevealDelayRef.current = 0;
     scheduledRevealIdsRef.current = new Set();
     baselineEventIdsRef.current = new Set();
+    setPendingTransitionNodeId(null);
   }, [projectId, taskId]);
 
   function revealNodeStep(nodeId: string | null | undefined, delayMs = 0) {
@@ -798,7 +801,7 @@ function TaskDetailPanel({
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
+    setLoading(!detail);
     setError("");
     getTask(projectId, taskId)
       .then((nextDetail) => {
@@ -853,8 +856,28 @@ function TaskDetailPanel({
     [orderedNodes, rerunCandidateNodeId],
   );
 
+  useEffect(() => {
+    if (!pendingTransitionNodeId || !detail) return;
+    const pendingOrder = revealedNodeOrder[pendingTransitionNodeId];
+    const hasLaterRevealedNode = orderedNodes.some((node) => (
+      node.node_id !== pendingTransitionNodeId
+      && revealedNodeOrder[node.node_id] !== undefined
+      && (pendingOrder === undefined || (revealedNodeOrder[node.node_id] ?? -1) > pendingOrder)
+    ));
+    const taskDone = ["成功", "失败"].includes(statusLabel(detail.task.status));
+    if (hasLaterRevealedNode || taskDone) {
+      setPendingTransitionNodeId(null);
+    }
+  }, [
+    detail,
+    orderedNodes.map((node) => `${node.node_id}:${node.status}:${node.node_execution_id ?? ""}`).join("|"),
+    pendingTransitionNodeId,
+    revealedNodeOrder,
+  ]);
+
   async function handleRerun(nodeId: string) {
     setRerunError("");
+    setRerunRevisionNote("");
     setRerunCandidateNodeId(nodeId);
   }
 
@@ -870,9 +893,11 @@ function TaskDetailPanel({
     scheduledRevealIdsRef.current = new Set();
     clearRevealedNodeSteps(affectedNodeIds);
     revealNodeStep(nodeId);
+    setPendingTransitionNodeId(nodeId);
     try {
-      await rerunNode(taskId, nodeId, projectId);
+      await rerunNode(taskId, nodeId, projectId, rerunRevisionNote);
       setRerunCandidateNodeId(null);
+      setRerunRevisionNote("");
       onTaskChanged();
       setRefreshKey((current) => current + 1);
     } catch (nextError) {
@@ -889,12 +914,10 @@ function TaskDetailPanel({
     liveRevealDelayRef.current = 0;
     scheduledRevealIdsRef.current = new Set();
     revealNodeStep(nodeId);
+    setPendingTransitionNodeId(nodeId);
     const nextDetail = {
       ...detail,
       task: { ...detail.task, status: "running", current_node_id: nodeId },
-      node_executions: detail.node_executions.map((node) => (
-        node.node_id === nodeId ? { ...node, status: "running" } : node
-      )),
     };
     setDetail(nextDetail);
     onRuntimeContextChange(taskRuntimeContext(nextDetail, orderNodes(nextDetail)));
@@ -911,6 +934,12 @@ function TaskDetailPanel({
       onTaskChanged();
       setRefreshKey((current) => current + 1);
     }
+  }
+
+  async function handleInteractionDraft(nodeId: string, input: Record<string, unknown>) {
+    const task = await saveInteractionDraft(taskId, { project_id: projectId, node_id: nodeId, input });
+    onTaskUpdated(task);
+    setDetail((current) => (current ? { ...current, task: { ...current.task, ...task } } : current));
   }
 
   return (
@@ -932,8 +961,10 @@ function TaskDetailPanel({
             eventsByNode={eventsByNode}
             nodes={orderedNodes}
             projectId={projectId}
+            pendingTransitionNodeId={pendingTransitionNodeId}
             revealedNodeOrder={revealedNodeOrder}
             snapshot={detail.workflow_snapshot}
+            onInteractionDraft={handleInteractionDraft}
             onInteraction={handleInteraction}
             onRerun={handleRerun}
           />
@@ -943,9 +974,26 @@ function TaskDetailPanel({
                 <h2>确认重新运行步骤</h2>
                 <p>重新运行此步骤会使该步骤及其下游已完成结果失效，并从这里重新执行。历史记录会保留。</p>
                 <strong>{nodeDisplayTitle(rerunCandidateNode, detail.workflow_snapshot)}</strong>
+                <label className="rerun-revision-field">
+                  <span>修改意见</span>
+                  <textarea
+                    disabled={Boolean(rerunningNodeId)}
+                    placeholder="可填写本次重新运行的修改意见，例如不要生成某类配件、保留某个字段、修正上次结果的问题。"
+                    value={rerunRevisionNote}
+                    onChange={(event) => setRerunRevisionNote(event.target.value)}
+                  />
+                </label>
                 {rerunError ? <p className="form-error">{rerunError}</p> : null}
                 <div className="button-row end">
-                  <button className="secondary-button" type="button" onClick={() => setRerunCandidateNodeId(null)} disabled={Boolean(rerunningNodeId)}>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={() => {
+                      setRerunCandidateNodeId(null);
+                      setRerunRevisionNote("");
+                    }}
+                    disabled={Boolean(rerunningNodeId)}
+                  >
                     取消
                   </button>
                   <button className="primary-button danger" type="button" onClick={() => void handleConfirmRerun()} disabled={Boolean(rerunningNodeId)}>
@@ -965,30 +1013,40 @@ function WorkflowProgressView({
   nodes,
   eventsByNode,
   projectId,
+  pendingTransitionNodeId,
   revealedNodeOrder,
   snapshot,
+  onInteractionDraft,
   onInteraction,
   onRerun,
 }: {
   nodes: TaskNodeExecution[];
   eventsByNode: Map<string, TaskEvent[]>;
   projectId: string;
+  pendingTransitionNodeId: string | null;
   revealedNodeOrder: Record<string, number>;
   snapshot?: WorkflowSnapshot | null;
+  onInteractionDraft: (nodeId: string, input: Record<string, unknown>) => Promise<void>;
   onInteraction: (nodeId: string, input: Record<string, unknown>) => Promise<void>;
   onRerun: (nodeId: string) => Promise<void>;
 }) {
   const stages = workflowStages(snapshot);
+  const pendingTransitionStageIndex = pendingTransitionNodeId
+    ? stages.findIndex((stage) => stage.nodes.includes(pendingTransitionNodeId))
+    : -1;
   const stepOrdinalByNodeId = useMemo(() => {
     const ordinals = new Map<string, number>();
     let ordinal = 1;
-    for (const node of nodes
-      .filter((item) => Boolean(item.node_execution_id) && revealedNodeOrder[item.node_id] !== undefined)
-      .sort((left, right) => (revealedNodeOrder[left.node_id] ?? 0) - (revealedNodeOrder[right.node_id] ?? 0))) {
-      ordinals.set(node.node_id, ordinal++);
+    const nodeById = new Map(nodes.map((node) => [node.node_id, node]));
+    for (const stage of stages) {
+      for (const nodeId of stage.nodes) {
+        const node = nodeById.get(nodeId);
+        if (!node?.node_execution_id || revealedNodeOrder[node.node_id] === undefined) continue;
+        ordinals.set(node.node_id, ordinal++);
+      }
     }
     return ordinals;
-  }, [nodes, revealedNodeOrder]);
+  }, [nodes, revealedNodeOrder, stages]);
   if (!stages.length) {
     return (
       <section className="node-timeline">
@@ -1000,6 +1058,7 @@ function WorkflowProgressView({
             node={node}
             projectId={projectId}
             snapshot={snapshot}
+            onInteractionDraft={onInteractionDraft}
             onInteraction={onInteraction}
             onRerun={onRerun}
           />
@@ -1019,9 +1078,11 @@ function WorkflowProgressView({
           nodes={stage.nodes.map((nodeId) => nodes.find((node) => node.node_id === nodeId)).filter(Boolean) as TaskNodeExecution[]}
           projectId={projectId}
           revealedNodeOrder={revealedNodeOrder}
+          showPreparingNextStage={pendingTransitionStageIndex === index}
           snapshot={snapshot}
           stage={stage}
           stepOrdinalByNodeId={stepOrdinalByNodeId}
+          onInteractionDraft={onInteractionDraft}
           onInteraction={onInteraction}
           onRerun={onRerun}
         />
@@ -1037,7 +1098,9 @@ function WorkflowStageCard({
   eventsByNode,
   projectId,
   revealedNodeOrder,
+  showPreparingNextStage,
   snapshot,
+  onInteractionDraft,
   onInteraction,
   onRerun,
   stepOrdinalByNodeId,
@@ -1048,14 +1111,14 @@ function WorkflowStageCard({
   eventsByNode: Map<string, TaskEvent[]>;
   projectId: string;
   revealedNodeOrder: Record<string, number>;
+  showPreparingNextStage: boolean;
   snapshot?: WorkflowSnapshot | null;
   stepOrdinalByNodeId: Map<string, number>;
+  onInteractionDraft: (nodeId: string, input: Record<string, unknown>) => Promise<void>;
   onInteraction: (nodeId: string, input: Record<string, unknown>) => Promise<void>;
   onRerun: (nodeId: string) => Promise<void>;
 }) {
-  const visibleNodes = nodes
-    .filter((node) => Boolean(node.node_execution_id) && revealedNodeOrder[node.node_id] !== undefined)
-    .sort((left, right) => (revealedNodeOrder[left.node_id] ?? 0) - (revealedNodeOrder[right.node_id] ?? 0));
+  const visibleNodes = nodes.filter((node) => Boolean(node.node_execution_id) && revealedNodeOrder[node.node_id] !== undefined);
   const [expanded, setExpanded] = useState(() => visibleNodes.some(nodeShouldDefaultExpand) || (index === 0 && visibleNodes.length > 0));
   const [expandedNodeId, setExpandedNodeId] = useState<string | null>(() => defaultExpandedStageNodeId(visibleNodes, snapshot));
   const stageStatus = stageStatusLabel(visibleNodes);
@@ -1089,11 +1152,14 @@ function WorkflowStageCard({
         </div>
       </header>
       {!expanded ? (
-        <StageProgressRail
-          nodes={visibleNodes}
-          snapshot={snapshot}
-          stepOrdinalByNodeId={stepOrdinalByNodeId}
-        />
+        <>
+          <StageProgressRail
+            nodes={visibleNodes}
+            snapshot={snapshot}
+            stepOrdinalByNodeId={stepOrdinalByNodeId}
+          />
+          {showPreparingNextStage ? <PreparingNextStage compact /> : null}
+        </>
       ) : null}
       {expanded ? (
         <div className="stage-step-list">
@@ -1152,6 +1218,7 @@ function WorkflowStageCard({
                       node={node}
                       projectId={projectId}
                       snapshot={snapshot}
+                      onInteractionDraft={onInteractionDraft}
                       onInteraction={onInteraction}
                       onRerun={onRerun}
                     />
@@ -1160,9 +1227,19 @@ function WorkflowStageCard({
               </div>
             );
           }) : <p className="muted">执行到该阶段后会生成步骤记录。</p>}
+          {showPreparingNextStage ? <PreparingNextStage /> : null}
         </div>
       ) : null}
     </article>
+  );
+}
+
+function PreparingNextStage({ compact = false }: { compact?: boolean }) {
+  return (
+    <div className={`stage-preparing-next ${compact ? "compact" : ""}`} role="status" aria-live="polite">
+      <span aria-hidden="true" />
+      <p>正在准备下一阶段...</p>
+    </div>
   );
 }
 
@@ -1188,9 +1265,9 @@ function StageProgressRail({
         const tone = statusTone(node.status);
         return (
           <div className={`stage-progress-node ${tone}`} key={node.node_execution_id ?? `${node.node_id}-${index}`}>
-            <span>{`S${ordinal}`}</span>
-            <strong>{nodeDisplayTitle(node, snapshot)}</strong>
-            <small>{statusLabel(node.status)}</small>
+            <strong>{`S${ordinal}`}</strong>
+            <span aria-hidden="true" />
+            <small>{nodeDisplayTitle(node, snapshot)}</small>
           </div>
         );
       })}
@@ -1204,6 +1281,7 @@ function NodeExecutionCard({
   events,
   projectId,
   snapshot,
+  onInteractionDraft,
   onInteraction,
   onRerun,
   initialExpanded,
@@ -1213,6 +1291,7 @@ function NodeExecutionCard({
   events: TaskEvent[];
   projectId: string;
   snapshot?: WorkflowSnapshot | null;
+  onInteractionDraft: (nodeId: string, input: Record<string, unknown>) => Promise<void>;
   onInteraction: (nodeId: string, input: Record<string, unknown>) => Promise<void>;
   onRerun: (nodeId: string) => Promise<void>;
   initialExpanded?: boolean;
@@ -1278,6 +1357,7 @@ function NodeExecutionCard({
             node={node}
             projectId={projectId}
             snapshot={snapshot}
+            onInteractionDraft={onInteractionDraft}
             onInteraction={onInteraction}
             onRerun={onRerun}
           />
@@ -1292,6 +1372,7 @@ function NodeExecutionDetails({
   events,
   projectId,
   snapshot,
+  onInteractionDraft,
   onInteraction,
   onRerun,
   showRerun = false,
@@ -1300,6 +1381,7 @@ function NodeExecutionDetails({
   events: TaskEvent[];
   projectId: string;
   snapshot?: WorkflowSnapshot | null;
+  onInteractionDraft: (nodeId: string, input: Record<string, unknown>) => Promise<void>;
   onInteraction: (nodeId: string, input: Record<string, unknown>) => Promise<void>;
   onRerun: (nodeId: string) => Promise<void>;
   showRerun?: boolean;
@@ -1315,9 +1397,14 @@ function NodeExecutionDetails({
     ? { control_id: "ui.display.value.v1", variant: "default", mode: "readonly" }
     : resolveNodeControlConfig(node, nodeSpec, snapshot, "output");
   const interactionConfig = resolveNodeInteractionConfig(node, nodeSpec, snapshot);
-  const hidesGenericSections = interactionConfig?.control_id === "ui.interaction.asset_summary_table.v1";
+  const hidesGenericSections = interactionConfig?.control_id === "ui.interaction.asset_summary_table.v1"
+    || interactionConfig?.control_id === "ui.interaction.asset_image_cards.v1";
   const InteractionControl = interactionConfig ? getNodeUiControl(interactionConfig.control_id) : null;
-  const inputCanSubmit = isWaitingNode(node, snapshot) && inputConfig?.mode === "input";
+  const waitingForInteraction = isWaitingNode(node, snapshot);
+  const renderedInteractionConfig = interactionConfig && !waitingForInteraction
+    ? { ...interactionConfig, mode: "readonly" }
+    : interactionConfig;
+  const inputCanSubmit = waitingForInteraction && inputConfig?.mode === "input";
   const inputDefaultOpen = nodeSectionDefaultOpen(snapshot, nodeSpec, "input", false);
   const outputDefaultOpen = node.error ? true : nodeSectionDefaultOpen(snapshot, nodeSpec, "output", true);
   const eventsDefaultOpen = nodeSectionDefaultOpen(snapshot, nodeSpec, "events", false);
@@ -1403,21 +1490,22 @@ function NodeExecutionDetails({
         </div>
       ) : null}
 
-      {isWaitingNode(node, snapshot) && interactionConfig && InteractionControl ? (
+      {interactionConfig && InteractionControl && (waitingForInteraction || hidesGenericSections) ? (
         <InteractionControl
           busy={busy}
-          config={interactionConfig}
+          config={renderedInteractionConfig ?? interactionConfig}
           node={node}
           nodeSpec={nodeSpec}
           projectId={projectId}
           snapshot={snapshot}
-          onSubmit={(output) => withBusy(() => onInteraction(node.node_id, output))}
+          onDraft={waitingForInteraction ? (input) => onInteractionDraft(node.node_id, input) : undefined}
+          onSubmit={waitingForInteraction ? (output) => withBusy(() => onInteraction(node.node_id, output)) : undefined}
         />
       ) : null}
 
       {actionError ? <p className="form-error">{actionError}</p> : null}
 
-      {isWaitingNode(node, snapshot) && !interactionConfig && !inputCanSubmit ? (
+      {waitingForInteraction && !interactionConfig && !inputCanSubmit ? (
         <WaitingInteraction busy={busy} node={node} nodeSpec={nodeSpec} onSubmit={(output) => withBusy(() => onInteraction(node.node_id, output))} />
       ) : null}
 
@@ -1648,6 +1736,27 @@ function ProjectsPage({
       </section>
 
       <section className="project-entry-layout">
+        <aside className="project-entry-create">
+          <section className="project-create-panel">
+            <p className="eyebrow">新建</p>
+            <h2>创建项目</h2>
+            <form className="form-stack" onSubmit={handleCreate}>
+              <label>
+                <span>项目名称</span>
+                <input value={name} onChange={(event) => setName(event.target.value)} />
+              </label>
+              <label>
+                <span>项目说明</span>
+                <textarea value={description} onChange={(event) => setDescription(event.target.value)} />
+              </label>
+              {formError ? <p className="form-error">{formError}</p> : null}
+              <button className="primary-button" disabled={saving} type="submit">
+                {saving ? "创建中" : "创建项目"}
+              </button>
+            </form>
+          </section>
+        </aside>
+
         <div className="project-directory">
           <div className="project-directory-head">
             <div>
@@ -1695,25 +1804,6 @@ function ProjectsPage({
                 <dd>{formatDate(selectedProject?.created_at)}</dd>
               </div>
             </dl>
-          </section>
-
-          <section className="project-create-panel">
-            <p className="eyebrow">新建</p>
-            <h2>创建项目</h2>
-            <form className="form-stack" onSubmit={handleCreate}>
-              <label>
-                <span>项目名称</span>
-                <input value={name} onChange={(event) => setName(event.target.value)} />
-              </label>
-              <label>
-                <span>项目说明</span>
-                <textarea value={description} onChange={(event) => setDescription(event.target.value)} />
-              </label>
-              {formError ? <p className="form-error">{formError}</p> : null}
-              <button className="primary-button" disabled={saving} type="submit">
-                {saving ? "创建中" : "创建项目"}
-              </button>
-            </form>
           </section>
         </aside>
       </section>

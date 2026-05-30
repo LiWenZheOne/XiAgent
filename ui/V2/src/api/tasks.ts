@@ -64,13 +64,24 @@ export async function submitInteraction(taskId: string, request: SubmitInteracti
   });
 }
 
-export async function rerunNode(taskId: string, nodeId: string, projectId: string): Promise<TaskRecord> {
+export async function saveInteractionDraft(taskId: string, request: SubmitInteractionRequest): Promise<TaskRecord> {
+  return apiRequest<TaskRecord>(`/api/tasks/${encodeURIComponent(taskId)}/interactions/draft`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+  });
+}
+
+export async function rerunNode(taskId: string, nodeId: string, projectId: string, rerunRevisionNote = ""): Promise<TaskRecord> {
+  const body: Record<string, string> = { project_id: projectId };
+  const cleanRevisionNote = rerunRevisionNote.trim();
+  if (cleanRevisionNote) body.rerun_revision_note = cleanRevisionNote;
   return apiRequest<TaskRecord>(
     `/api/tasks/${encodeURIComponent(taskId)}/nodes/${encodeURIComponent(nodeId)}/rerun`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ project_id: projectId }),
+      body: JSON.stringify(body),
     },
   );
 }

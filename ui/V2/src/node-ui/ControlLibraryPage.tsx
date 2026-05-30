@@ -61,6 +61,11 @@ const sampleImageUrls = [
   "https://images.unsplash.com/photo-1500534314209-a25ddb2bd429?auto=format&fit=crop&w=480&q=80",
 ];
 
+const sampleImageRefs = [
+  { kind: "data_uri", data: "data:image/png;base64,aW1hZ2UtcmVmLTE=", role: "reference" },
+  { kind: "data_uri", data: "data:image/png;base64,aW1hZ2UtcmVmLTI=", role: "reference" },
+];
+
 const schemaFormPreviewSchema = {
   type: "object",
   required: ["prompt", "resolution"],
@@ -75,10 +80,19 @@ const schemaFormPreviewSchema = {
       title: "清晰度",
       enum: ["1k", "2k", "4k"],
     },
-    image_urls: {
+    image_refs: {
       type: "array",
       title: "参考图",
-      items: { type: "string" },
+      items: {
+        type: "object",
+        required: ["kind"],
+        properties: {
+          kind: { type: "string" },
+          asset_id: { type: "string" },
+          data: { type: "string" },
+          role: { type: "string" },
+        },
+      },
     },
   },
 };
@@ -222,12 +236,44 @@ const controlPreviewFixtures: Record<string, ControlPreviewFixture[]> = {
             {
               full_name: "林冲",
               prompt: "请将图中角色的官服改成囚服，保持风格和其它特征不变",
-              reference_image_url: sampleImageUrls[0],
+              reference_image_ref: sampleImageRefs[0],
             },
           ],
         },
       },
       projectId: "global",
+    },
+  ],
+  "ui.display.asset_task_summary.v1": [
+    {
+      config: { control_id: "ui.display.asset_task_summary.v1", variant: "catalog_complete", mode: "readonly" },
+      node: {
+        node_execution_id: "preview-asset-task-summary",
+        node_id: "finish_summary",
+        node_ref: "tool.echo.v1",
+        status: "succeeded",
+        output_snapshot: {
+          echo: {
+            created_asset_ids: ["asset-linchong"],
+            asset_images: [
+              {
+                asset_type: "character",
+                asset_key: "林冲",
+                full_name: "林冲_囚服",
+                image_url: sampleImageUrls[0],
+                source: "library",
+              },
+              {
+                asset_type: "prop",
+                asset_key: "水火棍",
+                full_name: "水火棍",
+                image_url: sampleImageUrls[1],
+                source: "library",
+              },
+            ],
+          },
+        },
+      },
     },
   ],
   "ui.interaction.asset_summary_table.v1": [
@@ -267,7 +313,7 @@ const controlPreviewFixtures: Record<string, ControlPreviewFixture[]> = {
         mode: "input",
         options: {
           fields: {
-            image_urls: {
+            image_refs: {
               control_id: "ui.input.asset_image_picker.v1",
               variant: "thumbnails",
               mode: "input",
@@ -296,7 +342,7 @@ const controlPreviewFixtures: Record<string, ControlPreviewFixture[]> = {
       value: {
         prompt: "",
         resolution: "",
-        image_urls: [],
+        image_refs: [],
       },
     },
   ],
@@ -328,7 +374,7 @@ const controlPreviewFixtures: Record<string, ControlPreviewFixture[]> = {
         mode: "readonly",
         options: {
           fields: {
-            image_urls: {
+            image_refs: {
               control_id: "ui.input.asset_image_picker.v1",
               variant: "thumbnails",
               mode: "readonly",
@@ -347,20 +393,29 @@ const controlPreviewFixtures: Record<string, ControlPreviewFixture[]> = {
           input_schema: {
             type: "object",
             properties: {
-              image_urls: {
+              image_refs: {
                 type: "array",
                 title: "参考图",
-                items: { type: "string" },
+                items: {
+                  type: "object",
+                  required: ["kind"],
+                  properties: {
+                    kind: { type: "string" },
+                    asset_id: { type: "string" },
+                    data: { type: "string" },
+                    role: { type: "string" },
+                  },
+                },
               },
             },
           },
         },
         output_snapshot: {
-          image_urls: [sampleImageUrls[0], sampleImageUrls[1]],
+          image_refs: sampleImageRefs,
         },
       },
       value: {
-        image_urls: [sampleImageUrls[0], sampleImageUrls[1]],
+        image_refs: sampleImageRefs,
       },
     },
   ],

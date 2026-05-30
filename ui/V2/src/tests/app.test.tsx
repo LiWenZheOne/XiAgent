@@ -489,6 +489,9 @@ function mockFetch() {
     if (url === "/api/tasks/task-1/interactions" && method === "POST") {
       return jsonResponse({ task_id: "task-1", project_id: "global", status: "running" });
     }
+    if (url === "/api/tasks/task-1/nodes/prepare_prompt/rerun" && method === "POST") {
+      return jsonResponse({ task_id: "task-1", project_id: "global", status: "running" });
+    }
     return jsonResponse({ items: [] });
   });
 }
@@ -619,6 +622,32 @@ describe("XiAgent V2 app", () => {
         fetchMock.mock.calls.some(([url, init]) => url === "/api/tasks/task-1?project_id=global" && init?.method === "DELETE"),
       ).toBe(true);
       expect(screen.queryByRole("button", { name: "删除任务 task-1" })).not.toBeInTheDocument();
+    });
+  });
+
+  it("sends rerun revision note text when confirming a node rerun", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    render(<App />);
+    await login();
+
+    await userEvent.click(await screen.findByRole("button", { name: "打开 故事板生成" }));
+    const detail = await screen.findByLabelText("任务运行详情");
+    const prepareStep = within(detail).getAllByText("准备提示词").find((item) => item.closest(".stage-step-row"));
+    const prepareRow = prepareStep?.closest(".stage-step-row") as HTMLElement;
+    expect(prepareRow).toBeTruthy();
+
+    await userEvent.click(within(prepareRow).getByRole("button", { name: "重新运行" }));
+    const dialog = await screen.findByRole("dialog", { name: "确认重新运行步骤" });
+    await userEvent.type(within(dialog).getByLabelText("修改意见"), "保留原有水墨风格，只修正角色服装。");
+    await userEvent.click(within(dialog).getByRole("button", { name: "确认重新运行" }));
+
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(([url, init]) => url === "/api/tasks/task-1/nodes/prepare_prompt/rerun" && init?.method === "POST");
+      expect(post).toBeTruthy();
+      expect(JSON.parse(String(post?.[1]?.body))).toMatchObject({
+        project_id: "global",
+        rerun_revision_note: "保留原有水墨风格，只修正角色服装。",
+      });
     });
   });
 
@@ -799,7 +828,8 @@ describe("XiAgent V2 app", () => {
 
     expect(prompt).toHaveAttribute("readonly");
     expect(within(screen.getByRole("button", { name: "打开 RunningHub Text To Image Test" })).getByText("运行中")).toBeInTheDocument();
-    expect(within(detail).getAllByText("运行中").length).toBeGreaterThanOrEqual(2);
+    expect(within(detail).getAllByText("运行中").length).toBeGreaterThanOrEqual(1);
+    expect(within(detail).getAllByText("等待用户").length).toBeGreaterThan(0);
     expect(fetchMock.mock.calls.filter(([url, init]) =>
       url === "/api/tasks/schema-task/interactions" && init?.method === "POST",
     )).toHaveLength(1);

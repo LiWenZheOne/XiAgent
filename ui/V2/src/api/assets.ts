@@ -154,12 +154,92 @@ export async function createTextAsset(input: {
   project_id?: string;
   name: string;
   text: string;
+  metadata?: Record<string, unknown>;
 }): Promise<AssetRecord> {
   return apiRequest<AssetRecord>("/api/assets/text", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ...input, metadata: {} }),
+    body: JSON.stringify({ ...input, metadata: input.metadata ?? {} }),
   });
+}
+
+export interface DraftAssetFromDescriptionInput {
+  project_id?: string;
+  asset_type?: "auto" | "character" | "location" | "prop";
+  description: string;
+  script?: string;
+  background?: string;
+  current_assets?: Record<string, unknown>;
+}
+
+export interface DraftAssetFromDescriptionResult {
+  assets?: Array<Record<string, unknown>>;
+  asset?: Record<string, unknown>;
+  confidence: number;
+  reasoning: string;
+}
+
+export async function draftAssetFromDescription(input: DraftAssetFromDescriptionInput): Promise<DraftAssetFromDescriptionResult> {
+  return apiRequest<DraftAssetFromDescriptionResult>("/api/assets/draft-from-description", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export interface GenerateAssetImageInput {
+  project_id?: string;
+  prompt_result: Record<string, unknown>;
+  prompt_prefix?: string;
+  prompt_suffix?: string;
+  aspect_ratio?: string;
+  resolution?: string;
+}
+
+export interface GeneratedAssetImage {
+  full_name?: string;
+  image_url: string;
+  source?: string;
+  runninghub_task_id?: string;
+  variant?: string;
+  asset_id?: string;
+}
+
+interface ImageGenerationJob {
+  generation_id: string;
+  status: "queued" | "running" | "succeeded" | "failed" | string;
+  result?: GeneratedAssetImage;
+  error?: {
+    code?: string;
+    message?: string;
+    details?: Record<string, unknown>;
+  };
+}
+
+export async function generateAssetImage(input: GenerateAssetImageInput): Promise<GeneratedAssetImage> {
+  const job = await apiRequest<ImageGenerationJob>("/api/assets/generate-image", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  return waitForGeneratedAssetImage(job.generation_id);
+}
+
+async function waitForGeneratedAssetImage(generationId: string): Promise<GeneratedAssetImage> {
+  const timeoutAt = Date.now() + 4 * 60 * 1000;
+  while (Date.now() < timeoutAt) {
+    const job = await apiRequest<ImageGenerationJob>(`/api/assets/generate-image/${encodeURIComponent(generationId)}`);
+    if (job.status === "succeeded" && job.result) return job.result;
+    if (job.status === "failed") {
+      throw new ApiError(job.error?.message || "资产图像生成失败。", 500, job.error?.code || "asset_image_generation_failed");
+    }
+    await delay(1800);
+  }
+  throw new ApiError("资产图像生成超时，请稍后重试。", 504, "asset_image_generation_poll_timeout");
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 export async function updateAsset(input: {

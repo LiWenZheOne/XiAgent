@@ -14,6 +14,7 @@ export interface NodeUiControlProps {
   busy?: boolean;
   preview?: boolean;
   onSubmit?: (input: Record<string, unknown>) => void;
+  onDraft?: (input: Record<string, unknown>) => Promise<void> | void;
 }
 
 export type NodeUiComponent = (props: NodeUiControlProps) => ReactElement;

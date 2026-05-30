@@ -1,6 +1,6 @@
 import { type ChangeEvent, useEffect, useMemo, useState } from "react";
 
-import { searchAssets, uploadAsset } from "../../api/assets";
+import { draftAssetFromDescription, searchAssets, uploadAsset } from "../../api/assets";
 import type { AssetRecord, AssetScope } from "../../api/types";
 import type { NodeUiControlProps } from "../types";
 
@@ -12,18 +12,34 @@ interface AssetSummaryRow {
   name: string;
   matchedAsset?: AssetMatch;
   imageUrl?: string;
+  referenceImageRef?: ImageRef;
+  referenceAppearanceDescription?: string;
   fields: Record<string, string>;
 }
 
 interface AssetMatch {
   asset_id: string;
   name: string;
+  imageRef?: ImageRef;
   imageUrl?: string;
+  appearanceDescription?: string;
+}
+
+interface ImageRef {
+  kind: "asset" | "data_uri";
+  asset_id?: string;
+  data?: string;
+  role?: string;
 }
 
 type ImageState = Record<string, string>;
 type UploadState = Record<string, string>;
 type MatchState = Record<string, AssetMatch | null>;
+type DraftState = {
+  assets: Array<Record<string, unknown>>;
+  confidence: number;
+  reasoning: string;
+} | null;
 
 const tabLabels: Record<TabKey, string> = {
   character: "角色",
@@ -39,7 +55,10 @@ export function AssetSummaryTableControl({
   onSubmit,
 }: NodeUiControlProps) {
   const readonly = config.mode === "readonly" || !onSubmit;
-  const source = recordValue(readonly ? node.output_snapshot : node.input_snapshot);
+  const source = useMemo(
+    () => normalizeAssetSummarySource(readonly ? node.output_snapshot : node.input_snapshot),
+    [node.input_snapshot, node.output_snapshot, readonly],
+  );
   const sourceRows = useMemo(() => buildRows(source), [source]);
   const [rows, setRows] = useState<AssetSummaryRow[]>(() => sourceRows);
   const [activeTab, setActiveTab] = useState<TabKey>("character");
@@ -54,6 +73,12 @@ export function AssetSummaryTableControl({
   const [pickerAssets, setPickerAssets] = useState<AssetRecord[]>([]);
   const [pickerLoading, setPickerLoading] = useState(false);
   const [pickerError, setPickerError] = useState("");
+  const [draftOpen, setDraftOpen] = useState(false);
+  const [draftDescription, setDraftDescription] = useState("");
+  const [additionalAssetRequest, setAdditionalAssetRequest] = useState("");
+  const [draftResult, setDraftResult] = useState<DraftState>(null);
+  const [draftLoading, setDraftLoading] = useState(false);
+  const [draftError, setDraftError] = useState("");
 
   useEffect(() => {
     setRows(sourceRows);
@@ -91,13 +116,11 @@ export function AssetSummaryTableControl({
 
   function submit(decision: "approved" | "needs_changes") {
     if (readonly || busy) return;
+    const approvedAssets = currentApprovedAssets(rows, matches);
     onSubmit?.({
       decision,
-      approved_assets: {
-        characters: rows.filter((row) => row.type === "character").map((row) => rowPayload(row, matches[row.key] ?? row.matchedAsset ?? null)),
-        assets: rows.filter((row) => row.type === "asset").map((row) => rowPayload(row, matches[row.key] ?? row.matchedAsset ?? null)),
-        props: rows.filter((row) => row.type === "prop").map((row) => rowPayload(row, matches[row.key] ?? row.matchedAsset ?? null)),
-      },
+      approved_assets: approvedAssets,
+      additional_asset_request: additionalAssetRequest.trim(),
       asset_images: rows
         .map((row) => {
           const imageUrl = (images[row.key] || row.imageUrl || "").trim();
@@ -162,6 +185,44 @@ export function AssetSummaryTableControl({
     ]);
   }
 
+  function openDraftDialog() {
+    setDraftDescription(additionalAssetRequest);
+    setDraftResult(null);
+    setDraftError("");
+    setDraftOpen(true);
+  }
+
+  async function generateDraftAsset() {
+    const description = draftDescription.trim();
+    if (!description) {
+      setDraftError("请先描述需要新增的资产特征。");
+      return;
+    }
+    setDraftLoading(true);
+    setDraftError("");
+    setDraftResult(null);
+    try {
+      const result = await draftAssetFromDescription({
+        project_id: projectId,
+        asset_type: "auto",
+        description,
+        script: textValue(source?.script) ?? "",
+        background: textValue(source?.background) ?? "",
+        current_assets: currentApprovedAssets(rows, matches),
+      });
+      setDraftResult({
+        assets: normalizeDraftAssets(result),
+        confidence: result.confidence,
+        reasoning: result.reasoning,
+      });
+      setAdditionalAssetRequest(description);
+    } catch (nextError) {
+      setDraftError(nextError instanceof Error ? nextError.message : "AI 新增资产失败。");
+    } finally {
+      setDraftLoading(false);
+    }
+  }
+
   function deleteRow(row: AssetSummaryRow) {
     setRows((current) => current.filter((item) => item.key !== row.key));
     setMatches((current) => {
@@ -186,22 +247,6 @@ export function AssetSummaryTableControl({
     )));
   }
 
-  if (!rows.length) {
-    return (
-      <section className="interaction-panel asset-summary-table-control">
-        <p className="eyebrow">资产列表汇总</p>
-        <h3>暂无可审核资产</h3>
-        {!readonly ? (
-          <div className="asset-summary-actions">
-            <button className="secondary-button" type="button" onClick={() => addRow(activeTab)}>
-              新增{tabLabels[activeTab]}
-            </button>
-          </div>
-        ) : null}
-      </section>
-    );
-  }
-
   return (
     <section className="interaction-panel asset-summary-table-control">
       <div className="asset-summary-head">
@@ -211,11 +256,8 @@ export function AssetSummaryTableControl({
         </div>
         {!readonly ? (
           <div className="asset-summary-actions">
-            <button className="secondary-button" disabled={busy} type="button" onClick={() => addRow(activeTab)}>
-              新增{tabLabels[activeTab]}
-            </button>
-            <button className="secondary-button" disabled={busy} type="button" onClick={() => submit("needs_changes")}>
-              需要调整
+            <button className="secondary-button" disabled={busy} type="button" onClick={openDraftDialog}>
+              资产分析
             </button>
             <button className="primary-button" disabled={busy} type="button" onClick={() => submit("approved")}>
               确认并继续
@@ -247,7 +289,7 @@ export function AssetSummaryTableControl({
             <col className="asset-summary-col-match" />
             <col className="asset-summary-col-image" />
             {columns.map((column) => <col className={assetSummaryColumnClass(column)} key={column} />)}
-            {!readonly ? <col className="asset-summary-col-action" /> : null}
+            <col className="asset-summary-col-action" />
           </colgroup>
           <thead>
             <tr>
@@ -255,7 +297,7 @@ export function AssetSummaryTableControl({
               <th>匹配资产</th>
               <th>图像</th>
               {columns.map((column) => <th key={column}>{fieldLabel(column)}</th>)}
-              {!readonly ? <th>操作</th> : null}
+              <th>操作</th>
             </tr>
           </thead>
           <tbody>
@@ -326,8 +368,8 @@ export function AssetSummaryTableControl({
                       )}
                     </td>
                   ))}
-                  {!readonly ? (
-                    <td className="asset-summary-action-cell">
+                  <td className="asset-summary-action-cell">
+                    {readonly ? <span className="asset-summary-readonly-action">—</span> : (
                       <button
                         aria-label="删除"
                         className="asset-summary-delete-button"
@@ -338,19 +380,94 @@ export function AssetSummaryTableControl({
                       >
                         ×
                       </button>
-                    </td>
-                  ) : null}
+                    )}
+                  </td>
                 </tr>
               );
             }) : (
               <tr>
-                <td colSpan={columns.length + (readonly ? 3 : 4)}>暂无{tabLabels[activeTab]}。</td>
+                <td colSpan={columns.length + 4}>暂无{tabLabels[activeTab]}。</td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
       {error ? <p className="form-error">{error}</p> : null}
+      {draftOpen ? (
+        <div className="confirm-backdrop" role="presentation">
+          <section className="asset-draft-dialog" role="dialog" aria-modal="true" aria-label="资产分析">
+            <header>
+              <div>
+                <p className="eyebrow">资产分析</p>
+                <h3>根据描述分析并补全资产字段</h3>
+              </div>
+              <button className="secondary-button" disabled={draftLoading} type="button" onClick={() => setDraftOpen(false)}>关闭</button>
+            </header>
+            <label className="asset-draft-description">
+              <span>描述需要新增的资产</span>
+              <textarea
+                disabled={draftLoading}
+                placeholder="例如：官兵的船、船上的官兵、船上兵器。可以一次描述多个资产，系统会自动判断角色、地点或道具。"
+                rows={4}
+                value={draftDescription}
+                onChange={(event) => {
+                  setDraftDescription(event.target.value);
+                  setAdditionalAssetRequest(event.target.value);
+                  setDraftResult(null);
+                }}
+              />
+            </label>
+            <div className="button-row">
+              <button className="primary-button" disabled={draftLoading || !draftDescription.trim()} type="button" onClick={() => void generateDraftAsset()}>
+                {draftLoading ? "正在分析..." : "分析资产"}
+              </button>
+              <button
+                className="secondary-button"
+                disabled={draftLoading}
+                type="button"
+                onClick={() => {
+                  addRow(activeTab);
+                  setDraftOpen(false);
+                }}
+              >
+                手动新增当前分类空行
+              </button>
+            </div>
+            {draftError ? <p className="form-error">{draftError}</p> : null}
+            {draftResult ? (
+              <div className="asset-draft-preview">
+                <div>
+                  <p className="eyebrow">生成结果</p>
+                  <h4>分析出 {draftResult.assets.length} 个资产</h4>
+                  <p>{draftResult.reasoning}</p>
+                  <small>可信度 {Math.round(draftResult.confidence * 100)}%</small>
+                </div>
+                {draftResult.assets.map((asset, assetIndex) => (
+                  <div className="asset-draft-preview-item" key={`${textValue(asset.name) ?? "asset"}-${assetIndex}`}>
+                    <h5>
+                      <span>{tabLabels[rowTypeFromDraft(asset)]}</span>
+                      {textValue(asset.name) ?? `资产 ${assetIndex + 1}`}
+                    </h5>
+                    <dl>
+                      {Object.entries(asset).map(([key, value]) => (
+                        <div key={key}>
+                          <dt>{fieldLabel(key)}</dt>
+                          <dd>{displayValue(value) || "—"}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </div>
+                ))}
+                <div className="button-row end">
+                  <button className="secondary-button" disabled={busy} type="button" onClick={() => setDraftOpen(false)}>
+                    保留修改意见
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </section>
+        </div>
+      ) : null}
       {pickerRow ? (
         <div className="confirm-backdrop" role="presentation">
           <section className="asset-picker-dialog" role="dialog" aria-modal="true" aria-label="选择匹配资产">
@@ -379,7 +496,9 @@ export function AssetSummaryTableControl({
                       [pickerRow.key]: {
                         asset_id: asset.asset_id,
                         name: asset.name,
+                        imageRef: { kind: "asset", asset_id: asset.asset_id, role: "reference" },
                         imageUrl: assetImageUrl(asset),
+                        appearanceDescription: assetAppearanceDescription(asset),
                       },
                     }));
                     setPickerRow(null);
@@ -420,7 +539,7 @@ function buildRows(source: Record<string, unknown> | null): AssetSummaryRow[] {
       semantic: mapByName(arrayOfRecords(source.semantic_match)),
       byName: mapByName(arrayOfRecords(source.match_by_name)),
     }),
-    ...buildGroupRows("asset", arrayOfRecords(source.scenes), {
+    ...buildGroupRows("asset", arrayOfRecords(source.scenes).length ? arrayOfRecords(source.scenes) : arrayOfRecords(source.assets), {
       enriched: mapByName(arrayOfRecords(source.enriched_scenes)),
       byName: mapByName(arrayOfRecords(source.scene_matches)),
     }),
@@ -438,18 +557,29 @@ function buildGroupRows(
 ): AssetSummaryRow[] {
   return items.map((item, index) => {
     const name = textValue(item.full_name) || textValue(item.name) || `${tabLabels[type]} ${index + 1}`;
+    const variantRecord = related.variants?.get(name);
     const fields = {
       ...flattenRecord(item),
     };
     delete fields.full_name;
     delete fields.name;
     delete fields.image_url;
+    delete fields.type;
+    delete fields.matched;
+    delete fields.matched_asset_id;
+    delete fields.matched_asset_name;
+    delete fields.matched_asset_ref;
+    delete fields.reference_image_ref;
+    delete fields.matched_asset_appearance_description;
+    delete fields.reference_appearance_description;
     return {
       key: `${type}:${name}`,
       type,
       name,
-      matchedAsset: matchedAsset(related.enriched?.get(name), related.byName?.get(name), related.semantic?.get(name)),
-      imageUrl: textValue(item.image_url),
+      matchedAsset: matchedAsset(item, related.enriched?.get(name), related.byName?.get(name), related.semantic?.get(name), related.variants?.get(name)),
+      imageUrl: assetImageUrl(item) || assetImageUrl(variantRecord) || textValue(item.image_url),
+      referenceImageRef: imageRefFromRecord(variantRecord) || imageRefFromRecord(item),
+      referenceAppearanceDescription: assetAppearanceDescription(variantRecord),
       fields,
     };
   });
@@ -464,11 +594,74 @@ function rowPayload(row: AssetSummaryRow, match: AssetMatch | null): Record<stri
     matched_asset_name: match?.name ?? "",
     ...row.fields,
   };
-  if (match?.imageUrl) {
-    payload.matched_asset_image_url = match.imageUrl;
-    payload.reference_image_url = match.imageUrl;
+  if (match?.imageRef) {
+    payload.matched_asset_ref = match.imageRef;
+    payload.reference_image_ref = match.imageRef;
+  } else if (row.referenceImageRef) {
+    payload.reference_image_ref = row.referenceImageRef;
+  }
+  if (match?.appearanceDescription) {
+    payload.matched_asset_appearance_description = match.appearanceDescription;
+    payload.reference_appearance_description = match.appearanceDescription;
+  } else if (row.referenceAppearanceDescription) {
+    payload.reference_appearance_description = row.referenceAppearanceDescription;
   }
   return payload;
+}
+
+function currentApprovedAssets(rows: AssetSummaryRow[], matches: MatchState): Record<string, unknown> {
+  return {
+    characters: rows.filter((row) => row.type === "character").map((row) => rowPayload(row, matches[row.key] ?? row.matchedAsset ?? null)),
+    assets: rows.filter((row) => row.type === "asset").map((row) => rowPayload(row, matches[row.key] ?? row.matchedAsset ?? null)),
+    props: rows.filter((row) => row.type === "prop").map((row) => rowPayload(row, matches[row.key] ?? row.matchedAsset ?? null)),
+  };
+}
+
+function normalizeAssetSummarySource(value: unknown): Record<string, unknown> | null {
+  const source = recordValue(value);
+  if (!source) return null;
+  const approvedAssets = recordValue(source.approved_assets);
+  if (!approvedAssets) return source;
+  return {
+    ...approvedAssets,
+    asset_images: source.asset_images,
+  };
+}
+
+function rowFromDraft(asset: Record<string, unknown>): AssetSummaryRow {
+  const type = rowTypeFromDraft(asset);
+  const name = textValue(asset.name) || `${tabLabels[type]} ${Date.now()}`;
+  const fields = {
+    ...defaultFieldsForType(type),
+    ...flattenRecord(asset),
+  };
+  delete fields.type;
+  delete fields.full_name;
+  delete fields.name;
+  delete fields.image_url;
+  delete fields.matched;
+  delete fields.matched_asset_id;
+  delete fields.matched_asset_name;
+  return {
+    key: `${type}:ai:${Date.now()}:${name}`,
+    type,
+    name,
+    fields,
+  };
+}
+
+function normalizeDraftAssets(result: { assets?: Array<Record<string, unknown>>; asset?: Record<string, unknown> }): Array<Record<string, unknown>> {
+  if (Array.isArray(result.assets)) {
+    return result.assets.filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null);
+  }
+  return result.asset && typeof result.asset === "object" ? [result.asset] : [];
+}
+
+function rowTypeFromDraft(asset: Record<string, unknown>): TabKey {
+  const type = String(asset.type ?? "").trim().toLowerCase();
+  if (type === "character" || type === "role" || type === "角色") return "character";
+  if (type === "location" || type === "asset" || type === "scene" || type === "地点" || type === "场景") return "asset";
+  return "prop";
 }
 
 function tableColumns(rows: AssetSummaryRow[]): string[] {
@@ -486,7 +679,7 @@ function tableColumns(rows: AssetSummaryRow[]): string[] {
 
 function defaultFieldsForType(type: TabKey): Record<string, string> {
   if (type === "character") {
-    return { aliases: "", summary: "", character_status: "" };
+    return { aliases: "", summary: "", character_status: "", variant_name: "", variant_description: "" };
   }
   if (type === "asset") {
     return { description: "", location_type: "", time_of_day: "" };
@@ -507,13 +700,25 @@ function flattenRecord(record: Record<string, unknown> | undefined): Record<stri
 function matchedAsset(...records: Array<Record<string, unknown> | undefined>): AssetMatch | undefined {
   for (const record of records) {
     if (!record) continue;
-    const assetId = textValue(record.asset_id) || textValue(record.matched_asset_id);
-    const name = textValue(record.name) || textValue(record.matched_asset_name);
+    const matchedAssetId = textValue(record.matched_asset_id);
+    const matchedAssetName = textValue(record.matched_asset_name);
+    const matchedVariantId = textValue(record.matched_variant_id);
+    const matchedVariantName = textValue(record.matched_variant);
+    const hasExplicitMatchFields = Object.prototype.hasOwnProperty.call(record, "matched")
+      || Object.prototype.hasOwnProperty.call(record, "matched_asset_id")
+      || Object.prototype.hasOwnProperty.call(record, "matched_asset_name")
+      || Object.prototype.hasOwnProperty.call(record, "matched_variant_id")
+      || Object.prototype.hasOwnProperty.call(record, "matched_variant");
+    const fallbackAssetId = !hasExplicitMatchFields ? textValue(record.asset_id) : undefined;
+    const assetId = matchedAssetId || matchedVariantId || fallbackAssetId;
+    const name = matchedAssetName || matchedVariantName || (fallbackAssetId ? textValue(record.name) : undefined);
     if ((record.matched === true || assetId || name) && (assetId || name)) {
       return {
         asset_id: assetId ?? name ?? "",
         name: name ?? assetId ?? "",
+        imageRef: imageRefFromRecord(record),
         imageUrl: assetImageUrl(record),
+        appearanceDescription: assetAppearanceDescription(record),
       };
     }
   }
@@ -569,6 +774,28 @@ function displayValue(value: unknown): string {
   return "";
 }
 
+function imageRefFromRecord(record: Record<string, unknown> | undefined): ImageRef | undefined {
+  if (!record) return undefined;
+  const explicit = imageRefFromValue(record.reference_image_ref) || imageRefFromValue(record.matched_asset_ref);
+  if (explicit) return explicit;
+  const assetId = textValue(record.asset_id) || textValue(record.matched_asset_id) || textValue(record.matched_variant_id);
+  return assetId ? { kind: "asset", asset_id: assetId, role: "reference" } : undefined;
+}
+
+function imageRefFromValue(value: unknown): ImageRef | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  if (record.kind === "asset") {
+    const assetId = textValue(record.asset_id);
+    return assetId ? { kind: "asset", asset_id: assetId, role: textValue(record.role) || "reference" } : undefined;
+  }
+  if (record.kind === "data_uri") {
+    const data = textValue(record.data);
+    return data?.startsWith("data:image/") ? { kind: "data_uri", data, role: textValue(record.role) || "reference" } : undefined;
+  }
+  return undefined;
+}
+
 function textareaRows(value: string): number {
   const lineRows = value.split(/\r?\n/).reduce((total, line) => total + Math.max(1, Math.ceil(line.length / 24)), 0);
   return Math.min(8, Math.max(2, lineRows));
@@ -597,13 +824,37 @@ function assetSummary(asset: AssetRecord): string {
 function assetImageUrl(asset: unknown): string | undefined {
   const record = recordValue(asset);
   if (!record) return undefined;
-  const direct = textValue(record.image_url) || textValue(record.public_url) || textValue(record.storage_uri);
+  const direct = textValue(record.image_url)
+    || textValue(record.public_url)
+    || textValue(record.storage_uri)
+    || textValue(record.default_variant_storage_uri);
   if (direct) return direct;
   const metadata = recordValue(record.metadata);
   const metadataUrl = textValue(metadata?.image_url) || textValue(metadata?.public_url) || textValue(metadata?.storage_uri);
   if (metadataUrl) return metadataUrl;
   const objectStorage = recordValue(metadata?.object_storage);
   return textValue(objectStorage?.public_url);
+}
+
+function assetAppearanceDescription(asset: unknown): string | undefined {
+  const record = recordValue(asset);
+  if (!record) return undefined;
+  const direct = textValue(record.appearance_description)
+    || textValue(record.matched_asset_appearance_description)
+    || textValue(record.reference_appearance_description)
+    || textValue(record.default_variant_appearance_description)
+    || textValue(record.visual_description)
+    || textValue(record.variant_description)
+    || textValue(record.description)
+    || textValue(record.prompt)
+    || textValue(record.text_content);
+  if (direct) return direct;
+  const metadata = recordValue(record.metadata);
+  return textValue(metadata?.appearance_description)
+    || textValue(metadata?.visual_description)
+    || textValue(metadata?.variant_description)
+    || textValue(metadata?.description)
+    || textValue(metadata?.prompt);
 }
 
 function fieldLabel(key: string): string {
@@ -625,6 +876,8 @@ function fieldLabel(key: string): string {
     time_of_day: "时间特征",
     location_type: "地点类型",
     summary: "摘要",
+    variant_description: "变体描述",
+    variant_name: "变体名",
   };
   return labels[key] ?? key.replace(/_/g, " ");
 }

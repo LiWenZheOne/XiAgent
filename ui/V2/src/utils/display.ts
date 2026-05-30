@@ -24,6 +24,10 @@ export interface HumanValue {
 const fieldLabels: Record<string, string> = {
   topic: "创作主题",
   prompt: "提示词",
+  prompt_template: "提示词模板",
+  system: "系统提示词",
+  max_attempts: "最大重试次数",
+  items: "调用项",
   image_url: "参考图片",
   image_urls: "参考图片",
   images: "图片",

@@ -6,7 +6,19 @@ import type { AssetCollection, AssetRecord, AssetScope, AssetTag, JsonSchema, No
 import { buildSchemaFields, type SchemaField } from "../../utils/display";
 import type { NodeUiControlProps } from "../types";
 
-type FormValue = string | boolean | string[];
+interface ImageRef {
+  kind: "asset" | "data_uri";
+  asset_id?: string;
+  data?: string;
+  role?: string;
+}
+
+interface ImageRefPreview {
+  label: string;
+  url?: string;
+}
+
+type FormValue = string | boolean | string[] | ImageRef | ImageRef[];
 
 export function SchemaFormControl({ busy, config, node, nodeSpec, projectId, snapshot, slot, value, onSubmit }: NodeUiControlProps) {
   const inputSchema = resolveInputSchema(node, nodeSpec, slot);
@@ -189,13 +201,15 @@ function AssetImagePickerField({
 }) {
   const option = controlOptionReader(config);
   const multiple = option("selection_mode") === "multiple" || field.type === "array";
-  const selected = Array.isArray(value) ? value : value ? [String(value)] : [];
+  const selected = normalizeImageRefs(value);
+  const [previews, setPreviews] = useState<Record<string, ImageRefPreview>>({});
   const [open, setOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [previewUrl, setPreviewUrl] = useState("");
 
-  function updateSelected(urls: string[]) {
-    onChange(multiple ? urls : urls[0] ?? "");
+  function updateSelected(refs: ImageRef[], nextPreviews: Record<string, ImageRefPreview>) {
+    setPreviews((current) => ({ ...current, ...nextPreviews }));
+    onChange(multiple ? refs : refs[0] ?? { kind: "asset", asset_id: "" });
   }
 
   return (
@@ -203,11 +217,15 @@ function AssetImagePickerField({
       <legend>{field.label}{field.required ? " *" : ""}</legend>
       {field.description ? <p>{field.description}</p> : null}
       <div className={expanded ? "selected-thumbnails expanded" : "selected-thumbnails"}>
-        {selected.length ? selected.map((url) => (
-          <button className="selected-thumbnail" key={url} type="button" onClick={() => setPreviewUrl(url)}>
-            <img src={url} alt={field.label} />
+        {selected.length ? selected.map((ref) => {
+          const key = imageRefKey(ref);
+          const preview = previews[key] ?? intrinsicImageRefPreview(ref);
+          return (
+          <button className="selected-thumbnail" key={key} type="button" onClick={() => preview?.url ? setPreviewUrl(preview.url) : undefined}>
+            {preview?.url ? <img src={preview.url} alt={preview.label || field.label} /> : <span>{preview?.label || imageRefLabel(ref)}</span>}
           </button>
-        )) : <span className="muted">尚未选择图片</span>}
+          );
+        }) : <span className="muted">尚未选择图片</span>}
       </div>
       <div className="button-row">
         {!readonly ? <button className="secondary-button" type="button" onClick={() => setOpen(true)}>选择图片</button> : null}
@@ -224,7 +242,7 @@ function AssetImagePickerField({
           selected={selected}
           uploadScope={String(option("upload_scope") ?? "project")}
           onClose={() => setOpen(false)}
-          onSelect={(urls) => updateSelected(urls)}
+          onSelect={(refs, nextPreviews) => updateSelected(refs, nextPreviews)}
         />
       ) : null}
       {previewUrl ? (
@@ -250,10 +268,10 @@ function AssetImagePickerDialog({
 }: {
   multiple: boolean;
   projectId?: string;
-  selected: string[];
+  selected: ImageRef[];
   uploadScope: string;
   onClose: () => void;
-  onSelect: (urls: string[]) => void;
+  onSelect: (refs: ImageRef[], previews: Record<string, ImageRefPreview>) => void;
 }) {
   const [tab, setTab] = useState<"library" | "upload">("library");
   const [assets, setAssets] = useState<AssetRecord[]>([]);
@@ -267,7 +285,8 @@ function AssetImagePickerDialog({
   const [keyword, setKeyword] = useState("");
   const [collectionId, setCollectionId] = useState("");
   const [tagIds, setTagIds] = useState<string[]>([]);
-  const [draft, setDraft] = useState<string[]>(selected);
+  const [draft, setDraft] = useState<ImageRef[]>(selected);
+  const [draftPreviews, setDraftPreviews] = useState<Record<string, ImageRefPreview>>({});
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
@@ -350,12 +369,15 @@ function AssetImagePickerDialog({
     };
   }, [collectionId, keyword, libraryProjectId, libraryScope, reloadKey, tagIds]);
 
-  function toggleUrl(url: string) {
+  function toggleAsset(asset: AssetRecord) {
+    const ref = imageRefFromAsset(asset);
+    const key = imageRefKey(ref);
+    setDraftPreviews((current) => ({ ...current, [key]: imageRefPreviewFromAsset(asset) }));
     if (!multiple) {
-      setDraft([url]);
+      setDraft([ref]);
       return;
     }
-    setDraft((current) => current.includes(url) ? current.filter((item) => item !== url) : [...current, url]);
+    setDraft((current) => current.some((item) => imageRefKey(item) === key) ? current.filter((item) => imageRefKey(item) !== key) : [...current, ref]);
   }
 
   function openProjectDialog() {
@@ -380,8 +402,10 @@ function AssetImagePickerDialog({
       collection_ids: collectionId ? [collectionId] : undefined,
       tag_ids: tagIds,
     });
-    const url = uploaded.metadata.public_url;
-    if (url) setDraft((current) => multiple ? [...current, url] : [url]);
+    const ref: ImageRef = { kind: "asset", asset_id: uploaded.asset_id, role: "reference" };
+    const key = imageRefKey(ref);
+    setDraftPreviews((current) => ({ ...current, [key]: { label: uploaded.name, url: uploaded.metadata.public_url } }));
+    setDraft((current) => multiple ? [...current.filter((item) => imageRefKey(item) !== key), ref] : [ref]);
     setFile(null);
     setTab("library");
     setReloadKey((current) => current + 1);
@@ -470,9 +494,10 @@ function AssetImagePickerDialog({
                 <div className="asset-check-grid">
                   {assets.map((asset) => {
                     const url = asset.metadata.public_url ?? "";
-                    const checked = draft.includes(url);
+                    const ref = imageRefFromAsset(asset);
+                    const checked = draft.some((item) => imageRefKey(item) === imageRefKey(ref));
                     return (
-                      <button className={checked ? "asset-check-card active" : "asset-check-card"} key={asset.asset_id} type="button" onClick={() => toggleUrl(url)}>
+                      <button className={checked ? "asset-check-card active" : "asset-check-card"} key={asset.asset_id} type="button" onClick={() => toggleAsset(asset)}>
                         <img src={url} alt={asset.name} />
                         <span>{asset.name}</span>
                       </button>
@@ -494,7 +519,7 @@ function AssetImagePickerDialog({
 
         <footer className="asset-picker-footer">
           <span>{draft.length} 张已选择</span>
-          <button className="primary-button" type="button" onClick={() => { onSelect(draft); onClose(); }}>确认选择</button>
+          <button className="primary-button" type="button" onClick={() => { onSelect(draft, draftPreviews); onClose(); }}>确认选择</button>
         </footer>
       </section>
     </div>
@@ -551,7 +576,8 @@ function validateFields(fields: SchemaField[], values: Record<string, FormValue>
   for (const field of fields) {
     const value = values[field.key];
     const emptyArray = Array.isArray(value) && value.length === 0;
-    if (field.required && (value === undefined || value === "" || emptyArray)) return `请填写${field.label}。`;
+    const emptyImageRef = field.control === "asset_images" && !normalizeImageRefs(value).length;
+    if (field.required && (value === undefined || value === "" || emptyArray || emptyImageRef)) return `请填写${field.label}。`;
   }
   return "";
 }
@@ -560,7 +586,11 @@ function buildInputData(fields: SchemaField[], values: Record<string, FormValue>
   const data: Record<string, unknown> = {};
   for (const field of fields) {
     const value = values[field.key];
-    if (field.type === "integer" || field.type === "number") data[field.key] = value === "" || value === undefined ? null : Number(value);
+    if (field.control === "asset_images") {
+      const refs = normalizeImageRefs(value);
+      data[field.key] = field.type === "array" ? refs : refs[0] ?? null;
+    }
+    else if (field.type === "integer" || field.type === "number") data[field.key] = value === "" || value === undefined ? null : Number(value);
     else if (field.type === "boolean") data[field.key] = Boolean(value);
     else if (field.type === "array") data[field.key] = Array.isArray(value) ? value : splitLines(String(value ?? ""));
     else data[field.key] = Array.isArray(value) ? value[0] ?? "" : value ?? "";
@@ -583,11 +613,51 @@ function valuesFromPayload(fields: SchemaField[], payload: unknown): Record<stri
 
 function formValueFromPayload(field: SchemaField, value: unknown): FormValue {
   if (field.control === "checkbox" || field.type === "boolean") return Boolean(value);
-  if (field.control === "asset_images" || field.type === "array") {
+  if (field.control === "asset_images") {
+    const refs = normalizeImageRefs(value);
+    return field.type === "array" ? refs : refs[0] ?? { kind: "asset", asset_id: "" };
+  }
+  if (field.type === "array") {
     if (Array.isArray(value)) return value.map((item) => String(item)).filter(Boolean);
     return value === "" ? [] : [String(value)];
   }
   return String(value);
+}
+
+function normalizeImageRefs(value: unknown): ImageRef[] {
+  if (Array.isArray(value)) return value.filter(isImageRef);
+  return isImageRef(value) ? [value] : [];
+}
+
+function isImageRef(value: unknown): value is ImageRef {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  if (record.kind === "asset") return typeof record.asset_id === "string" && record.asset_id.trim().length > 0;
+  if (record.kind === "data_uri") return typeof record.data === "string" && record.data.startsWith("data:image/");
+  return false;
+}
+
+function imageRefFromAsset(asset: AssetRecord): ImageRef {
+  return { kind: "asset", asset_id: asset.asset_id, role: "reference" };
+}
+
+function imageRefPreviewFromAsset(asset: AssetRecord): ImageRefPreview {
+  return { label: asset.name, url: asset.metadata.public_url };
+}
+
+function imageRefKey(ref: ImageRef): string {
+  if (ref.kind === "asset") return `asset:${ref.asset_id ?? ""}`;
+  return `data_uri:${ref.data?.slice(0, 64) ?? ""}`;
+}
+
+function imageRefLabel(ref: ImageRef): string {
+  if (ref.kind === "asset") return `资产 ${ref.asset_id ?? ""}`.trim();
+  return "内嵌图片";
+}
+
+function intrinsicImageRefPreview(ref: ImageRef): ImageRefPreview | undefined {
+  if (ref.kind === "data_uri" && ref.data) return { label: "参考图", url: ref.data };
+  return undefined;
 }
 
 function readonlySnapshotValue(node: NodeUiControlProps["node"], slot: NodeUiControlProps["slot"]): unknown {
