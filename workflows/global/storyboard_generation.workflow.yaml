@@ -404,7 +404,7 @@ nodes:
     inputs:
       question:
         template: |
-          Provide reference image URLs for the first storyboard panel.
+          Provide reference image assets for the first storyboard panel.
 
           Panel description: {panel_description}
 
@@ -412,7 +412,7 @@ nodes:
           {character_matches}
 
           Instructions:
-          - For each matched character, provide a reference image URL.
+          - For each matched character, provide a structured reference image object.
           - Clothing/accessory hints follow semantic rules (e.g. "遮了面巾" → label "蒙面").
           - If a character has multiple variants (different clothing), pick the one matching the current scene.
         vars:
@@ -420,24 +420,50 @@ nodes:
             from: "$nodes.describe_panels.output.segment_descriptions.0.panels.0.description"
           character_matches:
             from: "$nodes.match_characters.output.character_matches"
-      image_urls:
+      image_refs:
         from_user: true
         schema:
           type: array
           minItems: 1
           items:
-            type: string
-            minLength: 1
+            type: object
+            required: ["kind"]
+            properties:
+              kind:
+                type: string
+                enum: ["asset", "data_uri"]
+              asset_id:
+                type: string
+                minLength: 1
+              data:
+                type: string
+                minLength: 1
+              role:
+                type: string
+            additionalProperties: false
     outputs:
       type: object
-      required: ["image_urls"]
+      required: ["image_refs"]
       properties:
-        image_urls:
+        image_refs:
           type: array
           minItems: 1
           items:
-            type: string
-            minLength: 1
+            type: object
+            required: ["kind"]
+            properties:
+              kind:
+                type: string
+                enum: ["asset", "data_uri"]
+              asset_id:
+                type: string
+                minLength: 1
+              data:
+                type: string
+                minLength: 1
+              role:
+                type: string
+            additionalProperties: false
       additionalProperties: false
 
   - id: assemble_prompt
@@ -477,11 +503,11 @@ nodes:
           - 场景建筑比例符合 chibi style（不追求写实建筑比例）。
       negative_prompt:
         value: low quality, bad anatomy, worst quality, text, watermark, signature, ugly, bad proportions, deformed, realistic, gradient shading, complex textures, red lines, guidelines, nose, legs, feet, ankles, knees, thighs, calves, toes, footwear, shoes, boots, sandals, photorealistic, flat composition, no depth
-      image_urls:
-        from: "$nodes.collect_assets.output.image_urls"
+      image_refs:
+        from: "$nodes.collect_assets.output.image_refs"
     outputs:
       type: object
-      required: ["prompt", "negative_prompt", "image_urls", "aspect_ratio", "resolution"]
+      required: ["prompt", "negative_prompt", "image_refs", "aspect_ratio", "resolution"]
       properties:
         prompt:
           type: string
@@ -489,12 +515,25 @@ nodes:
         negative_prompt:
           type: string
           minLength: 1
-        image_urls:
+        image_refs:
           type: array
           minItems: 1
           items:
-            type: string
-            minLength: 1
+            type: object
+            required: ["kind"]
+            properties:
+              kind:
+                type: string
+                enum: ["asset", "data_uri"]
+              asset_id:
+                type: string
+                minLength: 1
+              data:
+                type: string
+                minLength: 1
+              role:
+                type: string
+            additionalProperties: false
         aspect_ratio:
           type: string
           minLength: 1
@@ -508,8 +547,8 @@ nodes:
     inputs:
       prompt:
         from: "$nodes.assemble_prompt.output.prompt"
-      image_urls:
-        from: "$nodes.assemble_prompt.output.image_urls"
+      image_refs:
+        from: "$nodes.assemble_prompt.output.image_refs"
       aspect_ratio:
         from: "$nodes.assemble_prompt.output.aspect_ratio"
       resolution:

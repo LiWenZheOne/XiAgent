@@ -31,7 +31,7 @@
           - collect_asset_storyboard_input
       - id: p2_asset_analysis
         name: P2 资产分析
-        description: 提取角色、地点、道具，并完成已有资产、变体和配件匹配。
+        description: 提取角色、地点、道具和角色变体，并完成已有资产、变体和配件匹配。
         nodes:
           - extract_characters
           - lookup_existing_assets
@@ -55,7 +55,7 @@
           - review_assets
       - id: p4_asset_generation
         name: P4 资产生成
-        description: 生成角色图像提示词，上传或自动补生成未上传图像。
+        description: 生成资产设定提示词，上传或自动补生成未上传图像。
         nodes:
           - generate_prompt_v2
           - upload_images
@@ -212,20 +212,18 @@ nodes:
           仅返回合法 JSON。你是专业的剧本分析师。请从剧本中提取所有角色信息。
           世界背景（原作）：{background}。
 
-          思维链要求：在输出最终 JSON 前，你必须先逐步分析并记录你的思考过程：
-          1. 判断当前剧本对应原作的哪一回、剧情发展到什么阶段。
-          2. 逐段区分叙述段与对话段，识别哪些角色满足收录条件。
-          3. 对使用代称或非全名称呼的角色，根据原作推断其全名。
-          4. 当多个角色被一起称呼时，根据原作和剧情发展拆解为具体角色。
-          将你的完整分析过程写入 reasoning 字段。
-
-          叙述 vs 对话：剧本包含叙述段（无前缀，描述已发生的事实）和对话段。
-          只有叙述段才构成事实依据。对话中的计划、命令、提及、回忆均不构成角色出场的证据。
-          角色收录条件：叙述段中有动作或状态描写，或作为对话段发言者且叙述段中在场。
-          当使用代称或非全名称呼时，请根据原作推断角色的全名（如果不是你了解的作品，不需要推断全名。）
-          当多个角色被一起称呼时，比如几位好汉，请根据原作和此时的剧情发展记录具体角色，每个角色单独记录。（没有名称的龙套角色不需要单独记录并且合称只作为一个单独角色。）
-          根据当前情景推断角色临时可附加的视觉配件，例如口罩、面巾、披风、围巾、斗笠、斗篷、包袱、兵器挂件等；只有叙述段显示其正在佩戴、携带、遮挡、披挂或此情景下极可能附着于角色时才记录。
-          排除条件：仅在对话中被提及、谈论、派遣、回忆的角色不收录。
+          请用提问式思维链步骤完成分析，并把每一步的结论摘要写入 reasoning 字段：
+          1. 当前剧本属于原作的哪个剧情阶段？这会影响哪些人物身份、处境和常见装束？
+          2. 哪些段落是叙述事实，哪些只是对话、计划、命令、提及或回忆？只有叙述事实可以作为角色出场依据。
+          3. 哪些角色满足收录条件？条件是：叙述段中有动作或状态描写，或作为对话段发言者且叙述段中在场。仅在对话中被提及、派遣、回忆的角色不收录。
+          4. 这些角色的全名是什么？代称、绰号、非全名称呼需要结合原作推断全名；多人合称要拆成具体角色，没有名称的龙套可保留为合称。
+          5. 每个角色的生平背景是什么？summary 只写长期身份、原作背景和人物定位，不写当前动作、被绑、受伤、押送、服装或临时处境。
+          6. 每个角色当前剧情状态是什么？character_status 只写此刻/本段剧情中的身份、处境或状态，不写生平背景。
+          7. 每个角色在当前情景下应该是什么稳定造型？必须结合世界背景、身份、职业/阶层、地点、时代和剧情阶段推导一个具体服装或稳定外观造型。
+          8. 这个稳定造型应该叫什么 variant_name？variant_name 必须是可复用的服装或造型名称，如"官兵装束"、"渔民短打"、"道士服"、"僧衣"、"旅人布衣"、"水军装束"、"囚服"、"夜行衣"；禁止填"默认"、"基础"、"普通"、"无特殊造型"，禁止包含角色名，禁止使用"角色名_服装名"格式，禁止用被绑、受伤、押送、奔跑等临时状态命名。
+          9. 哪些内容不是变体依据？被绑起来、被押送、受伤、疲惫、奔跑、打斗、表情、姿态、镜头动作、所在地点、天气、光照、剧情处境都不是 variant_name 的命名依据，也不得写入 variant_description 或 accessories。
+          10. 这个变体的稳定视觉设定是什么？variant_description 至少 40 字，按头部/发型、上身、下装、鞋履、颜色材质、身份识别特征、稳定配件描述，只写可复用视觉设定，禁止输出"默认装束，无特殊造型描述"这类空泛描述。
+          11. 当前情景下有哪些稳定可穿戴/携带配件？例如面巾、披风、围巾、斗笠、斗篷、包袱、随身兵器挂件。只有叙述段显示正在佩戴、携带、遮挡、披挂，或此情景下极可能稳定附着于角色时才写入 accessories。束缚用绳索、临时镣铐、被绑状态造成的限制物不是角色配件。
         vars:
           background:
             from: "$nodes.collect_asset_storyboard_input.output.background"
@@ -237,16 +235,18 @@ nodes:
           {script}
 
           返回一个仅包含以下根键的 JSON 对象：
-          - reasoning：你的逐步分析过程（字符串，不能为空）
+          - reasoning：按 system 中 11 个问题整理的分析结论摘要（字符串，不能为空）
           - characters：角色数组
           - character_names：所有角色的全名数组（仅字符串）
 
           每个角色对象必须包含：
           - full_name：根据世界背景推断的全名（如"武松"而非"武二郎"），保存时固定使用全名作为资产名
           - aliases：别名列表
-          - summary：角色梗概（≤100字）
-          - character_status：当前剧情阶段该角色的状态（一段自然语言的近况描述，含身份、处境、外貌等）
-          - accessories：当前情景下可附加在角色身上的视觉配件列表（如["面巾", "披风"]，无配件时为空数组；不要把身份、身体特征或普通服装整体写成配件）
+          - summary：角色生平背景/身份定位梗概（≤100字）；只写角色在原作或世界背景中的长期身份、经历和人物背景，不写当前剧情状态、动作、伤势、被绑、押送、服装或临时处境
+          - character_status：当前剧情阶段该角色的上下文状态；只写此刻/本段剧情中的身份、处境、状态或正在经历的情况，不写生平背景、长期履历或原作人物介绍；该字段仅供理解上下文，不作为变体依据
+          - variant_name：回答"这个稳定造型应该叫什么？"后得到的服装/造型名称；必须是"官兵装束"、"渔民短打"、"道士服"、"囚服"、"夜行衣"、"僧衣"这类可复用造型名；禁止输出"默认"、"基础"、"普通"、"无特殊造型"，禁止包含角色名或临时状态
+          - variant_description：回答"这个变体的稳定视觉设定是什么？"后得到的详细描述，至少 40 字；按头部/发型、上身、下装、鞋履、颜色材质、身份识别特征、稳定配件描述；不得写被绑、受伤、动作、姿态、表情、场景、天气或剧情处境；不得输出"默认装束，无特殊造型描述"这类空泛描述
+          - accessories：当前变体包含的稳定可穿戴/携带配件列表（如["面巾", "披风"]，无配件时为空数组；不要把身份、身体特征、普通服装整体、束缚状态或剧情道具写成配件）
 
           根层级除 reasoning、characters 和 character_names 外不得包含其他键。
         vars:
@@ -267,7 +267,7 @@ nodes:
           type: array
           items:
             type: object
-            required: ["full_name", "aliases", "summary", "character_status", "accessories"]
+            required: ["full_name", "aliases", "summary", "character_status", "variant_name", "variant_description", "accessories"]
             properties:
               full_name:
                 type: string
@@ -280,6 +280,12 @@ nodes:
                 type: string
                 minLength: 1
               character_status:
+                type: string
+                minLength: 1
+              variant_name:
+                type: string
+                minLength: 1
+              variant_description:
                 type: string
                 minLength: 1
               accessories:
@@ -390,19 +396,29 @@ nodes:
     inputs:
       system:
         value: |
-          仅返回合法 JSON。你是资产库管理员。请判断以下角色是否与资产库中已有角色是同一人。
-          精确匹配已由程序完成，以下是未匹配到的角色。请通过别名、绰号、角色梗概进行语义匹配。
-          必须给出明确判断，不存在"无法确定"。
+          仅返回合法 JSON。你是资产库角色匹配器，只判断“提取到的角色资产”是否对应“资产库候选角色”中的同一人物。
+          工程化匹配原则：
+          1. 严格区分输入分区：提取到的角色资产是待匹配对象，资产库候选角色只是候选集合，不得把资产库字段补写成提取结果。
+          2. 精确名称匹配已由程序完成；本节点只处理未精确匹配角色的语义匹配。
+          3. 只依据全名、别名、绰号、身份、人物梗概和世界背景判断是否同一人；不要依据服装、变体、配件或临时剧情状态判断角色身份。
+          4. 必须给出明确 true/false，不存在“无法确定”；证据不足时 matched=false。
       prompt:
         template: |
           请判断以下未匹配角色是否与资产库中已有角色是同一人。
 
-          未匹配角色列表：
+          ## A. 提取到的角色资产（待匹配，来源：剧本）
           {unmatched_characters}
 
-          资产库中所有已有角色：
+          ## B. 资产库候选角色（只用于匹配，不得改写 A）
           {existing_assets}
 
+          ## C. 匹配准则
+          - 一个提取角色最多匹配一个资产库角色。
+          - 角色全名、别名、绰号、身份和人物梗概指向同一人物时 matched=true。
+          - 只存在服装、变体、配件、场景、动作或临时状态相似时，不得判定为同一人。
+          - 资产库没有足够证据时 matched=false，matched_asset_name 为空字符串，matched_asset_id 为空字符串。
+
+          ## D. 输出 JSON
           返回一个仅包含一个根键的 JSON 对象：
           - match_results：数组，每个未匹配角色一条记录
 
@@ -708,29 +724,42 @@ nodes:
     inputs:
       system:
         value: |
-          仅返回合法 JSON。你是资产库管理员。请根据角色当前状态与已有变体进行语义匹配。
-          变体匹配规则：将角色当前状态描述（character_status）与已有变体列表逐个比对，判断是否属于同一身份/服装。
-          同一身份对应同一套服装，即同一变体。角色默认变体是角色创建时的第一个变体。
-          如果已有变体中无匹配，则判定为新变体，需要给出新变体名称。
+          仅返回合法 JSON。你是资产库角色变体匹配器，只负责把“提取到的角色变体资产”匹配到“资产库候选变体”。
+          工程化匹配原则：
+          1. 严格区分输入分区：variant_name、variant_description、accessories 是提取到的待匹配变体；existing_variants 是资产库候选变体。
+          2. 变体是否存在已经由上游 extract_characters 决定；本节点不得根据剧情处境、动作或临时状态新增变体依据。
+          3. 只比较稳定服装、稳定外观造型、可穿戴/携带配件和 existing_variants 的 variant、name、metadata.tags。
+          4. 被绑起来、被押送、受伤、疲惫、奔跑、打斗、表情、姿态、镜头动作、地点、天气、光照等临时状态必须忽略。
+          5. 如果已提取变体无法匹配 existing_variants，才标记 is_new_variant=true，并把 new_variant_name 填为 角色名_已提取变体标签。
       prompt_template:
         value: |
-          请为以下角色匹配变体。
+          请为以下已提取角色变体匹配已有资产。
 
-          角色信息：{item}
+          ## A. 提取到的角色变体资产（待匹配）
+          字段来源：full_name、variant_name、variant_description、accessories、character_status。
 
-          注意：角色对象的 existing_variants 字段包含该角色在资产库中已有的变体列表，
-          每个变体包含 asset_id、name、variant（变体标签）和 metadata（含四级标签 tags）。
-          请将角色的 character_status 与已有变体做语义匹配。
+          ## B. 资产库候选变体
+          字段来源：同一 JSON 对象的 existing_variants；每个候选包含 asset_id、name、variant 和 metadata.tags。
 
+          ## C. 输入 JSON
+          {item}
+
+          ## D. 匹配准则
+          - 请将 A 中的 variant_name、variant_description、accessories 与 B 中的 existing_variants 做语义匹配。
+          - character_status 只可作为上下文参考，不能作为新增变体依据。
+          - 不得把 existing_variants 中的候选字段写回为提取结果。
+          - 如只因被绑、受伤、姿态、表情、动作、天气、场景不同，不得创建新变体。
+
+          ## E. 输出 JSON
           返回一个 JSON 对象：
           - full_name：角色全名
-          - accessories：角色当前配件列表
+          - accessories：上游已提取的角色当前配件列表，不得自行新增
           - matched_variant：匹配到的变体标签（无匹配时为空字符串）
           - matched_variant_id：匹配到的变体资产ID（无匹配时为null）
-          - is_new_variant：是否需要新建变体
-          - new_variant_name：新变体名称（is_new_variant=true时必填，格式：角色名_变体标签）
-          - default_variant_status：角色默认变体的状态描述
-          - default_variant_storage_uri：角色默认变体的参考图URL（无参考图时为空字符串）
+          - is_new_variant：上游已提取变体是否未匹配到已有变体资产
+          - new_variant_name：is_new_variant=true时必填，格式：角色名_上游variant_name；不得使用被绑、受伤、动作、场景等临时状态命名
+          - default_variant_status：角色默认变体的状态描述；existing_variants 为空时返回空字符串
+          - default_variant_storage_uri：角色默认变体的参考图URL；existing_variants 为空或无参考图时返回空字符串
           - reason：≤50字判断理由
       items:
         from: "$nodes.enrich_characters.output.characters"
@@ -763,7 +792,6 @@ nodes:
                 type: string
               default_variant_status:
                 type: string
-                minLength: 1
               default_variant_storage_uri:
                 type: string
               reason:
@@ -778,23 +806,34 @@ nodes:
     inputs:
       system:
         value: |
-          仅返回合法 JSON。你是资产库管理员。请检查角色当前配件是否已在变体下存在。
-          配件是独立变体维度：基础服装是一个变体，基础服装+配件是另一个变体。
-          一个变体只对应一个图像。
+          仅返回合法 JSON。你是资产库角色配件匹配器，只检查“提取到的角色配件”是否已存在于“资产库候选变体/配件”中。
+          工程化匹配原则：
+          1. 严格区分输入分区：accessories 是上游提取到的待检查配件；existing_variants 是资产库候选变体/配件来源。
+          2. 配件是独立变体维度：基础服装是一个变体，基础服装+配件是另一个变体；一个变体只对应一个图像。
+          3. 只检查上游已提取配件，不得自行新增配件。
+          4. 不得把被绑、受伤、动作、姿态、剧情处境、地点、天气或临时限制物补充为新配件。
       prompt_template:
         value: |
           请检查以下角色的配件状态。
 
-          角色信息：{item}
+          ## A. 提取到的角色配件（待检查）
+          字段来源：accessories。
 
+          ## B. 资产库候选变体/配件
+          字段来源：existing_variants 及其 name、variant、metadata.tags。
+
+          ## C. 输入 JSON
+          {item}
+
+          ## D. 输出 JSON
           返回一个 JSON 对象：
           - full_name：角色全名
-          - has_new_accessories：是否有新配件需要创建变体
-          - new_accessories：新配件名称数组
+          - has_new_accessories：上游已提取配件中是否有未匹配配件
+          - new_accessories：上游已提取但未匹配的配件名称数组，不得自行新增
           - existing_accessories：已有配件名称数组
           - reason：≤50字判断理由
       items:
-        from: "$nodes.match_variants.output.results"
+        from: "$nodes.enrich_characters.output.characters"
       max_attempts:
         value: 2
     outputs:
@@ -840,6 +879,8 @@ nodes:
           请分析剧本中出现的所有关键道具，包括武器、工具、物品等。
           道具收录条件：在叙述段中被角色使用、持有、提及或具有叙事意义的物品。
           排除条件：仅为背景装饰的无名物品、对话中提及但未实际出现或使用的物品。
+          衣服、服装、鞋帽、披风、围巾、面巾、斗笠、斗篷等穿戴类外观元素不作为道具提取；它们属于角色变体或角色配件，只能由角色提取节点写入 variant_name、variant_description 或 accessories。
+          只有可从角色身上独立拿取、使用、赠予、争夺或作为剧情实体流转的物件才可作为道具；普通穿着状态不能作为道具。
           如果道具与某个角色有明确持有、使用、携带、赠予或争夺关系，请记录关联角色；没有明确关联时留空或省略。
           将你的分析过程写入 reasoning 字段。
         vars:
@@ -860,7 +901,7 @@ nodes:
           每个道具对象必须包含：
           - full_name：道具名称（如"青龙偃月刀"）
           - description：道具描述（≤100字）
-          - category：道具类别（如"武器"、"工具"、"容器"、"书籍/信件"、"饰品"等）
+          - category：道具类别（如"武器"、"工具"、"容器"、"书籍/信件"等；不要使用"服装"作为道具类别，普通穿戴类外观元素不进入 props）
           - related_character：关联角色（可选；仅当剧本明确说明某角色持有、使用、携带、赠予或争夺该道具时填写角色名，否则可省略或为空字符串）
 
           根层级除 reasoning、props 和 prop_names 外不得包含其他键。
@@ -1054,20 +1095,36 @@ nodes:
         template: |
           请审核以下资产提取和匹配结果。
 
-          提取的角色：
+          ## 角色资产
+          ### A. 提取到的角色资产
           {characters}
 
-          精确匹配结果（P1 全名匹配）：
+          ### B. 资产库角色名称匹配结果
           {match_by_name}
 
-          语义匹配结果（LLM 语义匹配）：
+          ### C. 资产库角色语义匹配结果
           {semantic_match}
 
-          变体匹配结果（已有变体 vs 当前状态）：
+          ## 角色变体与配件
+          ### A. 资产库角色变体匹配结果
           {variant_result}
 
-          配件检查结果（新增配件识别）：
+          ### B. 资产库角色配件匹配结果
           {accessory_result}
+
+          ## 地点资产
+          ### A. 提取到的地点资产
+          {scenes}
+
+          ### B. 资产库地点名称匹配结果
+          {scene_matches}
+
+          ## 道具资产
+          ### A. 提取到的道具资产
+          {props}
+
+          ### B. 资产库道具名称匹配结果
+          {prop_matches}
 
           请确认资产匹配是否正确，或提供修改意见。
         vars:
@@ -1081,8 +1138,20 @@ nodes:
             from: "$nodes.match_variants.output.results"
           accessory_result:
             from: "$nodes.check_accessories.output.results"
+          scenes:
+            from: "$nodes.extract_scenes.output.scenes"
+          scene_matches:
+            from: "$nodes.match_scenes_by_name.output.assets"
+          props:
+            from: "$nodes.extract_props.output.props"
+          prop_matches:
+            from: "$nodes.match_props_by_name.output.assets"
       characters:
         from: "$nodes.extract_characters.output.characters"
+      background:
+        from: "$nodes.collect_asset_storyboard_input.output.background"
+      script:
+        from: "$nodes.collect_asset_storyboard_input.output.script"
       enriched_characters:
         from: "$nodes.enrich_characters.output.characters"
       match_by_name:
@@ -1122,9 +1191,13 @@ nodes:
           type: string
       approved_assets:
         from_user: true
-        required: false
         schema:
           type: object
+      additional_asset_request:
+        from_user: true
+        required: false
+        schema:
+          type: string
       asset_images:
         from_user: true
         required: false
@@ -1154,6 +1227,8 @@ nodes:
           minLength: 1
         approved_assets:
           type: object
+        additional_asset_request:
+          type: string
         asset_images:
           type: array
           items:
@@ -1174,11 +1249,45 @@ nodes:
           variant: tabbed_table
           mode: interactive
 
+  # ===== 筛选需生成资产 =====
+
+  - id: filter_assets_for_generation
+    ref: tool.filter_assets_for_generation.v1
+    name: 筛选需生成资产
+    inputs:
+      approved_assets:
+        from: "$nodes.review_assets.output.approved_assets"
+    outputs:
+      type: object
+      required: ["approved_assets", "asset_count"]
+      properties:
+        approved_assets:
+          type: object
+          required: ["characters", "assets", "props"]
+          properties:
+            characters:
+              type: array
+              items:
+                type: object
+            assets:
+              type: array
+              items:
+                type: object
+            props:
+              type: array
+              items:
+                type: object
+          additionalProperties: true
+        asset_count:
+          type: integer
+          minimum: 0
+      additionalProperties: false
+
   # ===== 手动上传图像 =====
 
   - id: upload_images
     ref: system.human_approval.v1
-    name: 上传或关联角色图像
+    name: 上传或关联资产图像
     inputs:
       question:
         template: |
@@ -1249,6 +1358,8 @@ nodes:
               source:
                 type: string
             additionalProperties: true
+      target_asset_key:
+        value: ""
     outputs:
       type: object
       required: ["decision", "asset_images"]
@@ -1278,8 +1389,22 @@ nodes:
               source:
                 type: string
             additionalProperties: true
+        target_asset_key:
+          type: string
+        prompt_results:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
       additionalProperties: true
     ui:
+      sections:
+        input:
+          visible: false
+        output:
+          visible: false
+        events:
+          visible: false
       controls:
         interaction:
           control_id: ui.interaction.asset_image_cards.v1
@@ -1290,18 +1415,21 @@ nodes:
 
   - id: generate_prompt_v2
     ref: ai.deepseek_structured_json.v1
-    name: 生成角色图像提示词
+    name: 生成资产设定提示词
     inputs:
       system:
         value: |
-          仅返回合法 JSON。你是一位图像提示词专家。请根据角色当前状态和默认变体状态生成修改提示词。
-          对比两者差异，思考哪些特征需要改变、哪些需要保留，不预设哪些特征是固定的。
+          仅返回合法 JSON。你是一位资产设定提示词专家。本节点只输出文本提示词和参考图 URL，不输出图像结果、Markdown 图片或 HTML。
+          角色资产提示词用于生成稳定角色设定，不用于生成某个剧情镜头。
+          角色提示词只能描述服装、外貌、发型、体貌、身份识别特征和必要随身配件。
+          角色提示词不得包含动作、姿态、表情、镜头调度、场景气氛、正在发生的剧情、受伤/疲惫/奔跑/打斗等临时状态。
+          对比角色设定与默认变体状态，只保留稳定造型差异；临时情景信息只能用于判断应排除哪些内容，不能写入 prompt。
           提示词格式：请将图中角色的xx改成xx，保持风格和其它特征不变。
           必须先输出 think（思考过程），再输出 prompt（最终提示词）。
           对所有角色进行批量处理，不能遗漏任何角色。
       prompt:
         template: |
-          请为以下所有需要图像的角色、地点和道具生成图生图修改提示词。
+          请为以下所有需要补图的角色、地点和道具生成图生图修改提示词。
 
           剧本内容：
           {script}
@@ -1324,17 +1452,17 @@ nodes:
           道具匹配汇总：
           {enriched_props}
 
-          默认模板图 URL：
-          {template_image_url}
+          需要生成图像的资产列表（每项已包含 reference_image_ref）：
+          {assets_for_generation}
 
           返回一个仅包含一个根键的 JSON 对象：
           - prompt_results：数组，每个需要图像的资产一条记录
 
           每条记录必须包含：
           - full_name：资产名称
-          - think：思考过程，逐项对比差异，列出要添加/去除/修改的部分
-          - prompt：最终提示词，说明要生成或改造的资产图像
-          - reference_image_url：参考图URL。角色有已有变体时取已有变体 storage_uri；道具或地点已匹配/关联资产且存在 matched_asset_image_url 或 reference_image_url 时，必须使用该关联资产图像；无参考图时才使用默认模板图 URL。
+          - think：思考过程，逐项对比稳定设定差异，列出要添加/去除/修改的部分；不要把剧情动作、受伤、奔跑、打斗等临时状态当成角色设定
+          - prompt：最终文本提示词。角色只写服装、外貌、发型、体貌、身份识别特征和必要随身配件；不得写动作、姿态、表情、场景、剧情、受伤或其他临时状态；不得输出图片、图片链接、Markdown 或 HTML
+          - reference_image_ref：结构化参考图对象，必须原样复制对应资产的 reference_image_ref；不得输出任何 URL 字段。
 
           根层级除 prompt_results 外不得包含其他键。
         vars:
@@ -1352,8 +1480,8 @@ nodes:
             from: "$nodes.enrich_scenes.output.characters"
           enriched_props:
             from: "$nodes.enrich_props.output.characters"
-          template_image_url:
-            value: "https://assets.local.invalid/3f/26/3f26f7ef206b654d664aae0d2637ecf724f418f943da26696b6407bb32ba0133.png"
+          assets_for_generation:
+            from: "$nodes.filter_assets_for_generation.output.approved_assets"
       max_attempts:
         value: 2
     outputs:
@@ -1364,7 +1492,7 @@ nodes:
           type: array
           items:
             type: object
-            required: ["full_name", "think", "prompt", "reference_image_url"]
+            required: ["full_name", "think", "prompt", "reference_image_ref"]
             properties:
               full_name:
                 type: string
@@ -1375,13 +1503,24 @@ nodes:
               prompt:
                 type: string
                 minLength: 1
-              reference_image_url:
-                type: string
-                minLength: 1
+              reference_image_ref:
+                type: object
+                required: ["kind"]
+                properties:
+                  kind:
+                    type: string
+                    enum: ["asset", "data_uri"]
+                  asset_id:
+                    type: string
+                    minLength: 1
+                  data:
+                    type: string
+                    minLength: 1
+                  role:
+                    type: string
+                additionalProperties: false
             additionalProperties: false
       additionalProperties: false
-
-  # ===== 筛选未上传图像 =====
 
   - id: prepare_asset_images
     ref: tool.complete_asset_images.v1
@@ -1390,9 +1529,11 @@ nodes:
       decision:
         from: "$nodes.upload_images.output.decision"
       prompt_results:
-        from: "$nodes.generate_prompt_v2.output.prompt_results"
+        from: "$nodes.upload_images.output.prompt_results"
       manual_images:
         from: "$nodes.upload_images.output.asset_images"
+      target_asset_key:
+        from: "$nodes.upload_images.output.target_asset_key"
     outputs:
       type: object
       required: ["asset_images", "missing_prompt_results", "missing_count", "next_action"]
@@ -1419,14 +1560,14 @@ nodes:
 
   - id: generate_missing_asset_images
     ref: ai.runninghub_image_to_image.v2
-    name: 生成未上传角色图像
+    name: 生成未上传资产图像
     inputs:
       prompt_results:
         from: "$nodes.prepare_asset_images.output.missing_prompt_results"
       aspect_ratio:
         value: "1:1"
       resolution:
-        value: "2048x2048"
+        value: "2k"
     outputs:
       type: object
       required: ["asset_images"]
@@ -1459,7 +1600,7 @@ nodes:
 
   - id: merge_completed_asset_images
     ref: tool.complete_asset_images.v1
-    name: 合并角色图像
+    name: 合并资产图像
     inputs:
       decision:
         value: "finish"
@@ -1548,7 +1689,7 @@ nodes:
           剧本段落（含段落索引）：
           {segments}
 
-          可用角色资产图像（含全名与图像URL）：
+          可用角色资产图像（含全名与结构化图像引用）：
           {asset_images}
 
           世界背景（原作）：
@@ -1559,7 +1700,7 @@ nodes:
 
           每条记录必须包含：
           - segment_index：段落索引（整数，与输入段落对应）
-          - characters：该段落中出现的角色数组，每个包含 full_name、image_url、variant
+          - characters：该段落中出现的角色数组，每个包含 full_name、image_ref、variant
           - key_props：关键道具数组（字符串，无道具时为空数组）
 
           根层级除 segment_assignments 外不得包含其他键。
@@ -1589,14 +1730,27 @@ nodes:
                 type: array
                 items:
                   type: object
-                  required: ["full_name", "image_url"]
+                  required: ["full_name", "image_ref"]
                   properties:
                     full_name:
                       type: string
                       minLength: 1
-                    image_url:
-                      type: string
-                      minLength: 1
+                    image_ref:
+                      type: object
+                      required: ["kind"]
+                      properties:
+                        kind:
+                          type: string
+                          enum: ["asset", "data_uri"]
+                        asset_id:
+                          type: string
+                          minLength: 1
+                        data:
+                          type: string
+                          minLength: 1
+                        role:
+                          type: string
+                      additionalProperties: false
                     variant:
                       type: string
                   additionalProperties: false
@@ -1775,7 +1929,7 @@ nodes:
           请确认分镜描述是否合理，或提供修改意见。
 
           输出格式（严格 JSON）：
-          {{"decision": "approve 或 reject", "corrections": {{"corrected_prompt": "修改后的提示词", "corrected_image_urls": ["修正后的图像URL数组"]}}}}
+          {{"decision": "approve 或 reject", "corrections": {{"corrected_prompt": "修改后的提示词", "corrected_image_refs": ["修正后的结构化参考图数组"]}}}}
         vars:
           segment_descriptions:
             from: "$nodes.describe_panels.output.segment_descriptions"
@@ -1806,11 +1960,24 @@ nodes:
           properties:
             corrected_prompt:
               type: string
-            corrected_image_urls:
+            corrected_image_refs:
               type: array
               items:
-                type: string
-                minLength: 1
+                type: object
+                required: ["kind"]
+                properties:
+                  kind:
+                    type: string
+                    enum: ["asset", "data_uri"]
+                  asset_id:
+                    type: string
+                    minLength: 1
+                  data:
+                    type: string
+                    minLength: 1
+                  role:
+                    type: string
+                additionalProperties: false
           additionalProperties: false
     outputs:
       type: object
@@ -1824,15 +1991,28 @@ nodes:
           properties:
             corrected_prompt:
               type: string
-            corrected_image_urls:
+            corrected_image_refs:
               type: array
               items:
-                type: string
-                minLength: 1
+                type: object
+                required: ["kind"]
+                properties:
+                  kind:
+                    type: string
+                    enum: ["asset", "data_uri"]
+                  asset_id:
+                    type: string
+                    minLength: 1
+                  data:
+                    type: string
+                    minLength: 1
+                  role:
+                    type: string
+                additionalProperties: false
           additionalProperties: false
       additionalProperties: false
 
-  # ===== 提取目标分格的图像URL =====
+  # ===== 提取目标分格的参考图 =====
 
   - id: extract_panel_image_urls
     ref: ai.deepseek_structured_json.v1
@@ -1841,11 +2021,11 @@ nodes:
       system:
         value: |
           仅返回合法 JSON。你是分镜数据提取助手。
-          请从分镜描述和角色资产分配中提取目标分格的角色图像URL，并保留分格描述信息。
+          请从分镜描述和角色资产分配中提取目标分格的结构化参考图，并保留分格描述信息。
           只返回目标段落和目标分格的数据。
       prompt:
         template: |
-          请提取目标分格的图像URL和描述信息。
+          请提取目标分格的结构化参考图和描述信息。
 
           所有段落的角色资产分配：
           {segment_assignments}
@@ -1857,13 +2037,13 @@ nodes:
           目标分格索引：{panel_index}
 
            返回一个仅包含一个根键的 JSON 对象：
-           - panel_image_urls：目标分格中出现的角色图像URL数组，每个包含 full_name、image_url、variant
-           - image_urls：所有panel_image_urls中image_url的纯字符串数组（如["https://...", "https://..."]）
+           - panel_image_refs：目标分格中出现的角色参考图数组，每个包含 full_name、image_ref、variant
+           - image_refs：所有 panel_image_refs 中 image_ref 的结构化对象数组
            - description：目标分格的视觉描述（字符串）
            - style：目标分格的艺术风格（字符串）
            - constraints：目标分格的技术约束（字符串）
 
-           根层级除 panel_image_urls、image_urls、description、style、constraints 外不得包含其他键。
+           根层级除 panel_image_refs、image_refs、description、style、constraints 外不得包含其他键。
           如果目标段落索引或分格索引超出范围，返回空数组和空字符串。
         vars:
           segment_assignments:
@@ -1878,28 +2058,54 @@ nodes:
         value: 1
     outputs:
       type: object
-      required: ["panel_image_urls", "image_urls", "description", "style", "constraints"]
+      required: ["panel_image_refs", "image_refs", "description", "style", "constraints"]
       properties:
-        panel_image_urls:
+        panel_image_refs:
           type: array
           items:
             type: object
-            required: ["full_name", "image_url"]
+            required: ["full_name", "image_ref"]
             properties:
               full_name:
                 type: string
                 minLength: 1
-              image_url:
-                type: string
-                minLength: 1
+              image_ref:
+                type: object
+                required: ["kind"]
+                properties:
+                  kind:
+                    type: string
+                    enum: ["asset", "data_uri"]
+                  asset_id:
+                    type: string
+                    minLength: 1
+                  data:
+                    type: string
+                    minLength: 1
+                  role:
+                    type: string
+                additionalProperties: false
               variant:
                 type: string
             additionalProperties: false
-        image_urls:
+        image_refs:
           type: array
           items:
-            type: string
-            minLength: 1
+            type: object
+            required: ["kind"]
+            properties:
+              kind:
+                type: string
+                enum: ["asset", "data_uri"]
+              asset_id:
+                type: string
+                minLength: 1
+              data:
+                type: string
+                minLength: 1
+              role:
+                type: string
+            additionalProperties: false
         description:
           type: string
           minLength: 1
@@ -1951,11 +2157,11 @@ nodes:
           - 场景建筑比例符合 chibi style（不追求写实建筑比例）。
       negative_prompt:
         value: low quality, bad anatomy, worst quality, text, watermark, signature, ugly, bad proportions, deformed, realistic, gradient shading, complex textures, red lines, guidelines, nose, legs, feet, ankles, knees, thighs, calves, toes, footwear, shoes, boots, sandals, photorealistic, flat composition, no depth
-      image_urls:
-        from: "$nodes.extract_panel_image_urls.output.image_urls"
+      image_refs:
+        from: "$nodes.extract_panel_image_urls.output.image_refs"
     outputs:
       type: object
-      required: ["prompt", "negative_prompt", "image_urls", "aspect_ratio", "resolution"]
+      required: ["prompt", "negative_prompt", "image_refs", "aspect_ratio", "resolution"]
       properties:
         prompt:
           type: string
@@ -1963,11 +2169,24 @@ nodes:
         negative_prompt:
           type: string
           minLength: 1
-        image_urls:
+        image_refs:
           type: array
           items:
-            type: string
-            minLength: 1
+            type: object
+            required: ["kind"]
+            properties:
+              kind:
+                type: string
+                enum: ["asset", "data_uri"]
+              asset_id:
+                type: string
+                minLength: 1
+              data:
+                type: string
+                minLength: 1
+              role:
+                type: string
+            additionalProperties: false
         aspect_ratio:
           type: string
           minLength: 1
@@ -1984,8 +2203,8 @@ nodes:
     inputs:
       prompt:
         from: "$nodes.assemble_prompt_v2.output.prompt"
-      image_urls:
-        from: "$nodes.assemble_prompt_v2.output.image_urls"
+      image_refs:
+        from: "$nodes.assemble_prompt_v2.output.image_refs"
       aspect_ratio:
         from: "$nodes.assemble_prompt_v2.output.aspect_ratio"
       resolution:
@@ -2059,7 +2278,7 @@ nodes:
           prompt:
             from: "$nodes.assemble_prompt_v2.output.prompt"
           reference_images:
-            from: "$nodes.extract_panel_image_urls.output.panel_image_urls"
+            from: "$nodes.extract_panel_image_urls.output.panel_image_refs"
           description:
             from: "$nodes.extract_panel_image_urls.output.description"
       decision:
@@ -2130,6 +2349,8 @@ edges:
   - from: check_accessories
     to: review_assets
   - from: review_assets
+    to: filter_assets_for_generation
+  - from: filter_assets_for_generation
     to: generate_prompt_v2
   - from: generate_prompt_v2
     to: upload_images

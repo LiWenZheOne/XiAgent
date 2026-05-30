@@ -887,7 +887,7 @@ def test_all_global_workflows_declare_ui_control_defaults(test_settings) -> None
             "runninghub_image_to_image_test",
             "transform_image",
             "ai.runninghub_image_to_image.v1",
-            {"prompt", "image_urls"},
+            {"prompt", "image_refs"},
         ),
     ],
 )

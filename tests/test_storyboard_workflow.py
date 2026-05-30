@@ -75,10 +75,20 @@ def test_storyboard_workflow_contract_is_serial_and_uses_expected_nodes(test_set
     assert nodes_by_id["describe_panels"]["inputs"]["prompt"]["vars"]["segments_context"] == {
         "from": "$nodes.assemble_context.output.context_string"
     }
-    assert nodes_by_id["collect_assets"]["outputs"]["properties"]["image_urls"] == {
+    assert nodes_by_id["collect_assets"]["outputs"]["properties"]["image_refs"] == {
         "type": "array",
         "minItems": 1,
-        "items": {"type": "string", "minLength": 1},
+        "items": {
+            "type": "object",
+            "required": ["kind"],
+            "properties": {
+                "kind": {"type": "string", "enum": ["asset", "data_uri"]},
+                "asset_id": {"type": "string", "minLength": 1},
+                "data": {"type": "string", "minLength": 1},
+                "role": {"type": "string"},
+            },
+            "additionalProperties": False,
+        },
     }
     assert nodes_by_id["collect_storyboard_input"]["ui"]["sections"]["input"] == {
         "default_open": True
@@ -86,8 +96,8 @@ def test_storyboard_workflow_contract_is_serial_and_uses_expected_nodes(test_set
     assert nodes_by_id["collect_storyboard_input"]["ui"]["sections"]["output"] == {
         "default_open": False
     }
-    assert nodes_by_id["assemble_prompt"]["inputs"]["image_urls"] == {
-        "from": "$nodes.collect_assets.output.image_urls"
+    assert nodes_by_id["assemble_prompt"]["inputs"]["image_refs"] == {
+        "from": "$nodes.collect_assets.output.image_refs"
     }
     assert nodes_by_id["assemble_prompt"]["inputs"]["description"] == {
         "from": "$nodes.describe_panels.output.segment_descriptions.0.panels.0.description"
@@ -95,8 +105,8 @@ def test_storyboard_workflow_contract_is_serial_and_uses_expected_nodes(test_set
     assert nodes_by_id["generate_image"]["inputs"]["prompt"] == {
         "from": "$nodes.assemble_prompt.output.prompt"
     }
-    assert nodes_by_id["generate_image"]["inputs"]["image_urls"] == {
-        "from": "$nodes.assemble_prompt.output.image_urls"
+    assert nodes_by_id["generate_image"]["inputs"]["image_refs"] == {
+        "from": "$nodes.assemble_prompt.output.image_refs"
     }
     assert nodes_by_id["generate_image"]["inputs"]["negative_prompt"] == {
         "from": "$nodes.assemble_prompt.output.negative_prompt"
@@ -246,7 +256,7 @@ async def test_storyboard_workflow_accepts_panel_segment_title_from_deepseek(
         .with_run_output_dir(tmp_path / "runs")
         .build()
     )
-    answers = iter(['["https://assets.test/linchong-reference.png"]'])
+    answers = iter(['[{"kind": "data_uri", "data": "data:image/png;base64,bGluY2hvbmc=", "role": "reference"}]'])
     runner = WorkflowTestRunner(
         session=session,
         console=ConsoleIO(input_func=lambda prompt: next(answers)),
@@ -287,7 +297,7 @@ async def test_storyboard_workflow_runs_with_manual_asset_input(
         .with_run_output_dir(tmp_path / "runs")
         .build()
     )
-    answers = iter(['["https://assets.test/reference.png"]'])
+    answers = iter(['[{"kind": "data_uri", "data": "data:image/png;base64,cmVmZXJlbmNl", "role": "reference"}]'])
     runner = WorkflowTestRunner(
         session=session,
         console=ConsoleIO(input_func=lambda prompt: next(answers)),
@@ -319,8 +329,8 @@ async def test_storyboard_workflow_runs_with_manual_asset_input(
         "deepseek",
         "runninghub_image",
     ]
-    assert router.requests[-1].metadata["image_urls"] == [
-        "https://assets.test/reference.png"
+    assert router.requests[-1].metadata["images"] == [
+        "data:image/png;base64,cmVmZXJlbmNl"
     ]
 
 

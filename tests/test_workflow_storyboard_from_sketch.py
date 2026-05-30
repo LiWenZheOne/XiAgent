@@ -106,6 +106,8 @@ class FakeRouter(ChatModelRouter):
                             "aliases": ["林教头"],
                             "summary": "八十万禁军教头，被发配后的落难英雄。",
                             "character_status": "囚犯装束，头戴旧毡笠，手持花枪，在风雪中蓄势待发。",
+                            "variant_name": "囚服旧毡笠",
+                            "variant_description": "身着囚服，头戴旧毡笠，保留林冲的稳定体貌和身份识别特征。",
                             "accessories": [],
                         }
                     ],
@@ -140,7 +142,7 @@ class FakeRouter(ChatModelRouter):
             )
         elif "未匹配角色" in prompt_text:
             text = json.dumps({"match_results": []}, ensure_ascii=False)
-        elif "为以下角色匹配变体" in prompt_text:
+        elif "为以下已提取角色变体匹配已有资产" in prompt_text:
             text = json.dumps(
                 {
                     "full_name": "林冲",
@@ -291,27 +293,7 @@ async def test_workflow_full_pipeline_with_mocks(tmp_path: Path, monkeypatch) ->
         lambda settings: _registry_for_test(router),
     )
 
-    # monkeypatch _image_urls to accept objects with "image_url" field.
-    # merge_asset_images 输出的是对象数组（含 image_url 字段），
-    # 但 prompt assembler 预期字符串数组。此处做兼容转换。
-    from xiagent.nodes.tools import storyboard_prompt as _prompt_module
     from xiagent.core.errors import ValidationError as _VE
-
-    def _patched_image_urls(inputs):
-        value = inputs.get("image_urls")
-        if not isinstance(value, list):
-            raise _VE(code="image_urls_required", message="image_urls must be an array")
-        result: list[str] = []
-        for item in value:
-            if isinstance(item, str) and item.strip():
-                result.append(item.strip())
-            elif isinstance(item, dict) and isinstance(item.get("image_url"), str) and item["image_url"].strip():
-                result.append(item["image_url"].strip())
-        if not result:
-            raise _VE(code="image_urls_required", message="image_urls must include at least one URL")
-        return result
-
-    monkeypatch.setattr(_prompt_module, "_image_urls", _patched_image_urls)
 
     # ── Patch: resolve_input_spec to handle workflow_reference_missing_node_output ──
     # The YAML split merge_asset_images into merge_asset_images_manual and

@@ -28,6 +28,7 @@ from xiagent.nodes.tools.asset_lookup import AssetLookupNode
 from xiagent.nodes.tools.create_text_asset import CreateTextAssetNode
 from xiagent.nodes.tools.enrich_characters import EnrichCharactersNode
 from xiagent.nodes.tools.complete_asset_images import CompleteAssetImagesNode
+from xiagent.nodes.tools.filter_assets_for_generation import FilterAssetsForGenerationNode
 from xiagent.nodes.tools.script_split import ScriptSplitNode
 from xiagent.nodes.tools.storyboard_prompt import StoryboardPromptAssemblerNode
 from xiagent.runtime import input_resolver as _input_resolver_mod
@@ -81,6 +82,7 @@ def test_orchestration_workflow_node_list(test_settings) -> None:
         "match_props_by_name",
         "enrich_props",
         "review_assets",
+        "filter_assets_for_generation",
         "upload_images",
         "generate_prompt_v2",
         "prepare_asset_images",
@@ -114,6 +116,7 @@ def test_orchestration_workflow_node_list(test_settings) -> None:
         "match_props_by_name": "tool.asset_lookup.v1",
         "enrich_props": "tool.enrich_characters.v1",
         "review_assets": "system.human_approval.v1",
+        "filter_assets_for_generation": "tool.filter_assets_for_generation.v1",
         "generate_prompt_v2": "ai.deepseek_structured_json.v1",
         "upload_images": "system.human_approval.v1",
         "prepare_asset_images": "tool.complete_asset_images.v1",
@@ -128,6 +131,20 @@ def test_orchestration_workflow_node_list(test_settings) -> None:
         "assemble_prompt_v2": "tool.storyboard_prompt_assembler.v1",
         "generate_image_v2": "ai.runninghub_image_to_image.v1",
         "review_storyboard_image": "system.human_approval.v1",
+    }
+    upload_ui = nodes_by_id["upload_images"]["ui"]
+    assert upload_ui["controls"]["interaction"]["control_id"] == "ui.interaction.asset_image_cards.v1"
+    assert upload_ui["sections"]["input"]["visible"] is False
+    assert upload_ui["sections"]["output"]["visible"] is False
+    assert upload_ui["sections"]["events"]["visible"] is False
+    upload_outputs = nodes_by_id["upload_images"]["outputs"]["properties"]
+    assert "prompt_results" in upload_outputs
+    assert "target_asset_key" in upload_outputs
+    assert nodes_by_id["prepare_asset_images"]["inputs"]["prompt_results"] == {
+        "from": "$nodes.upload_images.output.prompt_results",
+    }
+    assert nodes_by_id["prepare_asset_images"]["inputs"]["target_asset_key"] == {
+        "from": "$nodes.upload_images.output.target_asset_key",
     }
 
     validate_workflow_contract(contract, build_node_registry(test_settings))
@@ -168,7 +185,8 @@ def test_orchestration_workflow_edges_are_dag(test_settings) -> None:
         {"from": "enrich_characters", "to": "match_variants"},
         {"from": "match_variants", "to": "check_accessories"},
         {"from": "check_accessories", "to": "review_assets"},
-        {"from": "review_assets", "to": "generate_prompt_v2"},
+        {"from": "review_assets", "to": "filter_assets_for_generation"},
+        {"from": "filter_assets_for_generation", "to": "generate_prompt_v2"},
         {"from": "generate_prompt_v2", "to": "upload_images"},
         {"from": "upload_images", "to": "prepare_asset_images"},
         {"from": "generate_missing_asset_images", "to": "merge_completed_asset_images"},
@@ -276,6 +294,8 @@ class FakeOrchestrationRouter(ChatModelRouter):
                 '"summary": "八十万禁军教头，武艺高强，隐忍后爆发。", '
                 '"character_status": "被发配沧州途中，戴罪看守草料场，'
                 '身着囚服，面带风霜，手按花枪。", '
+                '"variant_name": "囚服旧毡笠", '
+                '"variant_description": "身着囚服，头戴旧毡笠，保留林冲的稳定体貌和身份识别特征。", '
                 '"accessories": ["花枪", "旧毡笠"]}], '
                 '"character_names": ["林冲"]}'
             ),
@@ -325,18 +345,19 @@ class FakeOrchestrationRouter(ChatModelRouter):
                 '需将官服改为囚服，添加花枪和旧毡笠。", '
                 '"prompt": "请将图中角色的官服改成囚服，'
                 '头戴旧毡笠，手持花枪，保持风格和其它特征不变", '
-                '"reference_image_url": "https://cdn.test/template.png"}]}'
+                '"reference_image_ref": {"kind": "data_uri", '
+                '"data": "data:image/png;base64,dGVtcGxhdGU=", "role": "reference"}}]}'
             ),
             # 8. assign_assets_to_segments — single DeepSeekStructuredJsonNode call
             (
                 '{"segment_assignments": [{"segment_index": 0, '
                 '"characters": [{"full_name": "林冲", '
-                '"image_url": "https://cdn.test/林冲_囚服雪地.png", '
+                '"image_ref": {"kind": "data_uri", "data": "data:image/png;base64,bGluY2hvbmc=", "role": "reference"}, '
                 '"variant": "囚服雪地"}], '
                 '"key_props": ["花枪", "旧毡笠"]}, '
                 '{"segment_index": 1, '
                 '"characters": [{"full_name": "林冲", '
-                '"image_url": "https://cdn.test/林冲_囚服雪地.png", '
+                '"image_ref": {"kind": "data_uri", "data": "data:image/png;base64,bGluY2hvbmc=", "role": "reference"}, '
                 '"variant": "囚服雪地"}], '
                 '"key_props": ["花枪"]}]}'
             ),
@@ -359,10 +380,10 @@ class FakeOrchestrationRouter(ChatModelRouter):
             ),
             # 10. extract_panel_image_urls — single DeepSeekStructuredJsonNode call
             (
-                '{"panel_image_urls": [{"full_name": "林冲", '
-                '"image_url": "https://cdn.test/林冲_囚服雪地.png", '
+                '{"panel_image_refs": [{"full_name": "林冲", '
+                '"image_ref": {"kind": "data_uri", "data": "data:image/png;base64,bGluY2hvbmc=", "role": "reference"}, '
                 '"variant": "囚服雪地"}], '
-                '"image_urls": ["https://cdn.test/林冲_囚服雪地.png"], '
+                '"image_refs": [{"kind": "data_uri", "data": "data:image/png;base64,bGluY2hvbmc=", "role": "reference"}], '
                 '"description": "林冲披旧毡笠在风雪中前行，远处草料场火光隐约。", '
                 '"style": "电影感国风动画", '
                 '"constraints": "保持角色服装发型一致。"}'
@@ -403,6 +424,7 @@ def _orchestration_registry(router: FakeOrchestrationRouter) -> NodeRegistry:
     registry.register(SystemUserInputNode())
     registry.register(HumanApprovalNode())
     registry.register(CompleteAssetImagesNode())
+    registry.register(FilterAssetsForGenerationNode())
     registry.register(ScriptSplitNode())
     registry.register(AssembleStoryboardContextNode())
     registry.register(AssetLookupNode())
@@ -474,6 +496,8 @@ class AutoOrchestrationRouter(FakeOrchestrationRouter):
                 '"summary": "八十万禁军教头，武艺高强，隐忍后爆发。", '
                 '"character_status": "被发配沧州途中，戴罪看守草料场，'
                 '身着囚服，面带风霜，手按花枪。", '
+                '"variant_name": "囚服旧毡笠", '
+                '"variant_description": "身着囚服，头戴旧毡笠，保留林冲的稳定体貌和身份识别特征。", '
                 '"accessories": ["花枪", "旧毡笠"]}], '
                 '"character_names": ["林冲"]}'
             ),
@@ -526,7 +550,8 @@ class AutoOrchestrationRouter(FakeOrchestrationRouter):
                 '需将官服改为囚服，添加花枪和旧毡笠。", '
                 '"prompt": "请将图中角色的官服改成囚服，'
                 '头戴旧毡笠，手持花枪，保持风格和其它特征不变", '
-                '"reference_image_url": "https://cdn.test/template.png"}]}'
+                '"reference_image_ref": {"kind": "data_uri", '
+                '"data": "data:image/png;base64,dGVtcGxhdGU=", "role": "reference"}}]}'
             ),
         ]
 
@@ -564,6 +589,83 @@ async def _seed_file_asset(
         )
 
 
+def test_orchestration_generate_prompt_is_character_design_text() -> None:
+    contract = load_workflow_file(ORCHESTRATION_WORKFLOW_PATH)
+    nodes_by_id = {node["id"]: node for node in contract["nodes"]}
+
+    generate_prompt = nodes_by_id["generate_prompt_v2"]
+    system_prompt = generate_prompt["inputs"]["system"]["value"]
+    prompt_template = generate_prompt["inputs"]["prompt"]["template"]
+
+    assert generate_prompt["name"] == "生成资产设定提示词"
+    assert "不输出图像结果" in system_prompt
+    assert "只输出文本提示词和参考图 URL" in system_prompt
+    assert "稳定角色设定" in system_prompt
+    assert "只能描述服装、外貌" in system_prompt
+    assert "不得包含动作" in system_prompt
+    assert "受伤/疲惫/奔跑/打斗" in system_prompt
+    assert "不得输出图片、图片链接、Markdown 或 HTML" in prompt_template
+    assert "不要把剧情动作、受伤、奔跑、打斗等临时状态当成角色设定" in prompt_template
+
+
+def test_orchestration_extracts_variants_before_matching() -> None:
+    contract = load_workflow_file(ORCHESTRATION_WORKFLOW_PATH)
+    nodes_by_id = {node["id"]: node for node in contract["nodes"]}
+
+    extract_system = nodes_by_id["extract_characters"]["inputs"]["system"]["template"]
+    extract_prompt = nodes_by_id["extract_characters"]["inputs"]["prompt"]["template"]
+    prop_system = nodes_by_id["extract_props"]["inputs"]["system"]["template"]
+    prop_prompt = nodes_by_id["extract_props"]["inputs"]["prompt"]["template"]
+    semantic_system = nodes_by_id["semantic_match_characters"]["inputs"]["system"]["value"]
+    semantic_prompt = nodes_by_id["semantic_match_characters"]["inputs"]["prompt"]["template"]
+    match_system = nodes_by_id["match_variants"]["inputs"]["system"]["value"]
+    match_prompt = nodes_by_id["match_variants"]["inputs"]["prompt_template"]["value"]
+    accessory_inputs = nodes_by_id["check_accessories"]["inputs"]
+    accessory_prompt = nodes_by_id["check_accessories"]["inputs"]["prompt_template"]["value"]
+    review_prompt = nodes_by_id["review_assets"]["inputs"]["question"]["template"]
+
+    assert "请用提问式思维链步骤完成分析" in extract_system
+    assert "当前剧本属于原作的哪个剧情阶段" in extract_system
+    assert "每个角色在当前情景下应该是什么稳定造型" in extract_system
+    assert "这个稳定造型应该叫什么 variant_name" in extract_system
+    assert "被绑起来" in extract_system
+    assert "不是变体依据" in extract_system
+    assert "禁止填\"默认\"、\"基础\"、\"普通\"、\"无特殊造型\"" in extract_system
+    assert "summary 只写长期身份" in extract_system
+    assert "character_status 只写此刻" in extract_system
+    assert "variant_name" in extract_prompt
+    assert "variant_description" in extract_prompt
+    assert "按 system 中 11 个问题整理" in extract_prompt
+    assert "回答\"这个稳定造型应该叫什么？\"" in extract_prompt
+    assert "禁止输出\"默认\"、\"基础\"、\"普通\"、\"无特殊造型\"" in extract_prompt
+    assert "至少 40 字" in extract_prompt
+    assert "不写当前剧情状态" in extract_prompt
+    assert "不写生平背景" in extract_prompt
+    assert "穿戴类外观元素不作为道具提取" in prop_system
+    assert "属于角色变体或角色配件" in prop_system
+    assert "普通穿着状态不能作为道具" in prop_system
+    assert "不要使用\"服装\"作为道具类别" in prop_prompt
+    assert "资产库角色匹配器" in semantic_system
+    assert "## A. 提取到的角色资产" in semantic_prompt
+    assert "## B. 资产库候选角色" in semantic_prompt
+    assert "资产库角色变体匹配器" in match_system
+    assert "提取到的角色变体资产" in match_system
+    assert "变体是否存在已经由上游 extract_characters 决定" in match_system
+    assert "variant_name、variant_description、accessories" in match_system
+    assert "## A. 提取到的角色变体资产" in match_prompt
+    assert "## B. 资产库候选变体" in match_prompt
+    assert "不得使用被绑、受伤、动作、场景等临时状态命名" in match_prompt
+    assert accessory_inputs["items"] == {
+        "from": "$nodes.enrich_characters.output.characters",
+    }
+    assert "## A. 提取到的角色配件" in accessory_prompt
+    assert "## B. 资产库候选变体/配件" in accessory_prompt
+    assert "### A. 提取到的地点资产" in review_prompt
+    assert "### B. 资产库地点名称匹配结果" in review_prompt
+    assert "### A. 提取到的道具资产" in review_prompt
+    assert "### B. 资产库道具名称匹配结果" in review_prompt
+
+
 async def test_orchestration_auto_generate_path(
     tmp_path: Path,
     monkeypatch,
@@ -590,6 +692,7 @@ async def test_orchestration_auto_generate_path(
         storage_uri="https://cdn.test/template.png",
     )
     answers = iter([
+        "{}",
         "approved",
         "[]",
         "generate_missing",
@@ -704,6 +807,7 @@ async def test_orchestration_manual_upload_path(
         .build()
     )
     answers = iter([
+        "{}",
         "approved",
         (
             '[{"asset_type": "character", "asset_key": "林冲", '
@@ -806,7 +910,7 @@ def test_assign_assets_to_segments_output_schema(test_settings) -> None:
                     "characters": [
                         {
                             "full_name": "林冲",
-                            "image_url": "https://cdn.test/linchong.png",
+                            "image_ref": {"kind": "data_uri", "data": "data:image/png;base64,bGluY2hvbmc=", "role": "reference"},
                             "variant": "囚服雪地",
                         }
                     ],
@@ -867,42 +971,42 @@ def test_assemble_storyboard_context_output_schema(test_settings) -> None:
 
 
 def test_extract_panel_image_urls_output_schema(test_settings) -> None:
-    """extract_panel_image_urls 的 output schema：panel_image_urls 为数组。"""
+    """extract_panel_image_urls 的 output schema：panel_image_refs 为数组。"""
     contract = load_workflow_file(ORCHESTRATION_WORKFLOW_PATH)
     nodes_by_id = {node["id"]: node for node in contract["nodes"]}
     schema = nodes_by_id["extract_panel_image_urls"]["outputs"]
 
     assert schema["type"] == "object"
-    assert "panel_image_urls" in schema["required"]
-    assert "image_urls" in schema["required"]
+    assert "panel_image_refs" in schema["required"]
+    assert "image_refs" in schema["required"]
     assert "description" in schema["required"]
     assert "style" in schema["required"]
     assert "constraints" in schema["required"]
 
-    # ── valid with populated panel_image_urls ──
+    # ── valid with populated panel_image_refs ──
     validate_json_value(
         schema,
         {
-            "panel_image_urls": [
+            "panel_image_refs": [
                 {
                     "full_name": "林冲",
-                    "image_url": "https://cdn.test/linchong.png",
+                    "image_ref": {"kind": "data_uri", "data": "data:image/png;base64,bGluY2hvbmc=", "role": "reference"},
                     "variant": "囚服雪地",
                 }
             ],
-            "image_urls": ["https://cdn.test/linchong.png"],
+            "image_refs": [{"kind": "data_uri", "data": "data:image/png;base64,bGluY2hvbmc=", "role": "reference"}],
             "description": "林冲披旧毡笠在风雪中前行。",
             "style": "电影感国风动画",
             "constraints": "保持角色服装发型一致。",
         },
     )
 
-    # ── valid with empty panel_image_urls ──
+    # ── valid with empty panel_image_refs ──
     validate_json_value(
         schema,
         {
-            "panel_image_urls": [],
-            "image_urls": [],
+            "panel_image_refs": [],
+            "image_refs": [],
             "description": "空场景无角色。",
             "style": "默认风格",
             "constraints": "无约束。",
@@ -914,8 +1018,8 @@ def test_extract_panel_image_urls_output_schema(test_settings) -> None:
         validate_json_value(
             schema,
             {
-                "panel_image_urls": [],
-                "image_urls": [],
+                "panel_image_refs": [],
+                "image_refs": [],
                 "style": "默认风格",
                 "constraints": "无约束。",
             },
@@ -1046,6 +1150,7 @@ async def test_prop_pipeline_execution(
     # upload_images is guided: ConsoleIO asks for each required field separately
     answers = iter([
         '{"decision": "approved"}',
+        "{}",
         '[{"asset_type": "character", "asset_key": "林冲", '
         '"full_name": "林冲", "image_url": "https://cdn.test/linchong.png", "source": "manual_upload"}]',
         "finish",
@@ -1213,6 +1318,7 @@ async def test_scene_pipeline_execution(
     # review_storyboard_prompt, review_storyboard_image
     answers = iter([
         '{"decision": "approved"}',
+        "{}",
         '[{"asset_type": "character", "asset_key": "林冲", '
         '"full_name": "林冲", "image_url": "https://cdn.test/linchong.png", '
         '"source": "manual_upload"}]',

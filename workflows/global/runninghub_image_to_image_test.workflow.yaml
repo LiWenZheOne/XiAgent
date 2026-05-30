@@ -40,14 +40,28 @@ nodes:
         schema:
           type: string
           minLength: 1
-      image_urls:
+      image_refs:
         from_user: true
         schema:
           type: array
           minItems: 1
           items:
-            type: string
-            minLength: 1
+            type: object
+            required: ["kind"]
+            properties:
+              kind:
+                type: string
+                enum: ["asset", "data_uri"]
+              asset_id:
+                type: string
+                minLength: 1
+              data:
+                type: string
+                minLength: 1
+              role:
+                type: string
+                minLength: 1
+            additionalProperties: false
       aspect_ratio:
         from_user: true
         schema:
@@ -66,17 +80,31 @@ nodes:
           minLength: 1
     outputs:
       type: object
-      required: ["prompt", "image_urls", "aspect_ratio", "resolution"]
+      required: ["prompt", "image_refs", "aspect_ratio", "resolution"]
       properties:
         prompt:
           type: string
           minLength: 1
-        image_urls:
+        image_refs:
           type: array
           minItems: 1
           items:
-            type: string
-            minLength: 1
+            type: object
+            required: ["kind"]
+            properties:
+              kind:
+                type: string
+                enum: ["asset", "data_uri"]
+              asset_id:
+                type: string
+                minLength: 1
+              data:
+                type: string
+                minLength: 1
+              role:
+                type: string
+                minLength: 1
+            additionalProperties: false
         aspect_ratio:
           type: string
           title: 画面比例
@@ -106,7 +134,7 @@ nodes:
           mode: input
           options:
             fields:
-              image_urls:
+              image_refs:
                 control_id: ui.input.asset_image_picker.v1
                 variant: thumbnails
                 mode: input
@@ -119,8 +147,8 @@ nodes:
     inputs:
       prompt:
         from: "$nodes.collect_runninghub_image_input.output.prompt"
-      image_urls:
-        from: "$nodes.collect_runninghub_image_input.output.image_urls"
+      image_refs:
+        from: "$nodes.collect_runninghub_image_input.output.image_refs"
       aspect_ratio:
         from: "$nodes.collect_runninghub_image_input.output.aspect_ratio"
       resolution:

@@ -24,7 +24,9 @@ from xiagent.nodes.system.user_input import SystemUserInputNode
 from xiagent.nodes.tools.asset_lookup import AssetLookupNode
 from xiagent.nodes.tools.create_text_asset import CreateTextAssetNode
 from xiagent.nodes.tools.complete_asset_images import CompleteAssetImagesNode
+from xiagent.nodes.tools.echo_tool import EchoToolNode
 from xiagent.nodes.tools.enrich_characters import EnrichCharactersNode
+from xiagent.nodes.tools.filter_assets_for_generation import FilterAssetsForGenerationNode
 from xiagent.workflows.loader import load_workflow_file
 from xiagent.workflows.testing import WorkflowTestBuilder
 from xiagent.workflows.testing.console import ConsoleIO
@@ -140,11 +142,11 @@ def test_asset_catalog_workflow_contract_structure(test_settings) -> None:
         "match_props_by_name",
         "enrich_props",
         "review_assets",
+        "resolve_approved_assets",
+        "filter_assets_for_generation",
         "generate_prompt",
         "upload_images",
-        "prepare_asset_images",
-        "generate_missing_asset_images",
-        "merge_completed_asset_images",
+        "finish_summary",
     ]
     assert {node_id: node["ref"] for node_id, node in nodes_by_id.items()} == {
         "collect_asset_catalog_input": "system.user_input.v1",
@@ -164,11 +166,11 @@ def test_asset_catalog_workflow_contract_structure(test_settings) -> None:
         "match_props_by_name": "tool.asset_lookup.v1",
         "enrich_props": "tool.enrich_characters.v1",
         "review_assets": "system.human_approval.v1",
-        "generate_prompt": "ai.deepseek_structured_json.v1",
+        "resolve_approved_assets": "ai.deepseek_structured_json.v1",
+        "filter_assets_for_generation": "tool.filter_assets_for_generation.v1",
+        "generate_prompt": "ai.parallel_deepseek_structured_json.v1",
         "upload_images": "system.human_approval.v1",
-        "prepare_asset_images": "tool.complete_asset_images.v1",
-        "generate_missing_asset_images": "ai.runninghub_image_to_image.v2",
-        "merge_completed_asset_images": "tool.complete_asset_images.v1",
+        "finish_summary": "tool.echo.v1",
     }
 
     validate_workflow_contract(contract, build_node_registry(test_settings))
@@ -181,17 +183,7 @@ def test_asset_catalog_workflow_has_conditional_edges(test_settings) -> None:
     conditional_edges = [e for e in edges if "when" in e]
     unconditional_edges = [e for e in edges if "when" not in e]
 
-    assert len(conditional_edges) == 2
-    assert {
-        "from": "prepare_asset_images",
-        "to": "generate_missing_asset_images",
-        "when": {"path": "$nodes.prepare_asset_images.output.next_action", "equals": "generate_missing"},
-    } in conditional_edges
-    assert {
-        "from": "prepare_asset_images",
-        "to": "END",
-        "when": {"path": "$nodes.prepare_asset_images.output.next_action", "equals": "finish"},
-    } in conditional_edges
+    assert conditional_edges == []
 
     assert unconditional_edges == [
         {"from": "START", "to": "collect_asset_catalog_input"},
@@ -213,11 +205,12 @@ def test_asset_catalog_workflow_has_conditional_edges(test_settings) -> None:
         {"from": "lookup_scene_assets", "to": "match_scenes_by_name"},
         {"from": "match_scenes_by_name", "to": "enrich_scenes"},
         {"from": "enrich_scenes", "to": "review_assets"},
-        {"from": "review_assets", "to": "generate_prompt"},
+        {"from": "review_assets", "to": "resolve_approved_assets"},
+        {"from": "resolve_approved_assets", "to": "filter_assets_for_generation"},
+        {"from": "filter_assets_for_generation", "to": "generate_prompt"},
         {"from": "generate_prompt", "to": "upload_images"},
-        {"from": "upload_images", "to": "prepare_asset_images"},
-        {"from": "generate_missing_asset_images", "to": "merge_completed_asset_images"},
-        {"from": "merge_completed_asset_images", "to": "END"},
+        {"from": "upload_images", "to": "finish_summary"},
+        {"from": "finish_summary", "to": "END"},
     ]
 
     validate_workflow_contract(contract, build_node_registry(test_settings))
@@ -243,6 +236,8 @@ def test_asset_catalog_extract_characters_output_schema(test_settings) -> None:
                     "aliases": ["林教头"],
                     "summary": "八十万禁军教头，武艺高强。",
                     "character_status": "被发配沧州途中，身着囚服，面带风霜。",
+                    "variant_name": "囚服",
+                    "variant_description": "身着囚服，保留八十万禁军教头的稳定体貌和身份识别特征。",
                     "accessories": [],
                 }
             ],
@@ -341,6 +336,26 @@ def test_asset_catalog_match_variants_output_schema(test_settings) -> None:
             ]
         },
     )
+    validate_json_value(
+        variant_schema,
+        {
+            "results": [
+                {
+                    "full_name": "何涛",
+                    "accessories": [],
+                    "matched_variant": "",
+                    "matched_variant_id": None,
+                    "is_new_variant": True,
+                    "new_variant_name": "何涛_公差装束",
+                    "default_variant_status": "",
+                    "default_variant_storage_uri": "",
+                    "default_variant_appearance_description": "",
+                    "matched_variant_appearance_description": "",
+                    "reason": "资产库无已有变体",
+                }
+            ]
+        },
+    )
     validate_workflow_contract(contract, build_node_registry(test_settings))
 
 
@@ -375,22 +390,62 @@ def test_asset_catalog_generate_prompt_output_schema(test_settings) -> None:
 
     prompt_schema = nodes_by_id["generate_prompt"]["outputs"]
     assert prompt_schema["type"] == "object"
-    assert "prompt_results" in prompt_schema["required"]
+    assert "results" in prompt_schema["required"]
 
     validate_json_value(
         prompt_schema,
         {
-            "prompt_results": [
+            "results": [
                 {
                     "full_name": "林冲",
+                    "target_appearance_description": "深灰粗布囚服，旧毡笠，面部轮廓清晰。",
                     "think": "角色当前状态为囚服，默认变体为官服，需将官服改为囚服。",
-                    "prompt": "请将图中角色的官服改成囚服，保持风格和其它特征不变",
-                    "reference_image_url": "https://cdn.test/template-character.png",
+                    "prompt": "深灰粗布囚服，旧毡笠，面部轮廓清晰，保留八十万禁军教头的挺拔体态",
+                        "reference_image_ref": {
+                            "kind": "data_uri",
+                            "data": "data:image/png;base64,dGVtcGxhdGU=",
+                            "role": "reference",
+                        },
                 }
             ]
         },
     )
     validate_workflow_contract(contract, build_node_registry(test_settings))
+
+
+def test_asset_catalog_generate_prompt_is_character_design_text() -> None:
+    contract = load_workflow_file(ASSET_CATALOG_WORKFLOW_PATH)
+    nodes_by_id = {node["id"]: node for node in contract["nodes"]}
+
+    generate_prompt = nodes_by_id["generate_prompt"]
+    system_prompt = generate_prompt["inputs"]["system"]["value"]
+    prompt_template = generate_prompt["inputs"]["prompt_template"]["value"]
+
+    assert generate_prompt["name"] == "生成资产设定提示词"
+    assert generate_prompt["inputs"]["items"] == {
+        "from": "$nodes.filter_assets_for_generation.output.approved_assets",
+    }
+    assert "视觉资产设定提示词专家" in system_prompt
+    assert "图生图使用的目标描述片段" in system_prompt
+    assert "角色资产只生成稳定设定" in system_prompt
+    assert "只写画面可见的外貌特征与气质" in system_prompt
+    assert "不写身份、职业、阶层、官职、称号、人物关系、阵营、剧情身份" in system_prompt
+    assert "不写动作、姿态、表情" in system_prompt
+    assert "受伤、疲惫、奔跑、打斗、被绑" in system_prompt
+    assert "腿部、脚部、脚踝、鞋、靴、鞋履" in system_prompt
+    assert "地点描述空间结构、建筑/地貌、时代质感" in system_prompt
+    assert "道具描述形制、材质、颜色、装饰" in system_prompt
+    assert "当前资产" in prompt_template
+    assert "哪些信息是稳定可见造型" in prompt_template
+    assert "哪些身份、剧情、动作、状态、腿脚和鞋履信息必须排除" in prompt_template
+    assert "空间、建筑/地貌、时代质感、用途和关键视觉元素" in prompt_template
+    assert "形制、材质、颜色、装饰、磨损、用途和可见特征" in prompt_template
+    assert "target_appearance_description" in prompt_template
+    assert "参考图外貌描述已在资产字段中提供，不要重新生成或改写" in prompt_template
+    assert "不包含固定开头、固定结尾或质量词" in prompt_template
+    assert "脸型、面部轮廓、五官、体型、体貌、身材" in prompt_template
+    assert "只描述资产在画面中可见的外貌特征和气质" in prompt_template
+    assert "不得写身份、职业、阶层、官职、称号、人物关系、阵营、剧情身份" in prompt_template
 
 
 def test_asset_catalog_extract_prompt_includes_key_instructions() -> None:
@@ -399,6 +454,8 @@ def test_asset_catalog_extract_prompt_includes_key_instructions() -> None:
 
     system_prompt = nodes_by_id["extract_characters"]["inputs"]["system"]["template"]
     prompt_template = nodes_by_id["extract_characters"]["inputs"]["prompt"]["template"]
+    prop_system = nodes_by_id["extract_props"]["inputs"]["system"]["template"]
+    prop_prompt = nodes_by_id["extract_props"]["inputs"]["prompt"]["template"]
 
     assert "全名" in system_prompt
     assert "世界背景" in system_prompt
@@ -409,9 +466,84 @@ def test_asset_catalog_extract_prompt_includes_key_instructions() -> None:
     assert "characters" in prompt_template
     assert "full_name" in prompt_template
     assert "character_status" in prompt_template
+    assert "variant_name" in prompt_template
+    assert "variant_description" in prompt_template
     assert "accessories" in prompt_template
     assert "character_names" in prompt_template
     assert "reasoning" in prompt_template
+    assert "请用提问式思维链步骤完成分析" in system_prompt
+    assert "这段剧本中一共出现、在场、发言、行动或被明确提到的角色有哪些" in system_prompt
+    assert "候选角色清单" in system_prompt
+    assert "当前剧本属于原作的哪个剧情阶段" in system_prompt
+    assert "每个角色在当前情景下应该是什么稳定造型" in system_prompt
+    assert "这个稳定造型应该叫什么 variant_name" in system_prompt
+    assert "被绑起来" in system_prompt
+    assert "不是变体依据" in system_prompt
+    assert "禁止填\"默认\"、\"基础\"、\"普通\"、\"无特殊造型\"" in system_prompt
+    assert "禁止使用\"角色名_服装名\"格式" in system_prompt
+    assert "这个变体的稳定视觉设定是什么" in system_prompt
+    assert "至少 40 字" in system_prompt
+    assert "禁止输出\"默认装束，无特殊造型描述\"" in system_prompt
+    assert "按 system 中 12 个问题整理" in prompt_template
+    assert "回答\"这个稳定造型应该叫什么？\"" in prompt_template
+    assert "禁止输出\"默认\"、\"基础\"、\"普通\"、\"无特殊造型\"" in prompt_template
+    assert "回答\"这个变体的稳定视觉设定是什么？\"" in prompt_template
+    assert "束缚用绳索" in system_prompt
+    assert "summary 只写长期身份" in system_prompt
+    assert "character_status 只写此刻" in system_prompt
+    assert "不写当前剧情状态" in prompt_template
+    assert "不写生平背景" in prompt_template
+    scene_system = nodes_by_id["extract_scenes"]["inputs"]["system"]["template"]
+    assert "哪些地点需要固化为可复用地点资产" in scene_system
+    assert "会多次出现、承载剧情行动、具备明确空间结构/功能" in scene_system
+    assert "临时路过、泛泛提及、纯对话中一笔带过" in scene_system
+    assert "穿戴类外观元素不作为道具提取" in prop_system
+    assert "属于角色变体或角色配件" in prop_system
+    assert "普通穿着状态不能作为道具" in prop_system
+    assert "不要使用\"服装\"作为道具类别" in prop_prompt
+
+
+def test_asset_catalog_variant_matching_only_matches_extracted_variants() -> None:
+    contract = load_workflow_file(ASSET_CATALOG_WORKFLOW_PATH)
+    nodes_by_id = {node["id"]: node for node in contract["nodes"]}
+
+    semantic_system = nodes_by_id["semantic_match_characters"]["inputs"]["system"]["value"]
+    semantic_prompt = nodes_by_id["semantic_match_characters"]["inputs"]["prompt"]["template"]
+    match_system = nodes_by_id["match_variants"]["inputs"]["system"]["value"]
+    match_prompt = nodes_by_id["match_variants"]["inputs"]["prompt_template"]["value"]
+    match_schema = nodes_by_id["match_variants"]["outputs"]
+    accessory_inputs = nodes_by_id["check_accessories"]["inputs"]
+    accessory_system = nodes_by_id["check_accessories"]["inputs"]["system"]["value"]
+    accessory_prompt = nodes_by_id["check_accessories"]["inputs"]["prompt_template"]["value"]
+    review_prompt = nodes_by_id["review_assets"]["inputs"]["question"]["template"]
+
+    assert "资产库角色匹配器" in semantic_system
+    assert "## A. 提取到的角色资产" in semantic_prompt
+    assert "## B. 资产库候选角色" in semantic_prompt
+    assert "资产库角色变体匹配器" in match_system
+    assert "提取到的角色变体资产" in match_system
+    assert "变体是否存在已经由上游 extract_characters 决定" in match_system
+    assert "variant_name、variant_description、accessories" in match_system
+    assert "被绑起来" in match_system
+    assert "临时状态必须忽略" in match_system
+    assert "## A. 提取到的角色变体资产" in match_prompt
+    assert "## B. 资产库候选变体" in match_prompt
+    assert "appearance_description" in match_prompt
+    assert "default_variant_appearance_description" in match_prompt
+    assert "matched_variant_appearance_description" in match_schema["properties"]["results"]["items"]["properties"]
+    assert "不得使用被绑、受伤、动作、场景等临时状态命名" in match_prompt
+    assert "资产库角色配件匹配器" in accessory_system
+    assert "只检查上游已提取配件" in accessory_system
+    assert accessory_inputs["items"] == {
+        "from": "$nodes.enrich_characters.output.characters",
+    }
+    assert "## A. 提取到的角色配件" in accessory_prompt
+    assert "## B. 资产库候选变体/配件" in accessory_prompt
+    assert "不得把被绑" in accessory_system
+    assert "### A. 提取到的地点资产" in review_prompt
+    assert "### B. 资产库地点名称匹配结果" in review_prompt
+    assert "### A. 提取到的道具资产" in review_prompt
+    assert "### B. 资产库道具名称匹配结果" in review_prompt
 
 
 def test_asset_catalog_match_by_name_uses_names_array() -> None:
@@ -430,21 +562,28 @@ def test_asset_catalog_image_completion_references_prompt_results() -> None:
 
     upload_inputs = nodes_by_id["upload_images"]["inputs"]
     assert upload_inputs["prompt_results"] == {
-        "from": "$nodes.generate_prompt.output.prompt_results",
+        "from": "$nodes.generate_prompt.output.results",
     }
     assert upload_inputs["enriched_characters"] == {
         "from": "$nodes.enrich_characters.output.characters",
     }
+    upload_ui = nodes_by_id["upload_images"]["ui"]
+    assert upload_ui["controls"]["interaction"]["control_id"] == "ui.interaction.asset_image_cards.v1"
+    assert upload_ui["sections"]["input"]["visible"] is False
+    assert upload_ui["sections"]["output"]["visible"] is False
+    assert upload_ui["sections"]["events"]["visible"] is False
 
-    prepare_inputs = nodes_by_id["prepare_asset_images"]["inputs"]
-    assert prepare_inputs["manual_images"] == {
+    assert "prepare_asset_images" not in nodes_by_id
+    assert "generate_missing_asset_images" not in nodes_by_id
+    finish_inputs = nodes_by_id["finish_summary"]["inputs"]
+    assert finish_inputs["asset_images"] == {
         "from": "$nodes.upload_images.output.asset_images",
     }
-
-    gen_image_inputs = nodes_by_id["generate_missing_asset_images"]["inputs"]
-    assert gen_image_inputs["prompt_results"] == {
-        "from": "$nodes.prepare_asset_images.output.missing_prompt_results",
+    assert finish_inputs["prompt_results"] == {
+        "from": "$nodes.upload_images.output.prompt_results",
     }
+    finish_ui = nodes_by_id["finish_summary"]["ui"]
+    assert finish_ui["controls"]["output"]["control_id"] == "ui.display.asset_task_summary.v1"
 
 
 async def test_asset_catalog_auto_generate_path(
@@ -472,7 +611,7 @@ async def test_asset_catalog_auto_generate_path(
         name="塞雷无腿角色模板",
         storage_uri="https://cdn.test/template-character.png",
     )
-    answers = iter(["approved", "[]", "generate_missing"])
+    answers = iter(["", "{}", "approved", "[]", "finish"])
     runner = WorkflowTestRunner(
         session=session,
         console=ConsoleIO(input_func=lambda prompt: next(answers)),
@@ -504,11 +643,14 @@ async def test_asset_catalog_auto_generate_path(
     assert "match_props_by_name" in executed_node_ids
     assert "enrich_props" in executed_node_ids
     assert "review_assets" in executed_node_ids
+    assert "filter_assets_for_generation" in executed_node_ids
     assert "generate_prompt" in executed_node_ids
     assert "upload_images" in executed_node_ids
-    assert "prepare_asset_images" in executed_node_ids
-    assert "generate_missing_asset_images" in executed_node_ids
-    assert "merge_completed_asset_images" in executed_node_ids
+    assert "finish_summary" in executed_node_ids
+    assert "prepare_asset_images" not in executed_node_ids
+    assert "generate_missing_asset_images" not in executed_node_ids
+    assert "merge_completed_asset_images" not in executed_node_ids
+    assert "merge_uploaded_asset_images" not in executed_node_ids
 
 
 async def test_asset_catalog_manual_upload_path(
@@ -530,7 +672,7 @@ async def test_asset_catalog_manual_upload_path(
         .with_run_output_dir(tmp_path / "runs")
         .build()
     )
-    answers = iter(["approved", "[]", "finish"])
+    answers = iter(["", "{}", "approved", "[]", "finish"])
     runner = WorkflowTestRunner(
         session=session,
         console=ConsoleIO(input_func=lambda prompt: next(answers)),
@@ -562,10 +704,13 @@ async def test_asset_catalog_manual_upload_path(
     assert "match_props_by_name" in executed_node_ids
     assert "enrich_props" in executed_node_ids
     assert "review_assets" in executed_node_ids
+    assert "filter_assets_for_generation" in executed_node_ids
     assert "generate_prompt" in executed_node_ids
     assert "upload_images" in executed_node_ids
-    assert "prepare_asset_images" in executed_node_ids
+    assert "finish_summary" in executed_node_ids
+    assert "prepare_asset_images" not in executed_node_ids
     assert "generate_missing_asset_images" not in executed_node_ids
+    assert "merge_uploaded_asset_images" not in executed_node_ids
     assert "merge_completed_asset_images" not in executed_node_ids
 
 
@@ -580,6 +725,8 @@ class FakeAssetCatalogRouter(ChatModelRouter):
                 '"characters": [{"full_name": "林冲", "aliases": ["林教头"], '
                 '"summary": "八十万禁军教头，武艺高强。", '
                 '"character_status": "被发配沧州途中，身着囚服，面带风霜。", '
+                '"variant_name": "囚服", '
+                '"variant_description": "身着囚服，保留八十万禁军教头的稳定体貌和身份识别特征。", '
                 '"accessories": []}], '
                 '"character_names": ["林冲"]}'
             ),
@@ -608,6 +755,8 @@ class FakeAssetCatalogRouter(ChatModelRouter):
                 '"new_variant_name": "林冲_囚服", '
                 '"default_variant_status": "八十万禁军教头，身着官服。", '
                 '"default_variant_storage_uri": "", '
+                '"default_variant_appearance_description": "官服参考图，头戴幞头，身穿深色官袍。", '
+                '"matched_variant_appearance_description": "", '
                 '"reason": "新角色无已有变体"}'
             ),
             # check_accessories (parallel - 1 call for 1 character)
@@ -616,12 +765,26 @@ class FakeAssetCatalogRouter(ChatModelRouter):
                 '"new_accessories": [], "existing_accessories": [], '
                 '"reason": "无配件"}'
             ),
+            # resolve_approved_assets
+            (
+                '{"approved_assets": {"characters": [{"type": "character", "name": "林冲", '
+                '"matched": false, "matched_asset_id": null, "matched_asset_name": "", '
+                '"aliases": "林教头", "summary": "八十万禁军教头，武艺高强。", '
+                '"character_status": "被发配沧州途中，身着囚服，面带风霜。", '
+                '"variant_name": "囚服", '
+                '"variant_description": "身着囚服，保留八十万禁军教头的稳定体貌和身份识别特征。", '
+                '"reference_appearance_description": "官服参考图，头戴幞头，身穿深色官袍。", '
+                '"accessories": ""}], "assets": [], "props": []}, '
+                '"added_assets": [], "reasoning": "无新增资产描述，沿用审核列表。"}'
+            ),
             # generate_prompt
             (
-                '{"prompt_results": [{"full_name": "林冲", '
+                '{"full_name": "林冲", '
+                '"target_appearance_description": "深灰粗布囚服，旧毡笠，面部轮廓清晰。", '
                 '"think": "角色当前状态为囚服，默认变体为官服，需将官服改为囚服。", '
-                '"prompt": "请将图中角色的官服改成囚服，保持风格和其它特征不变", '
-                '"reference_image_url": "https://cdn.test/template-character.png"}]}'
+                '"prompt": "深灰粗布囚服，旧毡笠，面部轮廓清晰，保留八十万禁军教头的挺拔体态", '
+                '"reference_image_ref": {"kind": "data_uri", '
+                '"data": "data:image/png;base64,dGVtcGxhdGU=", "role": "reference"}}'
             ),
         ]
 
@@ -654,7 +817,9 @@ def _asset_catalog_registry(router: FakeAssetCatalogRouter) -> NodeRegistry:
     registry.register(AssetLookupNode())
     registry.register(CreateTextAssetNode())
     registry.register(EnrichCharactersNode())
+    registry.register(FilterAssetsForGenerationNode())
     registry.register(CompleteAssetImagesNode())
+    registry.register(EchoToolNode())
     registry.register(
         DeepSeekStructuredJsonNode(
             model_router=router,
