@@ -763,7 +763,6 @@ describe("XiAgent V2 app", () => {
               ref: "tool.episode_metadata_finalize.v1",
               name: "任务完成",
               ui: {
-                sections: { output: { wrapped: false } },
                 controls: {
                   output: { control_id: "ui.display.asset_task_summary.v1", variant: "catalog_complete", mode: "readonly" },
                 },

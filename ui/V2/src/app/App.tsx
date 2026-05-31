@@ -1434,7 +1434,9 @@ function NodeExecutionDetails({
   const outputVisible = node.error || (!hidesGenericSections && nodeSectionVisible(nodeSpec, "output", true));
   const eventsVisible = !hidesGenericSections && nodeSectionVisible(nodeSpec, "events", true);
   const inputWrapped = nodeSectionWrapped(nodeSpec, "input", true);
-  const outputWrapped = nodeSectionWrapped(nodeSpec, "output", true);
+  const outputWrapped = outputConfig?.control_id === "ui.display.asset_task_summary.v1"
+    ? false
+    : nodeSectionWrapped(nodeSpec, "output", true);
   const InputControl = inputConfig ? getNodeUiControl(inputConfig.control_id) : null;
   const OutputControl = outputConfig ? getNodeUiControl(outputConfig.control_id) : null;
 
