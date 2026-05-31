@@ -1,6 +1,6 @@
 import { type ChangeEvent, type DragEvent, useEffect, useMemo, useState } from "react";
 
-import { createTextAsset, generateAssetImage, searchAssets, uploadAsset } from "../../api/assets";
+import { generateAssetImage, searchAssets, uploadAsset } from "../../api/assets";
 import type { AssetRecord, AssetScope } from "../../api/types";
 import type { NodeUiControlProps } from "../types";
 import { createStoredZip, extensionFromBlobOrUrl, safeAssetImageFileName } from "./assetZip";
@@ -181,21 +181,22 @@ export function AssetImageCardsControl({
     setLibraryBusy(true);
     setError("");
     try {
-      const createdAssets = await Promise.all(readyCards.map((card) => {
+      const createdAssets = await Promise.all(readyCards.map(async (card) => {
         const edit = edits[card.assetKey] ?? cardEditFromCard(card);
         const group = tabKeyForAssetType(card.assetType);
         const fullName = cardDisplayName(edit, group);
         const imageUrl = images[card.assetKey];
-        return createTextAsset({
+        const imageFile = await fileFromImageUrl(imageUrl, fullName);
+        return uploadAsset({
+          file: imageFile,
           scope: uploadScope(projectId),
           project_id: projectId && projectId !== "global" ? projectId : undefined,
           name: fullName,
-          text: edit.prompt.trim() || fullName,
+          publish: true,
           metadata: {
+            type: card.assetType,
             asset_type: card.assetType,
             tags: assetLibraryTags(card, edit, group),
-            public_url: imageUrl,
-            image_url: imageUrl,
             prompt: edit.prompt.trim(),
             appearance_description: card.referenceAppearanceDescription || "",
             source: "asset_catalog_workflow",
@@ -321,7 +322,7 @@ export function AssetImageCardsControl({
         return;
       }
       const nextImages = { ...images, [card.assetKey]: url };
-      const nextImageMeta = { ...imageMeta, [card.assetKey]: { source: "manual_upload" } };
+      const nextImageMeta = { ...imageMeta, [card.assetKey]: { source: "manual_upload", asset_id: uploaded.asset_id } };
       setImages(nextImages);
       setImageMeta(nextImageMeta);
       await persistDraft(nextImages, nextImageMeta);
@@ -827,6 +828,16 @@ function assetLibraryTags(card: AssetImageCard, edit: CardEditState, group: TabK
     return ["道具", name, edit.variantName.trim(), edit.accessories.trim()].filter(Boolean);
   }
   return ["资产", name].filter(Boolean);
+}
+
+async function fileFromImageUrl(imageUrl: string, fullName: string): Promise<File> {
+  const response = await fetch(imageUrl);
+  if (!response.ok) throw new Error(`${fullName} 图像下载失败，无法入库。`);
+  const blob = await response.blob();
+  const ext = extensionFromBlobOrUrl(blob, imageUrl);
+  return new File([blob], `${safeAssetImageFileName(fullName)}${ext}`, {
+    type: blob.type || "image/png",
+  });
 }
 
 function initialMatches(cards: AssetImageCard[]): MatchState {

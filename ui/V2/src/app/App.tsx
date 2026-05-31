@@ -74,14 +74,7 @@ interface WorkflowTemplate {
 
 interface AssetEditorDraft {
   name: string;
-  type: string;
-  summary: string;
-  relationships: string;
-  characterStatus: string;
-  variantName: string;
-  variantDescription: string;
-  accessories: string;
-  description: string;
+  metadata: Array<{ key: string; value: string }>;
 }
 
 export function App() {
@@ -2000,7 +1993,7 @@ function AssetLibraryPage({
     if (!keyword) return compatibleTags;
     return compatibleTags.filter((tag) => tag.name.toLowerCase().includes(keyword));
   }, [assetTagFilter, selectedAsset, tags]);
-  const selectedAssetPreviewUrl = selectedAsset ? assetPreviewUrls[selectedAsset.asset_id] ?? "" : "";
+  const selectedAssetPreviewUrl = selectedAsset ? assetPreviewUrls[selectedAsset.asset_id] ?? assetPublicUrl(selectedAsset) : "";
   const selectedTagNames = selectedTagIds
     .map((tagId) => tags.find((tag) => tag.tag_id === tagId)?.name)
     .filter((name): name is string => Boolean(name));
@@ -2156,8 +2149,17 @@ function AssetLibraryPage({
     }
   }
 
-  function handleDraftFieldChange(key: keyof AssetEditorDraft, value: string) {
-    setAssetDraft((current) => current ? { ...current, [key]: value } : current);
+  function handleDraftNameChange(value: string) {
+    setAssetDraft((current) => current ? { ...current, name: value } : current);
+  }
+
+  function handleDraftMetadataChange(key: string, value: string) {
+    setAssetDraft((current) => current
+      ? {
+        ...current,
+        metadata: current.metadata.map((field) => field.key === key ? { ...field, value } : field),
+      }
+      : current);
   }
 
   async function handleSaveAssetBusinessFields(event: FormEvent<HTMLFormElement>) {
@@ -2480,7 +2482,7 @@ function AssetLibraryPage({
           {!loading && !assets.length ? <p className="empty-box">暂无资产，可以上传文件。</p> : null}
           <div className="asset-grid">
             {assets.map((asset) => {
-              const previewUrl = assetPreviewUrls[asset.asset_id] ?? "";
+              const previewUrl = assetPreviewUrls[asset.asset_id] ?? assetPublicUrl(asset);
               return (
                 <button className={asset.asset_id === selectedAssetId ? "asset-card active" : "asset-card"} key={asset.asset_id} type="button" onClick={() => setSelectedAssetId(asset.asset_id)}>
                   {previewUrl ? <img src={previewUrl} alt={asset.name} /> : <span className="asset-icon">{asset.asset_type === "text" ? "文" : asset.mime_type?.startsWith("image/") ? "图" : "档"}</span>}
@@ -2600,40 +2602,20 @@ function AssetLibraryPage({
                   <div className="asset-business-grid">
                     <label className="compact-field">
                       <span>名称</span>
-                      <input aria-label="业务资产名称" value={assetDraft.name} onChange={(event) => handleDraftFieldChange("name", event.target.value)} />
+                      <input aria-label="业务资产名称" value={assetDraft.name} onChange={(event) => handleDraftNameChange(event.target.value)} />
                     </label>
-                    <label className="compact-field">
-                      <span>类型</span>
-                      <input aria-label="资产类型" value={assetDraft.type} onChange={(event) => handleDraftFieldChange("type", event.target.value)} />
-                    </label>
-                    <label className="compact-field">
-                      <span>变体名</span>
-                      <input aria-label="变体名" value={assetDraft.variantName} onChange={(event) => handleDraftFieldChange("variantName", event.target.value)} />
-                    </label>
-                    <label className="compact-field">
-                      <span>配件</span>
-                      <input aria-label="配件" value={assetDraft.accessories} onChange={(event) => handleDraftFieldChange("accessories", event.target.value)} />
-                    </label>
-                    <label className="compact-field span-2">
-                      <span>社会关系</span>
-                      <textarea aria-label="社会关系" value={assetDraft.relationships} onChange={(event) => handleDraftFieldChange("relationships", event.target.value)} />
-                    </label>
-                    <label className="compact-field span-2">
-                      <span>生平背景</span>
-                      <textarea aria-label="生平背景" value={assetDraft.summary} onChange={(event) => handleDraftFieldChange("summary", event.target.value)} />
-                    </label>
-                    <label className="compact-field span-2">
-                      <span>当前状态</span>
-                      <textarea aria-label="当前状态" value={assetDraft.characterStatus} onChange={(event) => handleDraftFieldChange("characterStatus", event.target.value)} />
-                    </label>
-                    <label className="compact-field span-2">
-                      <span>变体描述</span>
-                      <textarea aria-label="变体描述" value={assetDraft.variantDescription} onChange={(event) => handleDraftFieldChange("variantDescription", event.target.value)} />
-                    </label>
-                    <label className="compact-field span-2">
-                      <span>地点/道具描述</span>
-                      <textarea aria-label="地点或道具描述" value={assetDraft.description} onChange={(event) => handleDraftFieldChange("description", event.target.value)} />
-                    </label>
+                    {assetDraft.metadata.length ? assetDraft.metadata.map((field) => (
+                      <label className={`compact-field ${metadataFieldIsLong(field.value) ? "span-2" : ""}`} key={field.key}>
+                        <span>{field.key}</span>
+                        {metadataFieldIsLong(field.value) ? (
+                          <textarea aria-label={`metadata ${field.key}`} value={field.value} onChange={(event) => handleDraftMetadataChange(field.key, event.target.value)} />
+                        ) : (
+                          <input aria-label={`metadata ${field.key}`} value={field.value} onChange={(event) => handleDraftMetadataChange(field.key, event.target.value)} />
+                        )}
+                      </label>
+                    )) : (
+                      <p className="muted span-2">暂无 metadata 字段。</p>
+                    )}
                   </div>
                 </form>
               ) : null}
@@ -3074,53 +3056,59 @@ function tagMatchesAssetScope(tag: AssetTag, asset: AssetRecord): boolean {
   return (tag.project_id ?? null) === (asset.project_id ?? null);
 }
 
+function assetPublicUrl(asset: AssetRecord): string {
+  const publicUrl = asset.metadata.public_url;
+  return typeof publicUrl === "string" ? publicUrl : "";
+}
+
 function createAssetEditorDraft(asset: AssetRecord): AssetEditorDraft {
   const metadata = asset.metadata as Record<string, unknown>;
   return {
     name: asset.name,
-    type: metadataText(metadata, "type") || metadataText(metadata, "asset_type"),
-    summary: metadataText(metadata, "summary"),
-    relationships: metadataText(metadata, "relationships") || metadataText(metadata, "social_relationships") || metadataText(metadata, "relationship"),
-    characterStatus: metadataText(metadata, "character_status"),
-    variantName: metadataText(metadata, "variant_name"),
-    variantDescription: metadataText(metadata, "variant_description"),
-    accessories: metadataListText(metadata, "accessories"),
-    description: metadataText(metadata, "description") || metadataText(metadata, "appearance_description"),
+    metadata: Object.entries(metadata)
+      .sort(([left], [right]) => metadataSortWeight(left) - metadataSortWeight(right) || left.localeCompare(right))
+      .map(([key, value]) => ({ key, value: editableMetadataValue(value) })),
   };
 }
 
 function applyAssetEditorDraft(metadata: AssetMetadata, draft: AssetEditorDraft): Record<string, unknown> {
   const next: Record<string, unknown> = { ...(metadata as Record<string, unknown>) };
-  setMetadataText(next, "type", draft.type);
-  setMetadataText(next, "summary", draft.summary);
-  setMetadataText(next, "relationships", draft.relationships);
-  setMetadataText(next, "character_status", draft.characterStatus);
-  setMetadataText(next, "variant_name", draft.variantName);
-  setMetadataText(next, "variant_description", draft.variantDescription);
-  setMetadataText(next, "description", draft.description);
-  const accessories = draft.accessories.split(/[、,，\n]/).map((item) => item.trim()).filter(Boolean);
-  if (accessories.length) next.accessories = accessories;
-  else delete next.accessories;
+  for (const field of draft.metadata) {
+    const clean = field.value.trim();
+    if (clean) next[field.key] = parseEditableMetadataValue(clean);
+    else delete next[field.key];
+  }
   return next;
 }
 
-function metadataText(metadata: Record<string, unknown>, key: string): string {
-  const value = metadata[key];
-  if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  return "";
+function metadataSortWeight(key: string): number {
+  const preferred = ["type", "asset_type", "tags", "public_url", "variant_name", "variant_description", "appearance_description", "description"];
+  const index = preferred.indexOf(key);
+  return index >= 0 ? index : preferred.length;
 }
 
-function metadataListText(metadata: Record<string, unknown>, key: string): string {
-  const value = metadata[key];
-  if (Array.isArray(value)) return value.map(readableAssetFieldValue).filter(Boolean).join("、");
-  return metadataText(metadata, key);
+function editableMetadataValue(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "object") return JSON.stringify(value, null, 2);
+  return String(value);
 }
 
-function setMetadataText(metadata: Record<string, unknown>, key: string, value: string) {
+function parseEditableMetadataValue(value: string): unknown {
   const clean = value.trim();
-  if (clean) metadata[key] = clean;
-  else delete metadata[key];
+  if ((clean.startsWith("{") && clean.endsWith("}")) || (clean.startsWith("[") && clean.endsWith("]"))) {
+    try {
+      return JSON.parse(clean) as unknown;
+    } catch {
+      return clean;
+    }
+  }
+  if (clean === "true") return true;
+  if (clean === "false") return false;
+  return clean;
+}
+
+function metadataFieldIsLong(value: string): boolean {
+  return value.includes("\n") || value.length > 80 || value.trim().startsWith("{") || value.trim().startsWith("[");
 }
 
 function readableAssetFieldValue(value: unknown): string {

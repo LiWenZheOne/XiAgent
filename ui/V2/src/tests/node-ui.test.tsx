@@ -308,7 +308,7 @@ describe("node-ui controls", () => {
   it("renders matched asset cards, generates images locally, and submits after confirmation", async () => {
     const onSubmit = vi.fn();
     const onDraft = vi.fn();
-    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.startsWith("/api/assets/search")) {
         return jsonResponse({
@@ -521,6 +521,13 @@ describe("node-ui controls", () => {
         }),
       ]),
     })));
+    const libraryUploadForms = fetchMock.mock.calls
+      .filter(([url, init]) => url === "/api/assets/files" && init?.method === "POST")
+      .map(([, init]) => init?.body as FormData)
+      .filter((form) => typeof form.get("metadata_json") === "string");
+    expect(libraryUploadForms.length).toBeGreaterThan(0);
+    expect(String(libraryUploadForms[0].get("metadata_json"))).toContain("asset_catalog_workflow");
+    expect(fetchMock.mock.calls.some(([url]) => url === "/api/assets/text")).toBe(false);
   });
 
   it("uses asset-type-specific prompt prefixes and suffixes when generating asset images", async () => {

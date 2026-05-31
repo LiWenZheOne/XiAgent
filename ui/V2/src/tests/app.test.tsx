@@ -175,7 +175,7 @@ function mockFetch() {
       project_id: "global",
       mime_type: "image/png",
       size_bytes: 1024,
-      metadata: { public_url: "https://cdn.example.com/ref.png", tags: ["角色"] },
+      metadata: { public_url: "https://cdn.example.com/ref.png", tags: ["角色"], variant_description: "动态显示的变体描述" },
       created_at: "2026-05-27T08:01:00Z",
     },
     {
@@ -1217,6 +1217,31 @@ describe("XiAgent V2 app", () => {
       expect(patchCall).toBeTruthy();
       expect(JSON.parse(String(patchCall?.[1]?.body))).toMatchObject({ name: "主角立绘" });
       expect(screen.getByRole("heading", { name: "主角立绘" })).toBeInTheDocument();
+    });
+  });
+
+  it("renders and saves asset metadata fields dynamically", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    render(<App />);
+    await login();
+
+    await userEvent.click(screen.getByRole("button", { name: "资产库" }));
+    expect(await screen.findByRole("heading", { name: "参考图" })).toBeInTheDocument();
+    expect(screen.getByLabelText("metadata public_url")).toHaveValue("https://cdn.example.com/ref.png");
+    expect(screen.getByLabelText("metadata tags")).toHaveValue(JSON.stringify(["角色"], null, 2));
+    const variantDescription = screen.getByLabelText("metadata variant_description");
+    expect(variantDescription).toHaveValue("动态显示的变体描述");
+
+    await userEvent.clear(variantDescription);
+    await userEvent.type(variantDescription, "保存后的描述");
+    await userEvent.click(screen.getByRole("button", { name: "保存字段" }));
+
+    await waitFor(() => {
+      const patchCall = fetchMock.mock.calls.find(([url, init]) => url === "/api/assets/asset-1" && init?.method === "PATCH");
+      expect(patchCall).toBeTruthy();
+      expect(JSON.parse(String(patchCall?.[1]?.body))).toMatchObject({
+        metadata: expect.objectContaining({ variant_description: "保存后的描述" }),
+      });
     });
   });
 
