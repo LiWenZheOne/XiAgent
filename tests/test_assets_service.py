@@ -7,7 +7,7 @@ import pytest
 
 from xiagent.assets.local_storage import LocalAssetStorage
 from xiagent.assets.service import SqliteAssetService
-from xiagent.core.errors import NotFoundError, PermissionDeniedError, ValidationError
+from xiagent.core.errors import ConflictError, NotFoundError, PermissionDeniedError, ValidationError
 from xiagent.infrastructure.database import connect_db
 from xiagent.infrastructure.migrations import migrate
 from xiagent.infrastructure.object_storage.base import ObjectStorageService
@@ -112,6 +112,185 @@ async def test_import_file_asset_deduplicates_by_hash(test_settings) -> None:
 
     assert first.content_hash == second.content_hash
     assert first.storage_uri == second.storage_uri
+
+
+async def test_asset_names_are_unique_within_scope(test_settings) -> None:
+    await migrate(test_settings.database_path)
+    users = SqliteUserService(test_settings.database_path)
+    user = await users.create_user(username="alice", password="secret-123")
+    project_a = await users.create_project(owner_user_id=user.user_id, name="project A")
+    project_b = await users.create_project(owner_user_id=user.user_id, name="project B")
+    assets = SqliteAssetService(
+        database_path=test_settings.database_path,
+        storage_dir=test_settings.asset_storage_dir,
+        user_service=users,
+    )
+
+    await assets.create_text_asset(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project_a.project_id,
+        name="角色_林冲_默认",
+        text="林冲默认形象",
+        metadata={},
+    )
+
+    with pytest.raises(ConflictError) as create_error:
+        await assets.import_file_asset(
+            user_id=user.user_id,
+            scope="project",
+            project_id=project_a.project_id,
+            file_name="角色_林冲_默认",
+            content_type="image/png",
+            content=b"fake image",
+            metadata={},
+        )
+
+    await assets.create_text_asset(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project_b.project_id,
+        name="角色_林冲_默认",
+        text="另一个项目可以同名",
+        metadata={},
+    )
+
+    target = await assets.create_text_asset(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project_a.project_id,
+        name="角色_鲁智深_默认",
+        text="鲁智深默认形象",
+        metadata={},
+    )
+    with pytest.raises(ConflictError) as rename_error:
+        await assets.update_asset(
+            user_id=user.user_id,
+            asset_id=target.asset_id,
+            name="角色_林冲_默认",
+        )
+
+    assert create_error.value.code == "asset_name_conflict"
+    assert rename_error.value.code == "asset_name_conflict"
+
+
+async def test_asset_name_unique_index_rejects_direct_duplicate(test_settings) -> None:
+    await migrate(test_settings.database_path)
+    users = SqliteUserService(test_settings.database_path)
+    user = await users.create_user(username="alice", password="secret-123")
+    project = await users.create_project(owner_user_id=user.user_id, name="project A")
+    assets = SqliteAssetService(
+        database_path=test_settings.database_path,
+        storage_dir=test_settings.asset_storage_dir,
+        user_service=users,
+    )
+    existing = await assets.create_text_asset(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project.project_id,
+        name="角色_林冲_默认",
+        text="林冲默认形象",
+        metadata={},
+    )
+
+    with pytest.raises((aiosqlite.IntegrityError, sqlite3.IntegrityError)):
+        async with connect_db(test_settings.database_path) as db:
+            await db.execute(
+                """
+                insert into assets (
+                  asset_id, scope, project_id, asset_type, name, mime_type, content_hash,
+                  size_bytes, storage_uri, text_content, metadata_json, created_by,
+                  created_at, updated_at, deleted_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "asset_direct_duplicate",
+                    "project",
+                    project.project_id,
+                    "text",
+                    existing.name,
+                    "text/plain",
+                    None,
+                    12,
+                    None,
+                    "重复资产",
+                    "{}",
+                    user.user_id,
+                    "2026-05-31T00:00:00+00:00",
+                    "2026-05-31T00:00:00+00:00",
+                    None,
+                ),
+            )
+
+
+async def test_migration_renames_existing_duplicate_live_asset_names(test_settings) -> None:
+    await migrate(test_settings.database_path)
+    users = SqliteUserService(test_settings.database_path)
+    user = await users.create_user(username="alice", password="secret-123")
+    project = await users.create_project(owner_user_id=user.user_id, name="project A")
+    now = "2026-05-31T00:00:00+00:00"
+    async with connect_db(test_settings.database_path) as db:
+        await db.execute("drop index if exists idx_assets_live_scope_project_name")
+        for asset_id in ("asset_duplicate_a", "asset_duplicate_b"):
+            await db.execute(
+                """
+                insert into assets (
+                  asset_id, scope, project_id, asset_type, name, mime_type, content_hash,
+                  size_bytes, storage_uri, text_content, metadata_json, created_by,
+                  created_at, updated_at, deleted_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    asset_id,
+                    "project",
+                    project.project_id,
+                    "text",
+                    "角色_林冲_默认",
+                    "text/plain",
+                    None,
+                    12,
+                    None,
+                    "重复资产",
+                    "{}",
+                    user.user_id,
+                    now,
+                    now,
+                    None,
+                ),
+            )
+            await db.execute(
+                "insert into asset_search_fts(asset_id, scope, project_id, search_text) values (?, ?, ?, ?)",
+                (asset_id, "project", project.project_id, "角色_林冲_默认"),
+            )
+
+    await migrate(test_settings.database_path)
+
+    async with connect_db(test_settings.database_path) as db:
+        cursor = await db.execute(
+            """
+            select name
+            from assets
+            where scope = ? and project_id = ? and deleted_at is null
+            order by created_at asc, asset_id asc
+            """,
+            ("project", project.project_id),
+        )
+        try:
+            names = [str(row["name"]) for row in await cursor.fetchall()]
+        finally:
+            await cursor.close()
+        index_row = await db.execute_fetchall(
+            """
+            select name
+            from sqlite_master
+            where type = 'index' and name = 'idx_assets_live_scope_project_name'
+            """
+        )
+
+    assert len(names) == len(set(names))
+    assert "角色_林冲_默认" in names
+    assert any(name != "角色_林冲_默认" and name.startswith("角色_林冲_默认_") for name in names)
+    assert index_row
 
 
 @pytest.mark.parametrize(
@@ -563,6 +742,96 @@ async def test_update_tag_renames_tag(test_settings) -> None:
     assert tags[0].updated_at >= tag.updated_at
 
 
+async def test_asset_tag_names_are_unique_within_scope(test_settings) -> None:
+    await migrate(test_settings.database_path)
+    users = SqliteUserService(test_settings.database_path)
+    user = await users.create_user(username="alice", password="secret-123")
+    project_a = await users.create_project(owner_user_id=user.user_id, name="project A")
+    project_b = await users.create_project(owner_user_id=user.user_id, name="project B")
+    assets = SqliteAssetService(
+        database_path=test_settings.database_path,
+        storage_dir=test_settings.asset_storage_dir,
+        user_service=users,
+    )
+
+    await assets.create_tag(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project_a.project_id,
+        name="角色",
+    )
+    with pytest.raises(ConflictError) as create_error:
+        await assets.create_tag(
+            user_id=user.user_id,
+            scope="project",
+            project_id=project_a.project_id,
+            name="角色",
+        )
+
+    await assets.create_tag(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project_b.project_id,
+        name="角色",
+    )
+    tag = await assets.create_tag(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project_a.project_id,
+        name="地点",
+    )
+    with pytest.raises(ConflictError) as rename_error:
+        await assets.update_tag(user_id=user.user_id, tag_id=tag.tag_id, name="角色")
+
+    assert create_error.value.code == "asset_tag_name_conflict"
+    assert rename_error.value.code == "asset_tag_name_conflict"
+
+
+async def test_migration_renames_existing_duplicate_asset_tag_names(test_settings) -> None:
+    await migrate(test_settings.database_path)
+    users = SqliteUserService(test_settings.database_path)
+    user = await users.create_user(username="alice", password="secret-123")
+    project = await users.create_project(owner_user_id=user.user_id, name="project A")
+    now = "2026-05-31T00:00:00+00:00"
+    async with connect_db(test_settings.database_path) as db:
+        await db.execute("drop index if exists idx_asset_tags_scope_project_name")
+        for tag_id in ("tag_duplicate_a", "tag_duplicate_b"):
+            await db.execute(
+                """
+                insert into asset_tags (
+                  tag_id, scope, project_id, name, description, created_by, created_at, updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    tag_id,
+                    "project",
+                    project.project_id,
+                    "角色",
+                    None,
+                    user.user_id,
+                    now,
+                    now,
+                ),
+            )
+
+    await migrate(test_settings.database_path)
+
+    assets = SqliteAssetService(
+        database_path=test_settings.database_path,
+        storage_dir=test_settings.asset_storage_dir,
+        user_service=users,
+    )
+    tags = await assets.list_tags(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project.project_id,
+    )
+    names = [tag.name for tag in tags]
+    assert len(names) == len(set(names))
+    assert "角色" in names
+    assert any(name != "角色" and name.startswith("角色_") for name in names)
+
+
 async def test_attach_and_detach_asset_tag_updates_filtering_and_counts(test_settings) -> None:
     await migrate(test_settings.database_path)
     users = SqliteUserService(test_settings.database_path)
@@ -628,6 +897,137 @@ async def test_attach_and_detach_asset_tag_updates_filtering_and_counts(test_set
     assert detached_tags == []
     assert filtered_after_detach.items == []
     assert tags_after_detach[0].asset_count == 0
+
+
+async def test_search_assets_by_tag_names_matches_same_name_tags_across_scopes(test_settings) -> None:
+    await migrate(test_settings.database_path)
+    users = SqliteUserService(test_settings.database_path)
+    user = await users.create_user(username="alice", password="secret-123")
+    project = await users.create_project(owner_user_id=user.user_id, name="project A")
+    assets = SqliteAssetService(
+        database_path=test_settings.database_path,
+        storage_dir=test_settings.asset_storage_dir,
+        user_service=users,
+    )
+    global_type = await assets.create_tag(user_id=user.user_id, scope="global", project_id=None, name="角色")
+    global_name = await assets.create_tag(user_id=user.user_id, scope="global", project_id=None, name="林冲")
+    project_type = await assets.create_tag(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project.project_id,
+        name="角色",
+    )
+    project_name = await assets.create_tag(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project.project_id,
+        name="林冲",
+    )
+    global_asset = await assets.create_text_asset(
+        user_id=user.user_id,
+        scope="global",
+        project_id=None,
+        name="角色_林冲_全局",
+        text="全局林冲",
+        metadata={},
+    )
+    project_asset = await assets.create_text_asset(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project.project_id,
+        name="角色_林冲_项目",
+        text="项目林冲",
+        metadata={},
+    )
+    type_only_asset = await assets.create_text_asset(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project.project_id,
+        name="角色_武松_项目",
+        text="项目武松",
+        metadata={},
+    )
+    for tag in (global_type, global_name):
+        await assets.attach_asset_tag(user_id=user.user_id, asset_id=global_asset.asset_id, tag_id=tag.tag_id)
+    for tag in (project_type, project_name):
+        await assets.attach_asset_tag(user_id=user.user_id, asset_id=project_asset.asset_id, tag_id=tag.tag_id)
+    await assets.attach_asset_tag(
+        user_id=user.user_id,
+        asset_id=type_only_asset.asset_id,
+        tag_id=project_type.tag_id,
+    )
+
+    type_result = await assets.search_assets(
+        user_id=user.user_id,
+        scope="combined",
+        project_id=project.project_id,
+        tag_names=["角色"],
+    )
+    name_and_type_result = await assets.search_assets(
+        user_id=user.user_id,
+        scope="combined",
+        project_id=project.project_id,
+        tag_names=["角色", "林冲"],
+    )
+
+    assert {item.asset_id for item in type_result.items} == {
+        global_asset.asset_id,
+        project_asset.asset_id,
+        type_only_asset.asset_id,
+    }
+    assert {item.asset_id for item in name_and_type_result.items} == {
+        global_asset.asset_id,
+        project_asset.asset_id,
+    }
+
+
+async def test_search_assets_filters_by_exact_names(test_settings) -> None:
+    await migrate(test_settings.database_path)
+    users = SqliteUserService(test_settings.database_path)
+    assets = SqliteAssetService(
+        database_path=test_settings.database_path,
+        storage_dir=test_settings.asset_storage_dir,
+        user_service=users,
+    )
+    user = await users.create_user(username="asset-name-search", password="secret-123")
+    project = await users.create_project(
+        owner_user_id=user.user_id,
+        name="Name Search Project",
+        description="",
+    )
+    linchong = await assets.create_text_asset(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project.project_id,
+        name="角色_林冲_默认",
+        text="林冲",
+        metadata={},
+    )
+    luzhishen = await assets.create_text_asset(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project.project_id,
+        name="角色_鲁智深_默认",
+        text="鲁智深",
+        metadata={},
+    )
+    await assets.create_text_asset(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project.project_id,
+        name="角色_武松_默认",
+        text="武松",
+        metadata={},
+    )
+
+    result = await assets.search_assets(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project.project_id,
+        names=["角色_林冲_默认", "角色_鲁智深_默认", "不存在"],
+    )
+
+    assert [item.asset_id for item in result.items] == [linchong.asset_id, luzhishen.asset_id]
 
 
 async def test_delete_tag_requires_empty_tag(test_settings) -> None:

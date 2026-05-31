@@ -2,7 +2,7 @@
   id: asset_catalog
   version: "1.0.0"
   scope: global
-  name: 资产编目
+  name: 资产提取
   description: 从剧本中提取角色、地点和道具资产，完成角色全名精确匹配、LLM语义匹配、变体匹配和配件检查，审核后按资产卡片上传或生成图像，并一键入库完成任务。
   ui:
     layout:
@@ -264,8 +264,6 @@ nodes:
     inputs:
       scope:
         value: "combined"
-      asset_type:
-        value: "text"
       tags:
         value: ["角色"]
       limit:
@@ -310,8 +308,6 @@ nodes:
         value: "combined"
       names:
         from: "$nodes.extract_characters.output.character_names"
-      asset_type:
-        value: "text"
       tags:
         value: ["角色"]
       limit:
@@ -558,8 +554,6 @@ nodes:
     inputs:
       scope:
         value: "combined"
-      asset_type:
-        value: "text"
       tags:
         value: ["地点"]
       limit:
@@ -604,8 +598,6 @@ nodes:
         value: "combined"
       names:
         from: "$nodes.extract_scenes.output.scene_names"
-      asset_type:
-        value: "text"
       tags:
         value: ["地点"]
       limit:
@@ -686,7 +678,7 @@ nodes:
           工程化匹配原则：
           1. 严格区分输入分区：variant_name、variant_description、accessories 是提取到的待匹配变体；existing_variants 是资产库候选变体。
           2. 变体是否存在已经由上游 extract_characters 决定；本节点不得根据剧情处境、动作或临时状态新增变体依据。
-          3. 只比较稳定服装、稳定外观造型、可穿戴/携带配件和 existing_variants 的 variant、name、metadata.tags、appearance_description。
+          3. 只比较稳定服装、稳定外观造型、可穿戴/携带配件和 existing_variants 的 variant、name、资产库标签、appearance_description。
           4. 被绑起来、被押送、受伤、疲惫、奔跑、打斗、表情、姿态、镜头动作、地点、天气、光照等临时状态必须忽略。
           5. 如果已提取变体无法匹配 existing_variants，才标记 is_new_variant=true，并把 new_variant_name 填为 角色名_已提取变体标签。
       prompt_template:
@@ -697,7 +689,7 @@ nodes:
           字段来源：full_name、variant_name、variant_description、accessories、character_status。
 
           ## B. 资产库候选变体
-          字段来源：同一 JSON 对象的 existing_variants；每个候选包含 asset_id、name、variant、storage_uri/image_url、appearance_description 和 metadata.tags。
+          字段来源：同一 JSON 对象的 existing_variants；每个候选包含 asset_id、name、variant、storage_uri/image_url、appearance_description 和资产库标签。
 
           ## C. 输入 JSON
           {item}
@@ -819,7 +811,7 @@ nodes:
           字段来源：accessories。
 
           ## B. 资产库候选变体/配件
-          字段来源：existing_variants 及其 name、variant、metadata.tags。
+          字段来源：existing_variants 及其 name、variant、资产库标签。
 
           ## C. 输入 JSON
           {item}
@@ -951,8 +943,6 @@ nodes:
     inputs:
       scope:
         value: "combined"
-      asset_type:
-        value: "text"
       tags:
         value: ["道具"]
       limit:
@@ -997,8 +987,6 @@ nodes:
         value: "combined"
       names:
         from: "$nodes.extract_props.output.prop_names"
-      asset_type:
-        value: "text"
       tags:
         value: ["道具"]
       limit:

@@ -70,13 +70,11 @@ class EpisodeMetadataFinalizeNode(BaseNode):
             "episode_name": episode_name,
             "episode_summary": episode_summary,
             "source_task_id": ctx.task_id,
-            "tags": ["集元数据", episode_name],
         }
-        record = await ctx.asset_service.create_text_asset(
-            user_id=ctx.user_id,
+        record = await _save_episode_metadata_asset(
+            ctx,
             scope=scope,
-            project_id=ctx.project_id if scope == "project" else None,
-            name=episode_name,
+            episode_name=episode_name,
             text=json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2),
             metadata=metadata,
         )
@@ -94,6 +92,58 @@ class EpisodeMetadataFinalizeNode(BaseNode):
             output=output,
             asset_refs=[AssetRef(asset_id=record.asset_id, usage_type="episode_metadata", source=ctx.node_id)],
         )
+
+
+async def _save_episode_metadata_asset(
+    ctx: NodeContext,
+    *,
+    scope: str,
+    episode_name: str,
+    text: str,
+    metadata: dict[str, Any],
+) -> Any:
+    project_id = ctx.project_id if scope == "project" else None
+    existing = await _find_episode_metadata_asset(ctx, scope=scope, project_id=project_id, episode_name=episode_name)
+    if existing is not None:
+        return await ctx.asset_service.update_text_asset(
+            user_id=ctx.user_id,
+            asset_id=existing.asset_id,
+            name=episode_name,
+            text=text,
+            metadata=metadata,
+        )
+    return await ctx.asset_service.create_text_asset(
+        user_id=ctx.user_id,
+        scope=scope,
+        project_id=project_id,
+        name=episode_name,
+        text=text,
+        metadata=metadata,
+    )
+
+
+async def _find_episode_metadata_asset(
+    ctx: NodeContext,
+    *,
+    scope: str,
+    project_id: str | None,
+    episode_name: str,
+) -> Any | None:
+    result = await ctx.asset_service.search_assets(
+        user_id=ctx.user_id,
+        scope=scope,
+        project_id=project_id,
+        keyword=episode_name,
+        asset_type="text",
+        limit=20,
+    )
+    for asset in getattr(result, "items", []):
+        if getattr(asset, "name", "") != episode_name:
+            continue
+        metadata = getattr(asset, "metadata", {})
+        if isinstance(metadata, dict) and metadata.get("type") == "episode_metadata":
+            return asset
+    return None
 
 
 class EpisodeMetadataFromAssetNode(BaseNode):

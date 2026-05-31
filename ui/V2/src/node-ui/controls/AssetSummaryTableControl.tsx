@@ -1,8 +1,10 @@
 import { type ChangeEvent, useEffect, useMemo, useState } from "react";
 
-import { draftAssetFromDescription, searchAssets, uploadAsset } from "../../api/assets";
-import type { AssetRecord, AssetScope } from "../../api/types";
+import { draftAssetFromDescription, uploadAsset } from "../../api/assets";
+import type { AssetScope } from "../../api/types";
+import { catalogAssetTypeTags } from "../../utils/assetNaming";
 import type { NodeUiControlProps } from "../types";
+import { AssetPickerDialog } from "./AssetPickerDialog";
 
 type TabKey = "character" | "asset" | "prop";
 
@@ -69,10 +71,6 @@ export function AssetSummaryTableControl({
   const columns = tableColumns(visibleRows);
   const [matches, setMatches] = useState<MatchState>(() => initialMatches(rows));
   const [pickerRow, setPickerRow] = useState<AssetSummaryRow | null>(null);
-  const [pickerKeyword, setPickerKeyword] = useState("");
-  const [pickerAssets, setPickerAssets] = useState<AssetRecord[]>([]);
-  const [pickerLoading, setPickerLoading] = useState(false);
-  const [pickerError, setPickerError] = useState("");
   const [draftOpen, setDraftOpen] = useState(false);
   const [draftDescription, setDraftDescription] = useState("");
   const [additionalAssetRequest, setAdditionalAssetRequest] = useState("");
@@ -87,32 +85,6 @@ export function AssetSummaryTableControl({
   useEffect(() => {
     setMatches((current) => ({ ...initialMatches(rows), ...current }));
   }, [rows]);
-
-  useEffect(() => {
-    if (!pickerRow) return;
-    let active = true;
-    setPickerLoading(true);
-    setPickerError("");
-    searchAssets({
-      scope: "combined",
-      project_id: projectId && projectId !== "global" ? projectId : undefined,
-      keyword: pickerKeyword.trim() || undefined,
-      asset_type: "text",
-    })
-      .then((items) => {
-        if (!active) return;
-        setPickerAssets(items.filter((asset) => assetMatchesRowType(asset, pickerRow.type)));
-      })
-      .catch((nextError) => {
-        if (active) setPickerError(nextError instanceof Error ? nextError.message : "资产搜索失败。");
-      })
-      .finally(() => {
-        if (active) setPickerLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [pickerKeyword, pickerRow, projectId]);
 
   function submit(decision: "approved" | "needs_changes") {
     if (readonly || busy) return;
@@ -325,7 +297,6 @@ export function AssetSummaryTableControl({
                       onClick={() => {
                         if (readonly) return;
                         setPickerRow(row);
-                        setPickerKeyword("");
                       }}
                     >
                       {match ? match.name : "未匹配到对应资产"}
@@ -469,61 +440,32 @@ export function AssetSummaryTableControl({
         </div>
       ) : null}
       {pickerRow ? (
-        <div className="confirm-backdrop" role="presentation">
-          <section className="asset-picker-dialog" role="dialog" aria-modal="true" aria-label="选择匹配资产">
-            <header>
-              <div>
-                <p className="eyebrow">选择{tabLabels[pickerRow.type]}资产</p>
-                <h3>{pickerRow.name}</h3>
-              </div>
-              <button className="secondary-button" type="button" onClick={() => setPickerRow(null)}>关闭</button>
-            </header>
-            <label className="asset-picker-search">
-              <span>搜索资产</span>
-              <input autoFocus placeholder={`搜索${tabLabels[pickerRow.type]}资产`} value={pickerKeyword} onChange={(event) => setPickerKeyword(event.target.value)} />
-            </label>
-            {pickerError ? <p className="form-error">{pickerError}</p> : null}
-            <div className="asset-picker-list">
-              {pickerLoading ? <p className="muted">正在搜索...</p> : null}
-              {!pickerLoading && pickerAssets.length ? pickerAssets.map((asset) => (
-                <button
-                  className="asset-picker-option"
-                  key={asset.asset_id}
-                  type="button"
-                  onClick={() => {
-                    setMatches((current) => ({
-                      ...current,
-                      [pickerRow.key]: {
-                        asset_id: asset.asset_id,
-                        name: asset.name,
-                        imageRef: { kind: "asset", asset_id: asset.asset_id, role: "reference" },
-                        imageUrl: assetImageUrl(asset),
-                        appearanceDescription: assetAppearanceDescription(asset),
-                      },
-                    }));
-                    setPickerRow(null);
-                  }}
-                >
-                  <strong>{asset.name}</strong>
-                  <span>{assetSummary(asset)}</span>
-                </button>
-              )) : null}
-              {!pickerLoading && !pickerAssets.length ? <p className="muted">没有找到对应类型的资产。</p> : null}
-            </div>
-            <div className="button-row end">
-              <button
-                className="secondary-button"
-                type="button"
-                onClick={() => {
-                  setMatches((current) => ({ ...current, [pickerRow.key]: null }));
-                  setPickerRow(null);
-                }}
-              >
-                标记为未匹配
-              </button>
-            </div>
-          </section>
-        </div>
+        <AssetPickerDialog
+          assetLabel={tabLabels[pickerRow.type]}
+          initialAssetId={(matches[pickerRow.key] ?? pickerRow.matchedAsset ?? null)?.asset_id}
+          initialAssetName={(matches[pickerRow.key] ?? pickerRow.matchedAsset ?? null)?.name}
+          projectId={projectId}
+          tagName={tagNameForRowType(pickerRow.type)}
+          targetName={pickerRow.name}
+          onClear={() => {
+            setMatches((current) => ({ ...current, [pickerRow.key]: null }));
+            setPickerRow(null);
+          }}
+          onClose={() => setPickerRow(null)}
+          onSelect={(asset) => {
+            setMatches((current) => ({
+              ...current,
+              [pickerRow.key]: {
+                asset_id: asset.asset_id,
+                name: asset.name,
+                imageRef: { kind: "asset", asset_id: asset.asset_id, role: "reference" },
+                imageUrl: assetImageUrl(asset),
+                appearanceDescription: assetAppearanceDescription(asset),
+              },
+            }));
+            setPickerRow(null);
+          }}
+        />
       ) : null}
     </section>
   );
@@ -801,24 +743,11 @@ function textareaRows(value: string): number {
   return Math.min(8, Math.max(2, lineRows));
 }
 
-function assetMatchesRowType(asset: AssetRecord, type: TabKey): boolean {
-  const expected = tabLabels[type];
-  const metadata = asset.metadata as Record<string, unknown>;
-  const tags = Array.isArray(metadata.tags) ? metadata.tags : [];
-  const values = [
-    ...tags,
-    metadata.asset_type,
-    metadata.asset_kind,
-    metadata.category,
-    metadata.type,
-  ].map((value) => String(value ?? "").trim()).filter(Boolean);
-  return values.some((value) => value === expected || value === type || (type === "asset" && (value === "scene" || value === "场景")));
-}
-
-function assetSummary(asset: AssetRecord): string {
-  const tags = Array.isArray(asset.metadata?.tags) ? asset.metadata.tags.filter((item) => typeof item === "string") : [];
-  const parts = [asset.scope === "project" ? "项目资产" : "全局资产", ...tags.slice(0, 2)];
-  return parts.join(" · ");
+function tagNameForRowType(type: TabKey): string {
+  if (type === "character") return catalogAssetTypeTags.character;
+  if (type === "asset") return catalogAssetTypeTags.scene;
+  if (type === "prop") return catalogAssetTypeTags.prop;
+  return "";
 }
 
 function assetImageUrl(asset: unknown): string | undefined {

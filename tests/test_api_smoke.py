@@ -7,9 +7,11 @@ from dataclasses import replace
 from fastapi.testclient import TestClient
 
 from xiagent.api.app import create_app
+from xiagent.api.routers.tasks import _task_episode_name, _task_uses_episode_summary
 from xiagent.infrastructure.database import connect_db
 from xiagent.infrastructure.migrations import migrate
 from xiagent.models import ChatModelRouter, ChatRequest, ChatResponse
+from xiagent.runtime.models import NodeExecutionRecord
 
 
 def _auth_headers(
@@ -26,6 +28,48 @@ def _auth_headers(
     body = login_response.json()
     assert body["token_type"] == "bearer"
     return {"Authorization": f"Bearer {body['access_token']}"}
+
+
+def test_task_episode_name_prefers_latest_node_snapshot() -> None:
+    assert _task_uses_episode_summary("asset_catalog")
+    assert _task_uses_episode_summary("asset_storyboard_generation")
+    assert not _task_uses_episode_summary("storyboard_generation")
+    executions = [
+        NodeExecutionRecord(
+            node_execution_id="node-old",
+            task_id="task-1",
+            node_id="collect_asset_catalog_input",
+            node_ref="system.user_input.v1",
+            attempt=1,
+            input_snapshot={},
+            output_snapshot={"episode_name": "22、上一集"},
+            status="succeeded",
+            error=None,
+            metadata={},
+            started_at=None,
+            finished_at=None,
+            created_at="2026-05-31T00:00:00Z",
+            updated_at="2026-05-31T00:00:00Z",
+        ),
+        NodeExecutionRecord(
+            node_execution_id="node-new",
+            task_id="task-1",
+            node_id="finish_summary",
+            node_ref="tool.episode_metadata_finalize.v1",
+            attempt=1,
+            input_snapshot={"episode_name": "23、私放晁天王"},
+            output_snapshot={},
+            status="succeeded",
+            error=None,
+            metadata={},
+            started_at=None,
+            finished_at=None,
+            created_at="2026-05-31T00:01:00Z",
+            updated_at="2026-05-31T00:01:00Z",
+        ),
+    ]
+
+    assert _task_episode_name(executions) == "23、私放晁天王"
 
 
 def _echo_contract() -> dict:
@@ -609,11 +653,25 @@ def test_text_asset_create_and_search_endpoints(test_settings) -> None:
             },
             headers=headers,
         )
+        exact_name_response = client.get(
+            "/api/assets/search",
+            params={
+                "scope": "project",
+                "project_id": project["project_id"],
+                "names": "Character Brief,Missing Asset",
+                "limit": 2,
+            },
+            headers=headers,
+        )
 
     assert search_response.status_code == 200
     result = search_response.json()
     assert result["total"] == 1
     assert result["items"][0]["asset_id"] == asset["asset_id"]
+    assert exact_name_response.status_code == 200
+    exact_name_result = exact_name_response.json()
+    assert exact_name_result["total"] == 1
+    assert exact_name_result["items"][0]["asset_id"] == asset["asset_id"]
 
 
 def test_asset_collection_update_and_delete_endpoints(test_settings) -> None:

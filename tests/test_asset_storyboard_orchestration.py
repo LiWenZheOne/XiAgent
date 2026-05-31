@@ -158,9 +158,7 @@ def test_episode_context_drives_segment_asset_assignment(test_settings) -> None:
     assert split_node["inputs"]["script"] == {
         "from": "$nodes.confirm_episode_context.output.source_script",
     }
-    assert split_node["inputs"]["background"] == {
-        "from": "$nodes.confirm_episode_context.output.background",
-    }
+    assert "background" not in split_node["inputs"]
 
     assign_node = nodes_by_id["assign_assets_to_segments"]
     prompt_vars = assign_node["inputs"]["prompt"]["vars"]

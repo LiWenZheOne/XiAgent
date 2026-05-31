@@ -72,7 +72,8 @@ const fieldLabels: Record<string, string> = {
   choose_image: "选择图片",
   deepseek_echo: "偏好画像工作流",
   storyboard_generation: "故事板生成",
-  asset_catalog: "角色资产编目",
+  asset_catalog: "资产提取",
+  asset_storyboard_generation: "分镜生成",
 };
 
 const statusLabels: Record<string, string> = {
@@ -179,7 +180,37 @@ export function extractImageUrls(value: unknown): string[] {
 }
 
 export function taskTitle(task: TaskRecord): string {
+  const workflowIdTitle = task.workflow_id ? fieldLabels[task.workflow_id] : "";
+  if (workflowIdTitle) return workflowIdTitle;
   return task.workflow_name || (task.workflow_id ? formatFieldLabel(task.workflow_id) : "未命名任务");
+}
+
+export function taskSubtitle(task: TaskRecord): string {
+  const episodeName = taskEpisodeName(task);
+  if (episodeName) return normalizeEpisodeLabel(episodeName);
+  return task.workflow_version ? `版本 ${task.workflow_version}` : statusLabel(task.status);
+}
+
+function taskEpisodeName(task: TaskRecord): string {
+  const summary = task.current_view?.summary;
+  if (summary && typeof summary === "object" && !Array.isArray(summary)) {
+    const episodeName = (summary as Record<string, unknown>).episode_name;
+    if (typeof episodeName === "string" && episodeName.trim()) return episodeName.trim();
+  }
+  const finalOutput = task.current_view?.final_output;
+  if (finalOutput && typeof finalOutput === "object" && !Array.isArray(finalOutput)) {
+    const episodeName = (finalOutput as Record<string, unknown>).episode_name;
+    if (typeof episodeName === "string" && episodeName.trim()) return episodeName.trim();
+  }
+  return "";
+}
+
+function normalizeEpisodeLabel(value: string): string {
+  const match = value.match(/^\s*(第?\d+\s*集?|[0-9]+|[一二三四五六七八九十百零〇两]+)\s*[、，.\-_ ]*(.*)$/);
+  if (!match) return value;
+  const number = match[1].replace(/^第/, "").replace(/集$/, "").trim();
+  const title = match[2]?.trim();
+  return title ? `第${number}集 ${title}` : `第${number}集`;
 }
 
 export function taskTime(task: TaskRecord): string {

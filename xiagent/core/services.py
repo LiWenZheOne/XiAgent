@@ -35,7 +35,9 @@ class AssetService(ABC):
         keyword: str | None = None,
         asset_type: str | None = None,
         mime_type: str | None = None,
+        names: list[str] | None = None,
         tag_ids: list[str] | None = None,
+        tag_names: list[str] | None = None,
         collection_id: str | None = None,
         limit: int = 50,
         offset: int = 0,
@@ -49,6 +51,18 @@ class AssetService(ABC):
         user_id: str,
         scope: str,
         project_id: str | None,
+        name: str,
+        text: str,
+        metadata: dict[str, Any],
+    ) -> Any:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def update_text_asset(
+        self,
+        *,
+        user_id: str,
+        asset_id: str,
         name: str,
         text: str,
         metadata: dict[str, Any],

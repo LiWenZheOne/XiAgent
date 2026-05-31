@@ -500,8 +500,12 @@ async def search_assets(
     keyword: str | None = None,
     asset_type: str | None = None,
     mime_type: str | None = None,
+    names: str | None = None,
     collection_id: str | None = None,
     tag_ids: str | None = None,
+    tag_names: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
 ) -> dict:
     result = await services.assets.search_assets(
         user_id=current_user.user_id,
@@ -510,8 +514,12 @@ async def search_assets(
         keyword=keyword,
         asset_type=asset_type,
         mime_type=mime_type,
+        names=_split_ids(names),
         collection_id=collection_id,
         tag_ids=_split_ids(tag_ids),
+        tag_names=_split_ids(tag_names),
+        limit=limit,
+        offset=offset,
     )
     return {"items": [asdict(asset) for asset in result.items], "total": result.total}
 
