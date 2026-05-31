@@ -180,6 +180,7 @@ export interface TaskDetailResponse {
 }
 
 export interface AssetMetadata {
+  [key: string]: unknown;
   public_url?: string;
   tags?: string[];
   object_storage?: {

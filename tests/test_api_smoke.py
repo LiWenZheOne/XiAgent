@@ -307,6 +307,130 @@ def test_asset_draft_endpoint_uses_structured_llm_with_user_context(test_setting
     assert "武松提着哨棒" in prompt
 
 
+def test_intelligent_asset_upload_enriches_metadata_and_type_tag(test_settings) -> None:
+    class FakeUploadMetadataRouter(ChatModelRouter):
+        def __init__(self) -> None:
+            super().__init__()
+            self.requests: list[ChatRequest] = []
+
+        async def chat(self, request: ChatRequest) -> ChatResponse:
+            self.requests.append(request)
+            return ChatResponse(
+                text=json.dumps(
+                    {
+                        "metadata": {
+                            "type": "character",
+                            "aliases": "豹子头",
+                            "summary": "八十万禁军教头，后因奸臣陷害走上梁山。",
+                            "relationships": "与鲁智深、柴进等梁山人物有交集。",
+                            "character_status": "流落江湖阶段。",
+                            "variant_name": "教头常服",
+                            "variant_description": "头戴软巾，上身整洁短袍，腰间束带，神态沉稳，带有武官气质。",
+                            "accessories": "长枪",
+                            "description": "沉稳威严的武人形象。",
+                            "location_type": "",
+                            "time_of_day": "",
+                            "category": "",
+                            "related_character": "",
+                        },
+                        "confidence": 0.91,
+                        "reasoning": "根据水浒传人物背景补全。",
+                    },
+                    ensure_ascii=False,
+                ),
+                model=request.model,
+            )
+
+    app = create_app(settings=test_settings)
+    with TestClient(app) as client:
+        client.post(
+            "/api/auth/register",
+            json={"username": "smart-upload-user", "password": "secret-123"},
+        )
+        headers = _auth_headers(client, username="smart-upload-user")
+        fake_router = FakeUploadMetadataRouter()
+        node = app.state.services.node_registry.get("ai.asset_metadata_from_upload.v1")
+        node._model_router = fake_router  # noqa: SLF001
+
+        response = client.post(
+            "/api/assets/files/intelligent",
+            headers=headers,
+            data={
+                "scope": "global",
+                "name": "林冲",
+                "asset_type": "character",
+                "world_background": "水浒传",
+                "publish": "true",
+            },
+            files={"file": ("linchong.png", b"fake image", "image/png")},
+        )
+        asset_id = response.json()["asset"]["asset_id"]
+        tags_response = client.get(f"/api/assets/{asset_id}/tags", headers=headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["asset"]["name"] == "林冲"
+    assert body["asset"]["metadata"]["type"] == "character"
+    assert body["asset"]["metadata"]["summary"].startswith("八十万禁军教头")
+    assert body["confidence"] == 0.91
+    assert tags_response.status_code == 200
+    assert [tag["name"] for tag in tags_response.json()["items"]] == ["角色"]
+    prompt = "\n".join(str(message.content) for message in fake_router.requests[0].messages)
+    assert "林冲" in prompt
+    assert "水浒传" in prompt
+
+
+def test_episode_metadata_text_asset_gets_type_tag_on_create_and_update(test_settings) -> None:
+    app = create_app(settings=test_settings)
+    with TestClient(app) as client:
+        client.post(
+            "/api/auth/register",
+            json={"username": "episode-metadata-user", "password": "secret-123"},
+        )
+        headers = _auth_headers(client, username="episode-metadata-user")
+
+        create_response = client.post(
+            "/api/assets/text",
+            headers=headers,
+            json={
+                "scope": "global",
+                "name": "23、私放晁天王",
+                "text": "集剧情概括、原剧本内容和资产目录。",
+                "metadata": {"type": "episode_metadata"},
+            },
+        )
+        asset_id = create_response.json()["asset_id"]
+        created_tags_response = client.get(f"/api/assets/{asset_id}/tags", headers=headers)
+
+        normal_response = client.post(
+            "/api/assets/text",
+            headers=headers,
+            json={
+                "scope": "global",
+                "name": "普通文字资产",
+                "text": "普通内容。",
+                "metadata": {},
+            },
+        )
+        normal_id = normal_response.json()["asset_id"]
+        update_response = client.patch(
+            f"/api/assets/{normal_id}",
+            headers=headers,
+            json={
+                "name": "普通文字资产",
+                "metadata": {"type": "集信息资产"},
+            },
+        )
+        updated_tags_response = client.get(f"/api/assets/{normal_id}/tags", headers=headers)
+
+    assert create_response.status_code == 200
+    assert created_tags_response.status_code == 200
+    assert [tag["name"] for tag in created_tags_response.json()["items"]] == ["集元数据"]
+    assert normal_response.status_code == 200
+    assert update_response.status_code == 200
+    assert [tag["name"] for tag in updated_tags_response.json()["items"]] == ["集元数据"]
+
+
 def test_asset_generate_image_endpoint_returns_single_generated_image(test_settings) -> None:
     class FakeImageRouter(ChatModelRouter):
         def __init__(self) -> None:
@@ -769,6 +893,48 @@ def test_asset_name_can_be_updated(test_settings) -> None:
     assert search_response.json()["items"][0]["asset_id"] == asset["asset_id"]
     assert invalid_response.status_code == 400
     assert invalid_response.json()["error"]["code"] == "asset_name_required"
+
+
+def test_asset_file_can_be_replaced(test_settings) -> None:
+    app = create_app(settings=test_settings)
+    with TestClient(app) as client:
+        client.post(
+            "/api/auth/register",
+            json={"username": "asset-replacer", "password": "secret-123"},
+        )
+        headers = _auth_headers(client, username="asset-replacer")
+        upload_response = client.post(
+            "/api/assets/files",
+            data={
+                "scope": "global",
+                "name": "template.png",
+                "metadata_json": '{"variant_description": "旧图描述"}',
+                "publish": "false",
+            },
+            files={"file": ("template.png", b"old image", "image/png")},
+            headers=headers,
+        )
+        asset = upload_response.json()
+
+        replace_response = client.put(
+            f"/api/assets/{asset['asset_id']}/file",
+            files={"file": ("template.jpg", b"new image", "image/jpeg")},
+            headers=headers,
+        )
+        content_response = client.get(
+            f"/api/assets/{asset['asset_id']}/content",
+            headers=headers,
+        )
+
+    assert upload_response.status_code == 200
+    assert replace_response.status_code == 200
+    assert replace_response.json()["asset_id"] == asset["asset_id"]
+    assert replace_response.json()["name"] == "template.png"
+    assert replace_response.json()["mime_type"] == "image/jpeg"
+    assert replace_response.json()["metadata"]["variant_description"] == "旧图描述"
+    assert content_response.status_code == 200
+    assert content_response.content == b"new image"
+    assert content_response.headers["content-type"].startswith("image/jpeg")
 
 
 def test_task_endpoints_create_succeeded_echo_task_and_read_it(test_settings) -> None:

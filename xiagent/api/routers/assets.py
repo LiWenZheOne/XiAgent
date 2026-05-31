@@ -63,6 +63,7 @@ class UpdateAssetRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str
+    metadata: dict[str, Any] | None = None
 
 
 class DraftAssetFromDescriptionRequest(BaseModel):
@@ -81,8 +82,8 @@ class GenerateAssetImageRequest(BaseModel):
 
     project_id: str | None = None
     prompt_result: dict[str, Any]
-    prompt_prefix: str = "将图中角色改成"
-    prompt_suffix: str = "保持风格和其它特征不变"
+    prompt_prefix: str | None = None
+    prompt_suffix: str | None = None
     aspect_ratio: str = "1:1"
     resolution: str = "2k"
 
@@ -211,8 +212,8 @@ async def _run_asset_image_generation(
             ),
             {
                 "prompt_results": [request_payload["prompt_result"]],
-                "prompt_prefix": request_payload.get("prompt_prefix", "将图中角色改成"),
-                "prompt_suffix": request_payload.get("prompt_suffix", "保持风格和其它特征不变"),
+                "prompt_prefix": request_payload.get("prompt_prefix") or "",
+                "prompt_suffix": request_payload.get("prompt_suffix") or "",
                 "aspect_ratio": request_payload.get("aspect_ratio", "1:1"),
                 "resolution": request_payload.get("resolution", "2k"),
             },
@@ -278,6 +279,95 @@ async def import_file_asset(
         tag_ids=_split_ids(tag_ids),
     )
     return asdict(asset)
+
+
+@router.post("/files/intelligent")
+async def import_file_asset_with_metadata_completion(
+    services: Annotated[ApiServices, Depends(get_services)],
+    current_user: Annotated[UserRecord, Depends(get_current_user)],
+    file: Annotated[UploadFile, File()],
+    scope: Annotated[str, Form()],
+    asset_type: Annotated[str, Form()],
+    world_background: Annotated[str, Form()],
+    project_id: Annotated[str | None, Form()] = None,
+    name: Annotated[str | None, Form()] = None,
+    metadata_json: Annotated[str, Form()] = "{}",
+    publish: Annotated[bool, Form()] = True,
+) -> dict:
+    clean_name = (name or file.filename or "asset.bin").strip()
+    if not clean_name:
+        raise ValidationError(
+            code="asset_upload_name_required",
+            message="资产名称不能为空。",
+        )
+    metadata = _metadata_from_json(metadata_json)
+    content = await file.read()
+    asset = await services.assets.import_file_asset(
+        user_id=current_user.user_id,
+        scope=scope,
+        project_id=project_id,
+        file_name=clean_name,
+        content_type=file.content_type,
+        content=content,
+        metadata=metadata,
+        publish=publish,
+    )
+    node = services.node_registry.get("ai.asset_metadata_from_upload.v1")
+    result = await node.run(
+        NodeContext(
+            user_id=current_user.user_id,
+            project_id=project_id or "global",
+            task_id="asset_upload_metadata_completion",
+            node_id="asset_metadata_from_upload",
+            node_execution_id=f"asset_upload_metadata_{asset.asset_id}",
+            config={},
+            output_schema=node.describe().output_schema,
+            asset_service=services.assets,
+            event_sink=None,
+            logger=None,
+        ),
+        {
+            "asset_id": asset.asset_id,
+            "asset_name": clean_name,
+            "asset_type": asset_type,
+            "world_background": world_background,
+            "max_attempts": 2,
+        },
+    )
+    completed_metadata = result.output.get("metadata")
+    if not isinstance(completed_metadata, dict):
+        raise ValidationError(
+            code="asset_upload_metadata_invalid",
+            message="资产上传信息补全没有返回 metadata。",
+        )
+    next_metadata = {
+        **asset.metadata,
+        **completed_metadata,
+        "metadata_source": "llm_upload_completion",
+    }
+    updated = await services.assets.update_asset(
+        user_id=current_user.user_id,
+        asset_id=asset.asset_id,
+        name=clean_name,
+        metadata=next_metadata,
+    )
+    tag = await _ensure_asset_type_tag(
+        services=services,
+        user_id=current_user.user_id,
+        scope=scope,
+        project_id=project_id,
+        asset_type=str(next_metadata.get("type") or asset_type),
+    )
+    await services.assets.attach_asset_tag(
+        user_id=current_user.user_id,
+        asset_id=asset.asset_id,
+        tag_id=tag.tag_id,
+    )
+    return {
+        "asset": asdict(updated),
+        "confidence": result.output.get("confidence", 0),
+        "reasoning": result.output.get("reasoning", ""),
+    }
 
 
 @router.post("/collections")
@@ -495,6 +585,25 @@ async def update_asset(
         user_id=current_user.user_id,
         asset_id=asset_id,
         name=request.name,
+        metadata=request.metadata,
+    )
+    return asdict(asset)
+
+
+@router.put("/{asset_id}/file")
+async def replace_asset_file(
+    asset_id: str,
+    services: Annotated[ApiServices, Depends(get_services)],
+    current_user: Annotated[UserRecord, Depends(get_current_user)],
+    file: Annotated[UploadFile, File()],
+) -> dict:
+    content = await file.read()
+    asset = await services.assets.replace_asset_file(
+        user_id=current_user.user_id,
+        asset_id=asset_id,
+        file_name=file.filename or "asset.bin",
+        content_type=file.content_type,
+        content=content,
     )
     return asdict(asset)
 
@@ -540,6 +649,48 @@ def _metadata_from_json(value: str) -> dict[str, Any]:
             "Asset metadata_json must be a valid JSON object",
         )
     return parsed
+
+
+async def _ensure_asset_type_tag(
+    *,
+    services: ApiServices,
+    user_id: str,
+    scope: str,
+    project_id: str | None,
+    asset_type: str,
+):
+    tag_name = _asset_type_tag_name(asset_type)
+    tags = await services.assets.list_tags(
+        user_id=user_id,
+        scope=scope,
+        project_id=project_id,
+    )
+    for tag in tags:
+        if tag.name == tag_name and tag.scope == scope and (tag.project_id or None) == (project_id or None):
+            return tag
+    return await services.assets.create_tag(
+        user_id=user_id,
+        scope=scope,
+        project_id=project_id,
+        name=tag_name,
+    )
+
+
+def _asset_type_tag_name(asset_type: str) -> str:
+    normalized = asset_type.strip().lower()
+    if normalized in {"character", "role", "角色"}:
+        return "角色"
+    if normalized in {"location", "scene", "地点", "场景"}:
+        return "地点"
+    if normalized in {"prop", "item", "道具"}:
+        return "道具"
+    if normalized in {"episode_metadata", "episode", "episode_meta", "集元数据", "集信息资产", "集信息", "集"}:
+        return "集元数据"
+    raise ValidationError(
+        code="asset_upload_type_invalid",
+        message="资产类型只能是角色、地点、道具或集元数据。",
+        details={"asset_type": asset_type},
+    )
 
 
 def _split_ids(value: str | None) -> list[str]:

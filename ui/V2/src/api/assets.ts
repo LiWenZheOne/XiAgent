@@ -149,6 +149,32 @@ export async function uploadAsset(input: {
   return apiRequest<AssetRecord>("/api/assets/files", { method: "POST", body: form });
 }
 
+export interface IntelligentAssetUploadResult {
+  asset: AssetRecord;
+  confidence: number;
+  reasoning: string;
+}
+
+export async function uploadAssetWithMetadataCompletion(input: {
+  file: File;
+  scope: Exclude<AssetScope, "combined">;
+  project_id?: string;
+  name: string;
+  asset_type: "character" | "location" | "prop";
+  world_background: string;
+  publish?: boolean;
+}): Promise<IntelligentAssetUploadResult> {
+  const form = new FormData();
+  form.set("file", input.file);
+  form.set("scope", input.scope);
+  form.set("publish", String(input.publish ?? true));
+  form.set("name", input.name);
+  form.set("asset_type", input.asset_type);
+  form.set("world_background", input.world_background);
+  if (input.project_id) form.set("project_id", input.project_id);
+  return apiRequest<IntelligentAssetUploadResult>("/api/assets/files/intelligent", { method: "POST", body: form });
+}
+
 export async function createTextAsset(input: {
   scope: Exclude<AssetScope, "combined">;
   project_id?: string;
@@ -245,11 +271,24 @@ function delay(ms: number): Promise<void> {
 export async function updateAsset(input: {
   asset_id: string;
   name: string;
+  metadata?: Record<string, unknown>;
 }): Promise<AssetRecord> {
   return apiRequest<AssetRecord>(`/api/assets/${encodeURIComponent(input.asset_id)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name: input.name }),
+    body: JSON.stringify({ name: input.name, metadata: input.metadata }),
+  });
+}
+
+export async function replaceAssetFile(input: {
+  asset_id: string;
+  file: File;
+}): Promise<AssetRecord> {
+  const form = new FormData();
+  form.set("file", input.file);
+  return apiRequest<AssetRecord>(`/api/assets/${encodeURIComponent(input.asset_id)}/file`, {
+    method: "PUT",
+    body: form,
   });
 }
 

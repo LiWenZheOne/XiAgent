@@ -91,6 +91,16 @@ class SqliteAssetService(AssetService):
                 project_id=project_id,
                 search_text=f"{clean_name}\n{text}\n{metadata_json}",
             )
+            await _ensure_episode_metadata_tag_entry(
+                db,
+                user_id=user_id,
+                asset_id=asset_id,
+                scope=scope,
+                project_id=project_id,
+                metadata=metadata,
+                search_text=clean_name,
+                now=now,
+            )
 
         return AssetRecord(
             asset_id=asset_id,
@@ -710,6 +720,16 @@ class SqliteAssetService(AssetService):
                 "update assets set metadata_json = ?, updated_at = ? where asset_id = ?",
                 (_metadata_json(metadata), now, asset_id),
             )
+            await _ensure_episode_metadata_tag_entry(
+                db,
+                user_id=user_id,
+                asset_id=asset_id,
+                scope=asset.scope,
+                project_id=asset.project_id,
+                metadata=metadata,
+                search_text=asset.name,
+                now=now,
+            )
             row = await _fetch_one(
                 db,
                 "select * from assets where asset_id = ? and deleted_at is null",
@@ -726,6 +746,7 @@ class SqliteAssetService(AssetService):
         user_id: str,
         asset_id: str,
         name: str,
+        metadata: dict[str, Any] | None = None,
     ) -> AssetRecord:
         clean_name = name.strip()
         if not clean_name:
@@ -738,12 +759,15 @@ class SqliteAssetService(AssetService):
                 action="asset:write",
             )
         now = _utc_now()
-        metadata_json = _metadata_json(asset.metadata)
+        next_metadata = dict(asset.metadata)
+        if metadata is not None:
+            next_metadata = dict(metadata)
+        metadata_json = _metadata_json(next_metadata)
         search_text = f"{clean_name}\n{asset.text_content or ''}\n{metadata_json}"
         async with connect_db(self._database_path) as db:
             await db.execute(
-                "update assets set name = ?, updated_at = ? where asset_id = ?",
-                (clean_name, now, asset_id),
+                "update assets set name = ?, metadata_json = ?, updated_at = ? where asset_id = ?",
+                (clean_name, metadata_json, now, asset_id),
             )
             await db.execute(
                 "update asset_search_fts set search_text = ? where asset_id = ?",
@@ -752,6 +776,97 @@ class SqliteAssetService(AssetService):
             await db.execute(
                 "update asset_index_entries set search_text = ?, updated_at = ? where asset_id = ?",
                 (clean_name, now, asset_id),
+            )
+            await _ensure_episode_metadata_tag_entry(
+                db,
+                user_id=user_id,
+                asset_id=asset_id,
+                scope=asset.scope,
+                project_id=asset.project_id,
+                metadata=next_metadata,
+                search_text=clean_name,
+                now=now,
+            )
+            row = await _fetch_one(
+                db,
+                "select * from assets where asset_id = ? and deleted_at is null",
+                (asset_id,),
+            )
+
+        if row is None:
+            raise NotFoundError("asset_not_found", "Asset was not found", {"asset_id": asset_id})
+        return _asset_from_row(row)
+
+    async def replace_asset_file(
+        self,
+        *,
+        user_id: str,
+        asset_id: str,
+        file_name: str,
+        content_type: str | None,
+        content: bytes,
+    ) -> AssetRecord:
+        clean_name = file_name.strip()
+        if not clean_name:
+            raise ValidationError("asset_file_name_required", "File name must not be empty")
+        if not content:
+            raise ValidationError("asset_content_required", "File content must not be empty")
+
+        asset = await self.get_asset(user_id=user_id, asset_id=asset_id)
+        if asset.asset_type != "file":
+            raise ValidationError(
+                "asset_file_replace_unsupported",
+                "Only file assets can replace file content",
+                {"asset_id": asset_id, "asset_type": asset.asset_type},
+            )
+        if asset.scope == "project":
+            await self._user_service.ensure_project_access(
+                user_id=user_id,
+                project_id=asset.project_id or "",
+                action="asset:write",
+            )
+
+        (
+            content_hash,
+            storage_uri,
+            size_bytes,
+            _storage_created,
+        ) = self._storage.put_bytes_with_status(file_name=clean_name, content=content)
+        now = _utc_now()
+        next_metadata = dict(asset.metadata)
+        stored_object = None
+        should_publish = "public_url" in next_metadata or "object_storage" in next_metadata
+        if should_publish and self._object_storage is not None:
+            stored_object = await self._object_storage.put_object(
+                key=_object_key(storage_uri),
+                content=content,
+                content_type=content_type,
+            )
+            next_metadata["public_url"] = stored_object.public_url
+            next_metadata["object_storage"] = asdict(stored_object)
+        metadata_json = _metadata_json(next_metadata)
+        search_text = f"{asset.name}\n{metadata_json}"
+        async with connect_db(self._database_path) as db:
+            await db.execute(
+                """
+                update assets
+                set mime_type = ?, content_hash = ?, size_bytes = ?, storage_uri = ?,
+                    metadata_json = ?, updated_at = ?
+                where asset_id = ?
+                """,
+                (
+                    content_type,
+                    content_hash,
+                    size_bytes,
+                    storage_uri,
+                    metadata_json,
+                    now,
+                    asset_id,
+                ),
+            )
+            await db.execute(
+                "update asset_search_fts set search_text = ? where asset_id = ?",
+                (search_text, asset_id),
             )
             row = await _fetch_one(
                 db,
@@ -1144,6 +1259,63 @@ async def _insert_index_entry(
     )
 
 
+async def _ensure_episode_metadata_tag_entry(
+    db: aiosqlite.Connection,
+    *,
+    user_id: str,
+    asset_id: str,
+    scope: str,
+    project_id: str | None,
+    metadata: dict[str, Any],
+    search_text: str,
+    now: str,
+) -> None:
+    if not _is_episode_metadata(metadata):
+        return
+
+    tag = await _fetch_one(
+        db,
+        """
+        select * from asset_tags
+        where scope = ? and project_id is ? and name = ?
+        order by created_at asc, tag_id asc
+        limit 1
+        """,
+        (scope, project_id, _EPISODE_METADATA_TAG_NAME),
+    )
+    if tag is None:
+        tag_id = new_id("tag")
+        await db.execute(
+            """
+            insert into asset_tags (
+              tag_id, scope, project_id, name, description, created_by, created_at, updated_at
+            ) values (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (tag_id, scope, project_id, _EPISODE_METADATA_TAG_NAME, None, user_id, now, now),
+        )
+    else:
+        tag_id = tag["tag_id"]
+
+    existing = await _fetch_one(
+        db,
+        "select entry_id from asset_index_entries where asset_id = ? and tag_id = ?",
+        (asset_id, tag_id),
+    )
+    if existing is not None:
+        return
+
+    await _insert_index_entry(
+        db,
+        asset_id=asset_id,
+        scope=scope,
+        project_id=project_id,
+        collection_id=None,
+        tag_id=tag_id,
+        search_text=search_text,
+        now=now,
+    )
+
+
 async def _fetch_one(
     db: aiosqlite.Connection,
     query: str,
@@ -1223,3 +1395,29 @@ def _tag_from_row(row: aiosqlite.Row) -> AssetTagRecord:
         updated_at=row["updated_at"],
         asset_count=int(asset_count or 0),
     )
+
+
+_EPISODE_METADATA_TAG_NAME = "集元数据"
+_EPISODE_METADATA_TYPE_ALIASES = {
+    "episode_metadata",
+    "episode",
+    "episode_meta",
+    "集元数据",
+    "集信息资产",
+    "集信息",
+    "集",
+}
+
+
+def _is_episode_metadata(metadata: dict[str, Any]) -> bool:
+    for key in ("type", "asset_type"):
+        value = metadata.get(key)
+        if isinstance(value, str) and value.strip().lower() in _EPISODE_METADATA_TYPE_ALIASES:
+            return True
+    tags = metadata.get("tags")
+    if isinstance(tags, list):
+        return any(
+            isinstance(tag, str) and tag.strip().lower() in _EPISODE_METADATA_TYPE_ALIASES
+            for tag in tags
+        )
+    return False

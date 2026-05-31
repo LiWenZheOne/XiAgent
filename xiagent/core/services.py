@@ -79,6 +79,19 @@ class AssetService(ABC):
         user_id: str,
         asset_id: str,
         name: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> Any:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def replace_asset_file(
+        self,
+        *,
+        user_id: str,
+        asset_id: str,
+        file_name: str,
+        content_type: str | None,
+        content: bytes,
     ) -> Any:
         raise NotImplementedError
 

@@ -24,6 +24,7 @@ from xiagent.nodes.ai.parallel_deepseek_structured_json import (
 from xiagent.nodes.ai.gemini_vision import GeminiVisionNode
 from xiagent.nodes.ai.assign_assets_to_segments import AssignAssetsToSegmentsNode
 from xiagent.nodes.ai.asset_draft_from_description import AssetDraftFromDescriptionNode
+from xiagent.nodes.ai.asset_metadata_from_upload import AssetMetadataFromUploadNode
 from xiagent.nodes.ai.runninghub_image import (
     RunningHubImageToImageNode,
     RunningHubImageToImageNodeV2,
@@ -43,7 +44,12 @@ from xiagent.nodes.tools.echo_tool import EchoToolNode
 from xiagent.nodes.tools.merge_asset_images import MergeAssetImagesNode
 from xiagent.nodes.tools.complete_asset_images import CompleteAssetImagesNode
 from xiagent.nodes.tools.enrich_characters import EnrichCharactersNode
+from xiagent.nodes.tools.episode_metadata import (
+    EpisodeMetadataFinalizeNode,
+    EpisodeMetadataFromAssetNode,
+)
 from xiagent.nodes.tools.filter_assets_for_generation import FilterAssetsForGenerationNode
+from xiagent.nodes.tools.resolve_character_variant_refs import ResolveCharacterVariantRefsNode
 from xiagent.nodes.tools.runninghub_workflow_images import RunningHubWorkflowImagesNode
 from xiagent.nodes.tools.script_split import ScriptSplitNode
 from xiagent.nodes.tools.extract_panel_image_urls import ExtractPanelImageUrlsNode
@@ -130,8 +136,11 @@ def build_node_registry(settings: Settings) -> NodeRegistry:
     registry.register(AssembleStoryboardContextNode())
     registry.register(AssetLookupNode())
     registry.register(CreateTextAssetNode())
+    registry.register(EpisodeMetadataFinalizeNode())
+    registry.register(EpisodeMetadataFromAssetNode())
     registry.register(EnrichCharactersNode())
     registry.register(FilterAssetsForGenerationNode())
+    registry.register(ResolveCharacterVariantRefsNode())
     registry.register(RunningHubWorkflowImagesNode())
     registry.register(StoryboardPromptAssemblerNode())
     registry.register(StoryboardPromptAssemblerNodeV2())
@@ -159,6 +168,13 @@ def build_node_registry(settings: Settings) -> NodeRegistry:
     )
     registry.register(
         AssetDraftFromDescriptionNode(
+            model_router=router,
+            provider="deepseek",
+            model=deepseek_config.model,
+        )
+    )
+    registry.register(
+        AssetMetadataFromUploadNode(
             model_router=router,
             provider="deepseek",
             model=deepseek_config.model,
@@ -219,5 +235,8 @@ __all__ = [
     "SystemUserChoiceNode",
     "SystemUserInputNode",
     "AssetDraftFromDescriptionNode",
+    "AssetMetadataFromUploadNode",
+    "EpisodeMetadataFinalizeNode",
+    "EpisodeMetadataFromAssetNode",
     "build_node_registry",
 ]

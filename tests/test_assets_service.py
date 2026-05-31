@@ -239,6 +239,7 @@ async def test_update_asset_renames_asset_and_searches_by_new_name(test_settings
         user_id=user.user_id,
         asset_id=asset.asset_id,
         name="主角立绘",
+        metadata={"type": "角色", "summary": "出身梁山的好汉"},
     )
     search_result = await assets.search_assets(
         user_id=user.user_id,
@@ -248,7 +249,18 @@ async def test_update_asset_renames_asset_and_searches_by_new_name(test_settings
     )
 
     assert renamed.name == "主角立绘"
+    assert renamed.metadata["type"] == "角色"
+    assert renamed.metadata["summary"] == "出身梁山的好汉"
     assert [item.asset_id for item in search_result.items] == [asset.asset_id]
+
+    metadata_search_result = await assets.search_assets(
+        user_id=user.user_id,
+        scope="global",
+        project_id=None,
+        keyword="梁山",
+    )
+
+    assert [item.asset_id for item in metadata_search_result.items] == [asset.asset_id]
 
     with pytest.raises(ValidationError) as exc_info:
         await assets.update_asset(
@@ -258,6 +270,43 @@ async def test_update_asset_renames_asset_and_searches_by_new_name(test_settings
         )
 
     assert exc_info.value.code == "asset_name_required"
+
+
+async def test_file_asset_content_can_be_replaced_without_changing_identity(test_settings) -> None:
+    await migrate(test_settings.database_path)
+    users = SqliteUserService(test_settings.database_path)
+    user = await users.create_user(username="alice", password="secret-123")
+    assets = SqliteAssetService(
+        database_path=test_settings.database_path,
+        storage_dir=test_settings.asset_storage_dir,
+        user_service=users,
+    )
+    asset = await assets.import_file_asset(
+        user_id=user.user_id,
+        scope="global",
+        project_id=None,
+        file_name="source-file.png",
+        content_type="image/png",
+        content=b"old image",
+        metadata={"type": "character", "variant_description": "旧图描述"},
+    )
+
+    replaced = await assets.replace_asset_file(
+        user_id=user.user_id,
+        asset_id=asset.asset_id,
+        file_name="replacement.jpg",
+        content_type="image/jpeg",
+        content=b"new image",
+    )
+    content = await assets.get_asset_content(user_id=user.user_id, asset_id=asset.asset_id)
+
+    assert replaced.asset_id == asset.asset_id
+    assert replaced.name == "source-file.png"
+    assert replaced.mime_type == "image/jpeg"
+    assert replaced.size_bytes == len(b"new image")
+    assert replaced.metadata["variant_description"] == "旧图描述"
+    assert content.bytes_content == b"new image"
+    assert content.content_type == "image/jpeg"
 
 
 async def test_get_project_asset_rejects_mismatched_project_context(test_settings) -> None:

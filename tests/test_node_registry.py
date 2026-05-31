@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import pytest
+from typing import Any
 
 from xiagent.core.errors import ConflictError, ValidationError
 from xiagent.nodes import build_node_registry
@@ -11,7 +12,12 @@ from xiagent.nodes.system.user_choice import SystemUserChoiceNode
 from xiagent.nodes.tools.echo_tool import EchoToolNode
 from xiagent.nodes.tools.complete_asset_images import CompleteAssetImagesNode
 from xiagent.nodes.tools.enrich_characters import EnrichCharactersNode
+from xiagent.nodes.tools.episode_metadata import (
+    EpisodeMetadataFinalizeNode,
+    EpisodeMetadataFromAssetNode,
+)
 from xiagent.nodes.tools.filter_assets_for_generation import FilterAssetsForGenerationNode
+from xiagent.nodes.tools.resolve_character_variant_refs import ResolveCharacterVariantRefsNode
 
 
 def test_register_and_get_node() -> None:
@@ -61,8 +67,11 @@ def test_build_node_registry_registers_builtin_nodes(test_settings) -> None:
         "tool.assemble_storyboard_context.v1",
         "tool.asset_lookup.v1",
         "tool.create_text_asset.v1",
+        "tool.episode_metadata_finalize.v1",
+        "tool.episode_metadata_from_asset.v1",
         "tool.enrich_characters.v1",
         "tool.filter_assets_for_generation.v1",
+        "tool.resolve_character_variant_refs.v1",
         "tool.extract_panel_image_urls.v1",
         "tool.runninghub_workflow_images.v1",
         "tool.storyboard_prompt_assembler.v1",
@@ -71,6 +80,7 @@ def test_build_node_registry_registers_builtin_nodes(test_settings) -> None:
         "ai.deepseek_chat.v1",
         "ai.deepseek_structured_json.v1",
         "ai.asset_draft_from_description.v1",
+        "ai.asset_metadata_from_upload.v1",
         "ai.parallel_deepseek_structured_json.v1",
         "ai.runninghub_image_to_image.v1",
         "ai.runninghub_image_to_image.v2",
@@ -120,6 +130,210 @@ async def test_filter_assets_for_generation_removes_existing_assets() -> None:
     assert [item["name"] for item in result.output["approved_assets"]["characters"]] == ["鲁智深"]
     assert [item["name"] for item in result.output["approved_assets"]["assets"]] == ["山神庙"]
     assert [item["name"] for item in result.output["approved_assets"]["props"]] == ["水火棍"]
+
+
+async def test_filter_assets_for_generation_uses_type_specific_templates() -> None:
+    class FakeAssetService:
+        async def search_assets(self, **kwargs: Any) -> list[dict[str, str]]:
+            keyword = kwargs["keyword"]
+            asset_ids = {
+                "塞雷2d角色模板": "template-character",
+                "塞雷2d地点模板": "template-location",
+                "塞雷2d道具模板": "template-prop",
+            }
+            return [
+                {
+                    "asset_id": asset_ids[keyword],
+                    "name": keyword,
+                    "metadata": {"variant_description": f"{keyword}外貌描述"},
+                }
+            ]
+
+    node = FilterAssetsForGenerationNode()
+    ctx = NodeContext(
+        user_id="user-1",
+        project_id="project-1",
+        task_id="task-1",
+        node_id="filter_assets_for_generation",
+        node_execution_id="exec-1",
+        config={},
+        output_schema={},
+        asset_service=FakeAssetService(),
+        event_sink=None,
+        logger=None,
+    )
+
+    result = await node.run(
+        ctx,
+        {
+            "approved_assets": {
+                "characters": [{"type": "character", "name": "鲁智深"}],
+                "assets": [{"type": "location", "name": "野猪林"}],
+                "props": [{"type": "prop", "name": "禅杖"}],
+            }
+        },
+    )
+
+    output = result.output["approved_assets"]
+    assert output["characters"][0]["reference_image_ref"]["asset_id"] == "template-character"
+    assert output["characters"][0]["reference_source"] == "default_template"
+    assert output["characters"][0]["reference_variant_description"] == "塞雷2d角色模板外貌描述"
+    assert "variant_description" not in output["characters"][0]["reference_image_ref"]
+    assert output["assets"][0]["reference_image_ref"]["asset_id"] == "template-location"
+    assert output["assets"][0]["reference_source"] == "default_template"
+    assert output["assets"][0]["reference_variant_description"] == "塞雷2d地点模板外貌描述"
+    assert output["props"][0]["reference_image_ref"]["asset_id"] == "template-prop"
+    assert output["props"][0]["reference_source"] == "default_template"
+    assert output["props"][0]["reference_variant_description"] == "塞雷2d道具模板外貌描述"
+
+
+async def test_resolve_character_variant_refs_inherits_variant_facts_programmatically() -> None:
+    node = ResolveCharacterVariantRefsNode()
+
+    result = await node.run(
+        None,
+        {
+            "characters": [
+                {
+                    "full_name": "林冲",
+                    "existing_variants": [
+                        {
+                            "asset_id": "variant-default",
+                            "variant": "默认",
+                            "storage_uri": "https://cdn.test/default.png",
+                            "appearance_description": "默认官服参考图外貌。",
+                            "metadata": {"status": "八十万禁军教头，身着官服。"},
+                        },
+                        {
+                            "asset_id": "variant-prisoner",
+                            "variant": "囚服",
+                            "image_url": "https://cdn.test/prisoner.png",
+                            "appearance_description": "囚服参考图外貌。",
+                            "metadata": {"status": "刺配途中，身着囚服。"},
+                        },
+                    ],
+                },
+                {
+                    "full_name": "鲁智深",
+                    "existing_variants": [
+                        {
+                            "asset_id": "variant-monk",
+                            "variant": "僧衣",
+                            "appearance_description": "僧衣参考图外貌。",
+                        }
+                    ],
+                },
+            ],
+            "variant_results": [
+                {
+                    "full_name": "林冲",
+                    "accessories": ["毡笠"],
+                    "matched_variant": "囚服",
+                    "matched_variant_id": None,
+                    "is_new_variant": False,
+                    "new_variant_name": "",
+                    "default_variant_status": "LLM 编造状态",
+                    "default_variant_storage_uri": "https://bad.test/fake.png",
+                    "default_variant_appearance_description": "LLM 编造默认图描述",
+                    "matched_variant_appearance_description": "LLM 编造匹配图描述",
+                    "reason": "已有囚服",
+                },
+                {
+                    "full_name": "鲁智深",
+                    "accessories": [],
+                    "matched_variant": "僧衣",
+                    "matched_variant_id": None,
+                    "is_new_variant": False,
+                    "new_variant_name": "",
+                    "reason": "已有僧衣",
+                },
+            ],
+        },
+    )
+
+    resolved = result.output["results"][0]
+    assert resolved["matched_variant_id"] == "variant-prisoner"
+    assert resolved["default_variant_status"] == "八十万禁军教头，身着官服。"
+    assert resolved["default_variant_storage_uri"] == "https://cdn.test/default.png"
+    assert resolved["default_variant_appearance_description"] == "默认官服参考图外貌。"
+    assert resolved["matched_variant_appearance_description"] == "囚服参考图外貌。"
+    no_default = result.output["results"][1]
+    assert no_default["matched_variant_id"] == "variant-monk"
+    assert no_default["default_variant_status"] == ""
+    assert no_default["default_variant_storage_uri"] == ""
+    assert no_default["default_variant_appearance_description"] == ""
+    assert no_default["matched_variant_appearance_description"] == "僧衣参考图外貌。"
+
+
+async def test_episode_metadata_nodes_roundtrip_payload() -> None:
+    class FakeAsset:
+        def __init__(self, *, asset_id: str, name: str, text_content: str, metadata: dict[str, Any]) -> None:
+            self.asset_id = asset_id
+            self.name = name
+            self.text_content = text_content
+            self.metadata = metadata
+
+    class FakeAssetContent:
+        def __init__(self, text_content: str) -> None:
+            self.text_content = text_content
+
+    class FakeAssetService:
+        def __init__(self) -> None:
+            self.created: dict[str, FakeAsset] = {}
+
+        async def create_text_asset(self, **kwargs: Any) -> FakeAsset:
+            asset = FakeAsset(
+                asset_id="asset-episode",
+                name=kwargs["name"],
+                text_content=kwargs["text"],
+                metadata=kwargs["metadata"],
+            )
+            self.created[asset.asset_id] = asset
+            return asset
+
+        async def get_asset(self, **kwargs: Any) -> FakeAsset:
+            return self.created[kwargs["asset_id"]]
+
+        async def get_asset_content(self, **kwargs: Any) -> FakeAssetContent:
+            return FakeAssetContent(self.created[kwargs["asset_id"]].text_content)
+
+    service = FakeAssetService()
+    ctx = NodeContext(
+        user_id="user-1",
+        project_id="project-1",
+        task_id="task-1",
+        node_id="finish_summary",
+        node_execution_id="exec-1",
+        config={},
+        output_schema={},
+        asset_service=service,  # type: ignore[arg-type]
+        event_sink=None,
+        logger=None,
+    )
+
+    result = await EpisodeMetadataFinalizeNode().run(
+        ctx,
+        {
+            "episode_name": "23、私放晁天王",
+            "episode_summary": "晁盖义释刘唐，宋江暗通消息。",
+            "source_script": "宋江见了晁盖。",
+            "asset_catalog": {"characters": [{"name": "宋江"}], "assets": [], "props": []},
+            "asset_images": [{"full_name": "宋江", "asset_id": "asset-songjiang"}],
+            "prompt_results": [],
+        },
+    )
+    loaded = await EpisodeMetadataFromAssetNode().run(
+        ctx,
+        {"episode_asset_id": result.output["episode_asset_id"]},
+    )
+
+    assert service.created["asset-episode"].metadata["type"] == "episode_metadata"
+    assert service.created["asset-episode"].metadata["tags"] == ["集元数据", "23、私放晁天王"]
+    assert loaded.output["episode_name"] == "23、私放晁天王"
+    assert loaded.output["source_script"] == "宋江见了晁盖。"
+    assert result.output["asset_images"] == [{"full_name": "宋江", "asset_id": "asset-songjiang"}]
+    assert loaded.output["asset_catalog"]["approved_assets"]["characters"][0]["name"] == "宋江"
+    assert loaded.asset_refs[0].asset_id == "asset-episode"
 
 
 async def test_complete_asset_images_prepares_only_missing_prompts() -> None:
