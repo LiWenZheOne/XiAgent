@@ -10,19 +10,12 @@ interface SummaryImage {
   assetId?: string;
 }
 
-const typeLabels: Record<string, string> = {
-  character: "角色",
-  scene: "地点",
-  asset: "地点",
-  location: "地点",
-  prop: "道具",
-};
-
 export function AssetTaskSummaryControl({ node }: NodeUiControlProps) {
   const source = summarySource(node.output_snapshot) ?? summarySource(node.input_snapshot) ?? {};
   const images = summaryImages(source);
+  const catalogCounts = countCatalogAssets(source);
   const ingestedCount = createdAssetIds(source).length || images.filter((image) => Boolean(image.assetId) || image.source === "library").length;
-  const counts = countByType(images);
+  const counts = catalogCounts.total ? catalogCounts : countByType(images);
 
   async function exportZip() {
     const files = await Promise.all(images.map(async (image) => {
@@ -60,27 +53,12 @@ export function AssetTaskSummaryControl({ node }: NodeUiControlProps) {
         </button>
       </header>
       <div className="asset-task-summary-grid">
-        <SummaryMetric label="总资产" value={images.length} />
+        <SummaryMetric label="总资产" value={counts.total} />
         <SummaryMetric label="已入库" value={ingestedCount} />
         <SummaryMetric label="角色" value={counts.character} />
         <SummaryMetric label="地点" value={counts.scene} />
         <SummaryMetric label="道具" value={counts.prop} />
       </div>
-      {images.length ? (
-        <div className="asset-task-summary-list">
-          {images.map((image) => (
-            <article key={`${image.assetType}-${image.assetKey}-${image.imageUrl}`}>
-              <img src={image.imageUrl} alt={`${image.fullName} 图像`} />
-              <div>
-                <strong>{image.fullName}</strong>
-                <span>{typeLabels[image.assetType] ?? "资产"}</span>
-              </div>
-            </article>
-          ))}
-        </div>
-      ) : (
-        <p className="muted">暂无可导出的资产图像。</p>
-      )}
     </section>
   );
 }
@@ -121,15 +99,38 @@ function summaryImages(source: Record<string, unknown>): SummaryImage[] {
     .filter((item) => Boolean(item.imageUrl));
 }
 
-function countByType(images: SummaryImage[]): Record<"character" | "scene" | "prop", number> {
+function countByType(images: SummaryImage[]): SummaryCounts {
   return images.reduce(
     (counts, image) => {
       const key = image.assetType === "character" ? "character" : image.assetType === "prop" ? "prop" : "scene";
       counts[key] += 1;
+      counts.total += 1;
       return counts;
     },
-    { character: 0, scene: 0, prop: 0 },
+    emptyCounts(),
   );
+}
+
+interface SummaryCounts {
+  total: number;
+  character: number;
+  scene: number;
+  prop: number;
+}
+
+function countCatalogAssets(source: Record<string, unknown>): SummaryCounts {
+  const catalog = recordValue(recordValue(source.asset_catalog)?.approved_assets)
+    ?? recordValue(source.approved_assets)
+    ?? recordValue(source.asset_catalog);
+  if (!catalog) return emptyCounts();
+  const character = arrayValue(catalog.characters).length;
+  const scene = arrayValue(catalog.assets).length + arrayValue(catalog.scenes).length + arrayValue(catalog.locations).length;
+  const prop = arrayValue(catalog.props).length;
+  return { total: character + scene + prop, character, scene, prop };
+}
+
+function emptyCounts(): SummaryCounts {
+  return { total: 0, character: 0, scene: 0, prop: 0 };
 }
 
 function createdAssetIds(source: Record<string, unknown>): string[] {

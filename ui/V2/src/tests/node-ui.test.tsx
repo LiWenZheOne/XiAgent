@@ -831,6 +831,11 @@ describe("node-ui controls", () => {
       output_snapshot: {
         created_asset_ids: ["asset-linchong"],
         asset_catalog: {
+          approved_assets: {
+            characters: [{ name: "林冲" }],
+            assets: [{ name: "山神庙外" }],
+            props: [{ full_name: "花枪" }],
+          },
           asset_images: [
             {
               asset_type: "character",
@@ -852,8 +857,13 @@ describe("node-ui controls", () => {
     );
 
     expect(screen.getByText("资产编目已完成")).toBeInTheDocument();
-    expect(screen.getByText("林冲_囚服_佩刀")).toBeInTheDocument();
+    expect(screen.queryByText("林冲_囚服_佩刀")).not.toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: "林冲_囚服_佩刀 图像" })).not.toBeInTheDocument();
     expect(screen.getByText("已入库")).toBeInTheDocument();
+    expect(screen.getByText("总资产").closest("div")).toHaveTextContent("3");
+    expect(screen.getByText("角色").closest("div")).toHaveTextContent("1");
+    expect(screen.getByText("地点").closest("div")).toHaveTextContent("1");
+    expect(screen.getByText("道具").closest("div")).toHaveTextContent("1");
     await userEvent.click(screen.getByRole("button", { name: "导出资产为压缩包" }));
     await waitFor(() => expect(clickMock).toHaveBeenCalled());
     expect(fetchMock).toHaveBeenCalledWith("https://cdn.example.com/linchong.png");
