@@ -299,7 +299,7 @@ async def test_v1_node_still_works() -> None:
 
 
 def test_existing_workflows_still_load(test_settings) -> None:
-    """Validate asset_storyboard_generation workflow contracts — V1/V2 refs still recognized."""
+    """Validate asset_storyboard_generation workflow contracts."""
     from xiagent.nodes import build_node_registry
     from xiagent.workflows.loader import load_workflow_file
     from xiagent.workflows.validator import validate_workflow_contract
@@ -309,13 +309,14 @@ def test_existing_workflows_still_load(test_settings) -> None:
     )
     registry = build_node_registry(test_settings)
 
-    # Must not raise — all V1/V2 refs recognized
+    # Must not raise — all refs used by this workflow are registered.
     validate_workflow_contract(contract, registry)
 
-    # Spot-check: V1 and V2 refs are present
+    # Spot-check: new storyboard generation starts from episode metadata and
+    # keeps the final V1 RunningHub image generation node.
     node_refs = {n["ref"] for n in contract["nodes"]}
+    assert "tool.episode_metadata_from_asset.v1" in node_refs
     assert "ai.runninghub_image_to_image.v1" in node_refs
-    assert "ai.runninghub_image_to_image.v2" in node_refs
 
 
 def test_storyboard_from_sketch_uses_v3(test_settings) -> None:

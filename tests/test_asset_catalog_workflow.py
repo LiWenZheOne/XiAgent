@@ -481,7 +481,7 @@ def test_asset_catalog_generate_prompt_is_character_design_text() -> None:
     assert "variant_description 描述了哪些目标外貌" in prompt_template
     assert "reference_variant_description 描述了哪些原始外貌" in prompt_template
     assert "目标外貌和参考图外貌之间的差异是什么" in prompt_template
-    assert "哪些身份、剧情、动作、状态、腿脚和鞋履信息必须排除" in prompt_template
+    assert "哪些剧情、动作、状态、腿脚和鞋履信息必须排除" in prompt_template
     assert "空间、建筑/地貌、时代质感、用途和关键视觉元素" in prompt_template
     assert "形制、材质、颜色、装饰、磨损、用途和可见特征" in prompt_template
     assert "target_appearance_description" in prompt_template
@@ -491,7 +491,7 @@ def test_asset_catalog_generate_prompt_is_character_design_text() -> None:
     assert "材质、布料质感、纹理或面料工艺" in prompt_template
     assert "最终修改用的提示词" in prompt_template
     assert "明确保持大圆头、圆鼓身体、短小四肢、简化五官、粗黑描边、平涂色块和圆润卡通比例不变" in prompt_template
-    assert "不得写角色名、人名" in prompt_template
+    assert "不得包含人名、角色名" in prompt_template
     assert "身份、职业、阶层、官职、称号、人物关系、阵营、剧情身份" in prompt_template
 
 
@@ -527,12 +527,12 @@ def test_asset_catalog_extract_prompt_includes_key_instructions() -> None:
     assert "这个稳定造型应该叫什么 variant_name" in system_prompt
     assert "被绑起来" in system_prompt
     assert "不是变体依据" in system_prompt
-    assert "禁止填\"默认\"、\"基础\"、\"普通\"、\"无特殊造型\"" in system_prompt
-    assert "禁止使用\"角色名_服装名\"格式" in system_prompt
+    assert "禁止用被绑、受伤、押送、奔跑等临时状态命名" in system_prompt
+    assert "禁止输出\"默认\"、\"基础\"、\"普通\"、\"无特殊造型\"" in prompt_template
     assert "这个变体的稳定视觉设定是什么" in system_prompt
     assert "至少 40 字" in system_prompt
     assert "不要描述任何材质、布料质感、纹理或面料工艺" in system_prompt
-    assert "禁止输出\"默认装束，无特殊造型描述\"" in system_prompt
+    assert "禁止输出\"默认\"、\"基础\"、\"普通\"、\"无特殊造型\"" in prompt_template
     assert "按 system 中 12 个问题整理" in prompt_template
     assert "回答\"这个稳定造型应该叫什么？\"" in prompt_template
     assert "禁止输出\"默认\"、\"基础\"、\"普通\"、\"无特殊造型\"" in prompt_template
@@ -670,10 +670,10 @@ async def test_asset_catalog_auto_generate_path(
         name="塞雷2d角色模板",
         storage_uri="https://cdn.test/template-character.png",
     )
-    answers = iter(["", "{}", "approved", "[]", "finish"])
+    answer = _asset_catalog_test_answer()
     runner = WorkflowTestRunner(
         session=session,
-        console=ConsoleIO(input_func=lambda prompt: next(answers)),
+        console=ConsoleIO(input_func=answer),
     )
 
     result = await runner.run_workflow_file(
@@ -738,10 +738,10 @@ async def test_asset_catalog_manual_upload_path(
         name="塞雷2d角色模板",
         storage_uri="https://cdn.test/template-character.png",
     )
-    answers = iter(["", "{}", "approved", "[]", "finish"])
+    answer = _asset_catalog_test_answer()
     runner = WorkflowTestRunner(
         session=session,
-        console=ConsoleIO(input_func=lambda prompt: next(answers)),
+        console=ConsoleIO(input_func=answer),
     )
 
     result = await runner.run_workflow_file(
@@ -847,6 +847,11 @@ class FakeAssetCatalogRouter(ChatModelRouter):
                 '"think": "角色当前状态为囚服，默认变体为官服，需将官服改为囚服。", '
                 '"prompt": "黑灰短发，眉眼锋利，短须明显，上身灰色囚衣，保持大圆头、圆鼓身体、短小四肢、简化五官、粗黑描边、平涂色块和圆润卡通比例不变"}'
             ),
+            # summarize_episode
+            (
+                '{"episode_summary": "本集围绕林冲行至山神庙外的情节展开，表现其发配途中的孤冷处境，'
+                '并为后续山神庙相关事件和角色资产使用提供稳定剧情背景。"}'
+            ),
         ]
 
     async def chat(self, request: Any) -> ChatResponse:
@@ -905,6 +910,29 @@ def _asset_catalog_registry(router: FakeAssetCatalogRouter) -> NodeRegistry:
         )
     )
     return registry
+
+
+def _asset_catalog_test_answer():
+    decisions = iter(["approved", "finish"])
+
+    def answer(prompt: str) -> str:
+        if prompt.endswith("script: "):
+            return "林冲在山神庙外踏雪而来。"
+        if prompt.endswith("episode_name: "):
+            return "测试集"
+        if prompt.endswith("background: "):
+            return "水浒传"
+        if prompt.endswith("approved_assets (JSON): "):
+            return "{}"
+        if prompt.endswith("asset_images (JSON): "):
+            return "[]"
+        if prompt.endswith("additional_asset_request: "):
+            return ""
+        if prompt.endswith("decision: "):
+            return next(decisions)
+        raise AssertionError(f"Unexpected console prompt: {prompt}")
+
+    return answer
 
 
 async def _seed_file_asset(
