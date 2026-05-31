@@ -87,6 +87,19 @@ export function ScriptTextInputControl({ busy, config, node, nodeSpec, slot, val
       </div>
 
       <div className="script-input-grid">
+        {otherFields.map((field) => (
+          <label className="form-field" key={field.key}>
+            <span>{field.label}</span>
+            <input
+              aria-label={field.label}
+              readOnly={readonly || Boolean(busy)}
+              type={field.schema.type === "integer" || field.schema.type === "number" ? "number" : "text"}
+              value={String((readonly ? renderedValues?.[field.key] : values[field.key]) ?? "")}
+              onChange={(event) => setValues((current) => ({ ...current, [field.key]: event.target.value }))}
+            />
+          </label>
+        ))}
+
         <label className="form-field">
           <span>{fieldLabel(fields, BACKGROUND_FIELD, "世界背景")}</span>
           <input
@@ -122,19 +135,6 @@ export function ScriptTextInputControl({ busy, config, node, nodeSpec, slot, val
           />
           <small>{script.length} 字符</small>
         </div>
-
-        {otherFields.map((field) => (
-          <label className="form-field" key={field.key}>
-            <span>{field.label}</span>
-            <input
-              aria-label={field.label}
-              readOnly={readonly || Boolean(busy)}
-              type={field.schema.type === "integer" || field.schema.type === "number" ? "number" : "text"}
-              value={String((readonly ? renderedValues?.[field.key] : values[field.key]) ?? "")}
-              onChange={(event) => setValues((current) => ({ ...current, [field.key]: event.target.value }))}
-            />
-          </label>
-        ))}
       </div>
 
       {message ? <p className="form-success">{message}</p> : null}

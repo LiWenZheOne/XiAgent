@@ -56,7 +56,7 @@ export function AssetTaskSummaryControl({ node }: NodeUiControlProps) {
           <h3>资产编目已完成</h3>
         </div>
         <button className="secondary-button" disabled={!images.length} type="button" onClick={() => void exportZip()}>
-          导出为压缩包
+          导出资产为压缩包
         </button>
       </header>
       <div className="asset-task-summary-grid">
@@ -101,7 +101,9 @@ function summarySource(value: unknown): Record<string, unknown> | null {
 }
 
 function summaryImages(source: Record<string, unknown>): SummaryImage[] {
-  return arrayValue(source.asset_images)
+  const assetImages = arrayValue(source.asset_images);
+  const nestedAssetImages = arrayValue(recordValue(source.asset_catalog)?.asset_images);
+  return (assetImages.length ? assetImages : nestedAssetImages)
     .map((item) => recordValue(item))
     .filter((item): item is Record<string, unknown> => Boolean(item))
     .map((item, index) => {

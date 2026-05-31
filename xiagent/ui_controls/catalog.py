@@ -349,6 +349,29 @@ def build_builtin_ui_control_catalog() -> UiControlCatalog:
                 description="从资产库选择或上传图片，最终输出图片 URL 数组。",
             ),
             UiControlDescriptor(
+                control_id="ui.input.asset_picker.v1",
+                version="1.0.0",
+                name="Asset Picker",
+                kind="input",
+                tags=("asset", "picker", "single"),
+                variants=(
+                    UiControlVariant(
+                        name="list",
+                        label="资产列表选择",
+                        modes=("input", "readonly"),
+                        submit_schema={
+                            "type": "object",
+                            "required": ["value"],
+                            "properties": {
+                                "value": {"type": "string", "minLength": 1},
+                            },
+                            "additionalProperties": False,
+                        },
+                    ),
+                ),
+                description="从资产库按范围、类型和标签选择单个资产，最终提交 asset_id 字符串。",
+            ),
+            UiControlDescriptor(
                 control_id="ui.fallback.schema_form.v1",
                 version="1.0.0",
                 name="Schema Form",

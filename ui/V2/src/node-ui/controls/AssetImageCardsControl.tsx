@@ -13,6 +13,7 @@ interface AssetImageCard {
   accessories?: string;
   prompt?: string;
   referenceImageRef?: ImageRef;
+  referenceSource?: string;
   referenceAppearanceDescription?: string;
   matchedAsset?: AssetMatch;
 }
@@ -52,9 +53,6 @@ const groupLabels: Record<string, string> = {
   prop: "道具",
   other: "其他",
 };
-const assetPromptPrefix = "将图中角色改成";
-const assetPromptSuffix = "保持风格和其它特征不变";
-
 export function AssetImageCardsControl({
   busy,
   config,
@@ -261,12 +259,14 @@ export function AssetImageCardsControl({
     try {
       const results = await Promise.all(targetCards.map(async (card) => {
         const edit = edits[card.assetKey] ?? cardEditFromCard(card);
-        const promptResult = editedPromptResult(card, edit, matches[card.assetKey] ?? card.matchedAsset ?? null);
+        const activeMatch = matches[card.assetKey] ?? card.matchedAsset ?? null;
+        const promptResult = editedPromptResult(card, edit, activeMatch);
+        const promptText = assetPromptText(card, config.options, activeMatch);
         const generated = await generateAssetImage({
           project_id: projectId,
           prompt_result: promptResult,
-          prompt_prefix: assetPromptPrefix,
-          prompt_suffix: assetPromptSuffix,
+          prompt_prefix: promptText.prefix,
+          prompt_suffix: promptText.suffix,
           aspect_ratio: tabKeyForAssetType(card.assetType) === "scene" ? "16:9" : "1:1",
           resolution: "2k",
         });
@@ -729,6 +729,7 @@ function buildAssetCards(source: Record<string, unknown> | null): AssetImageCard
       accessories: joinValue(accessory?.new_accessories) || joinValue(character.accessories),
       prompt: textValue(prompt?.prompt),
       referenceImageRef: imageRefFromValue(prompt?.reference_image_ref),
+      referenceSource: textValue(prompt?.reference_source) || textValue(character.reference_source),
       referenceAppearanceDescription: textValue(prompt?.reference_appearance_description) || textValue(character.reference_appearance_description) || textValue(character.matched_asset_appearance_description),
     };
   });
@@ -753,6 +754,7 @@ function genericCards(value: unknown, assetType: string, prompts: Array<Record<s
       accessories: joinValue(item.accessories) || textValue(item.related_character),
       prompt: textValue(prompt?.prompt) || textValue(item.prompt),
       referenceImageRef: imageRefFromValue(prompt?.reference_image_ref) || imageRefFromValue(item.reference_image_ref) || imageRefFromRecord(item),
+      referenceSource: textValue(prompt?.reference_source) || textValue(item.reference_source),
       referenceAppearanceDescription: textValue(prompt?.reference_appearance_description) || textValue(item.reference_appearance_description) || textValue(item.matched_asset_appearance_description),
     };
   });
@@ -785,6 +787,22 @@ function buildTabs(cards: AssetImageCard[]): Array<{ key: TabKey; count: number 
 function tabKeyForAssetType(assetType: string): TabKey {
   if (assetType === "character" || assetType === "scene" || assetType === "prop") return assetType;
   return "other";
+}
+
+function assetPromptText(
+  card: AssetImageCard,
+  options: Record<string, unknown> | undefined,
+  match?: AssetMatch | null,
+): { prefix: string; suffix: string } {
+  const promptTextByType = recordValue(options?.prompt_text_by_type);
+  const group = tabKeyForAssetType(card.assetType);
+  const usesDefaultReference = !match?.imageRef && card.referenceSource === "default_template";
+  const promptKey = group === "character" && usesDefaultReference ? "character_default_reference" : group;
+  const promptText = recordValue(promptTextByType?.[promptKey]) || recordValue(promptTextByType?.[group]);
+  return {
+    prefix: textValue(promptText?.prefix) || "",
+    suffix: textValue(promptText?.suffix) || "",
+  };
 }
 
 function readonlyImages(value: unknown): ImageState {
@@ -866,6 +884,7 @@ function editedPromptResult(card: AssetImageCard, edit: CardEditState, match: As
   };
   const referenceImageRef = match?.imageRef || card.referenceImageRef;
   if (referenceImageRef) prompt.reference_image_ref = referenceImageRef;
+  if (!match?.imageRef && card.referenceSource) prompt.reference_source = card.referenceSource;
   const appearanceDescription = match?.appearanceDescription || card.referenceAppearanceDescription || "";
   if (appearanceDescription) prompt.reference_appearance_description = appearanceDescription;
   if (edit.name.trim()) prompt.name = edit.name.trim();

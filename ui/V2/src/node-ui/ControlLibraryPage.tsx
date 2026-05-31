@@ -419,6 +419,50 @@ const controlPreviewFixtures: Record<string, ControlPreviewFixture[]> = {
       },
     },
   ],
+  "ui.input.asset_picker.v1": [
+    {
+      config: {
+        control_id: "ui.input.schema_form.v1",
+        variant: "default",
+        mode: "readonly",
+        options: {
+          fields: {
+            episode_asset_id: {
+              control_id: "ui.input.asset_picker.v1",
+              variant: "list",
+              mode: "readonly",
+              asset_type: "text",
+              filter_tag_names: ["集元数据"],
+            },
+          },
+        },
+      },
+      node: {
+        node_execution_id: "preview-asset-picker",
+        node_id: "preview_asset_picker",
+        node_ref: "system.user_input.v1",
+        status: "succeeded",
+        metadata: {
+          title: "资产字段",
+          input_schema: {
+            type: "object",
+            properties: {
+              episode_asset_id: {
+                type: "string",
+                title: "集信息资产",
+              },
+            },
+          },
+        },
+        output_snapshot: {
+          episode_asset_id: "asset_episode_23",
+        },
+      },
+      value: {
+        episode_asset_id: "asset_episode_23",
+      },
+    },
+  ],
   "ui.fallback.schema_form.v1": [
     {
       config: { control_id: "ui.fallback.schema_form.v1", variant: "default", mode: "input" },

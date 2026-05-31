@@ -253,6 +253,15 @@ const controlDescriptors: UiControlDescriptor[] = [
     description: "从资产库选择或上传图片。",
   },
   {
+    control_id: "ui.input.asset_picker.v1",
+    version: "1.0.0",
+    name: "Asset Picker",
+    kind: "input",
+    tags: ["asset", "picker"],
+    variants: [{ name: "list", label: "资产列表选择", tags: [], modes: ["input", "readonly"], required_bindings: [] }],
+    description: "从资产库选择资产。",
+  },
+  {
     control_id: "ui.fallback.schema_form.v1",
     version: "1.0.0",
     name: "Schema Form",
@@ -514,6 +523,109 @@ describe("node-ui controls", () => {
     })));
   });
 
+  it("uses asset-type-specific prompt prefixes and suffixes when generating asset images", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/assets/generate-image") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+        const promptResult = body.prompt_result as Record<string, unknown>;
+        const assetType = String(promptResult.asset_type ?? "");
+        return jsonResponse({
+          generation_id: `image-generation-${assetType}`,
+          status: "queued",
+        });
+      }
+      if (url.startsWith("/api/assets/generate-image/image-generation-")) {
+        return jsonResponse({
+          generation_id: url.split("/").pop(),
+          status: "succeeded",
+          result: {
+            full_name: "generated",
+            image_url: "https://cdn.example.com/generated.png",
+            source: "ai_generated",
+          },
+        });
+      }
+      return jsonResponse({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <AssetImageCardsControl
+        config={{
+          control_id: "ui.interaction.asset_image_cards.v1",
+          variant: "grouped_cards",
+          mode: "interactive",
+          options: {
+            prompt_text_by_type: {
+              character: {
+                prefix: "将图中角色改成",
+                suffix: "保持角色比例、画风、线条和其它未提及特征不变",
+              },
+              character_default_reference: {
+                prefix: "将图中角色改成",
+                suffix: "保持画风和角色体型不变，改变原图中的所有角色特征，根据描述设计全新的形象。",
+              },
+              scene: {
+                prefix: "将图中场景改成",
+                suffix: "保持画风、构图视角、空间透视和其它未提及元素不变",
+              },
+              prop: {
+                prefix: "将图中道具改成",
+                suffix: "保持画风、主体轮廓、摆放角度和其它未提及特征不变",
+              },
+            },
+          },
+        }}
+        node={{
+          node_execution_id: "exec-card-types",
+          node_id: "upload_images",
+          node_ref: "system.human_approval.v1",
+          status: "waiting",
+          input_snapshot: {
+            approved_assets: {
+              characters: [{ name: "鲁智深", prompt: "粗眉僧衣", reference_source: "default_template" }],
+              assets: [{ name: "山神庙", prompt: "雪夜破庙" }],
+              props: [{ name: "花枪", prompt: "木杆长枪" }],
+            },
+            prompt_results: [
+              { full_name: "鲁智深", prompt: "粗眉僧衣", reference_source: "default_template", reference_image_ref: { kind: "asset", asset_id: "asset-character", role: "reference" } },
+              { full_name: "山神庙", prompt: "雪夜破庙", reference_image_ref: { kind: "asset", asset_id: "asset-scene", role: "reference" } },
+              { full_name: "花枪", prompt: "木杆长枪", reference_image_ref: { kind: "asset", asset_id: "asset-prop", role: "reference" } },
+            ],
+          },
+        }}
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "资产生成" }));
+
+    await waitFor(() => {
+      const generateCalls = fetchMock.mock.calls.filter(([url]) => String(url) === "/api/assets/generate-image");
+      expect(generateCalls.length).toBe(3);
+    });
+    const bodies = fetchMock.mock.calls
+      .filter(([url]) => String(url) === "/api/assets/generate-image")
+      .map(([, init]) => JSON.parse(String((init as RequestInit).body ?? "{}")) as Record<string, unknown>);
+    expect(bodies).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        prompt_prefix: "将图中角色改成",
+        prompt_suffix: "保持画风和角色体型不变，改变原图中的所有角色特征，根据描述设计全新的形象。",
+        aspect_ratio: "1:1",
+      }),
+      expect.objectContaining({
+        prompt_prefix: "将图中场景改成",
+        prompt_suffix: "保持画风、构图视角、空间透视和其它未提及元素不变",
+        aspect_ratio: "16:9",
+      }),
+      expect.objectContaining({
+        prompt_prefix: "将图中道具改成",
+        prompt_suffix: "保持画风、主体轮廓、摆放角度和其它未提及特征不变",
+        aspect_ratio: "1:1",
+      }),
+    ]));
+  });
+
   it("renders the P3 asset summary table with tabs and submitted image rows", async () => {
     const onSubmit = vi.fn();
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
@@ -717,8 +829,8 @@ describe("node-ui controls", () => {
       node_ref: "tool.echo.v1",
       status: "succeeded",
       output_snapshot: {
-        echo: {
-          created_asset_ids: ["asset-linchong"],
+        created_asset_ids: ["asset-linchong"],
+        asset_catalog: {
           asset_images: [
             {
               asset_type: "character",
@@ -742,7 +854,7 @@ describe("node-ui controls", () => {
     expect(screen.getByText("资产编目已完成")).toBeInTheDocument();
     expect(screen.getByText("林冲_囚服_佩刀")).toBeInTheDocument();
     expect(screen.getByText("已入库")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "导出为压缩包" }));
+    await userEvent.click(screen.getByRole("button", { name: "导出资产为压缩包" }));
     await waitFor(() => expect(clickMock).toHaveBeenCalled());
     expect(fetchMock).toHaveBeenCalledWith("https://cdn.example.com/linchong.png");
   });
@@ -989,6 +1101,44 @@ describe("node-ui controls", () => {
       script: "武松打虎",
       background: "水浒传",
     });
+  });
+
+  it("keeps episode name above background and script fields in script input", () => {
+    const inputSchema: JsonSchema = {
+      type: "object",
+      required: ["script", "episode_name", "background"],
+      properties: {
+        script: { type: "string", title: "剧本内容" },
+        episode_name: { type: "string", title: "集名称" },
+        background: { type: "string", title: "世界背景", default: "水浒传" },
+      },
+    };
+    const inputNode: TaskNodeExecution = {
+      node_execution_id: "exec-script-episode",
+      node_id: "collect_asset_input",
+      node_ref: "system.user_input.v1",
+      status: "waiting",
+      input_snapshot: {},
+      output_snapshot: null,
+      metadata: { input_schema: inputSchema },
+    };
+
+    render(
+      <ScriptTextInputControl
+        config={{ control_id: "ui.input.script_text.v1", variant: "default", mode: "input" }}
+        node={inputNode}
+        onSubmit={vi.fn()}
+        slot="interaction"
+      />,
+    );
+
+    const fields = screen.getAllByLabelText(/集名称|世界背景|剧本内容/);
+    expect(fields.map((field) => field.getAttribute("aria-label"))).toEqual([
+      "集名称",
+      "世界背景",
+      "剧本内容",
+    ]);
+    expect(screen.getByLabelText("集名称")).toHaveValue("");
   });
 
   it("imports script files by dropping them on the script field", async () => {
@@ -1253,6 +1403,109 @@ describe("node-ui controls", () => {
           && called.searchParams.get("project_id") === "project-2"
           && called.searchParams.get("tag_ids") === "tag-project";
       })).toBe(true);
+    });
+  });
+
+  it("renders node user input through schema form and the reusable text asset picker", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const parsed = new URL(String(input), "http://localhost");
+      if (parsed.pathname === "/api/projects") {
+        return jsonResponse({
+          items: [
+            { project_id: "global", name: "全局项目", owner_user_id: "user-1" },
+            { project_id: "project-1", name: "当前项目", owner_user_id: "user-1" },
+          ],
+        });
+      }
+      if (parsed.pathname === "/api/assets/tags") {
+        return jsonResponse({
+          items: [
+            { tag_id: "tag-episode", name: "集元数据", scope: "project", project_id: "project-1", asset_count: 1 },
+            { tag_id: "tag-character", name: "角色", scope: "project", project_id: "project-1", asset_count: 3 },
+          ],
+        });
+      }
+      if (parsed.pathname === "/api/assets/search") {
+        return jsonResponse({
+          items: [
+            {
+              asset_id: "asset-episode-23",
+              asset_type: "text",
+              name: "23、私放晁天王",
+              scope: "project",
+              project_id: "project-1",
+              mime_type: null,
+              size_bytes: 0,
+              metadata: { tags: ["集元数据"] },
+              created_at: "2026-05-31T09:00:00Z",
+            },
+          ],
+        });
+      }
+      return jsonResponse({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const onSubmit = vi.fn();
+    const inputSchema: JsonSchema = {
+      type: "object",
+      required: ["episode_asset_id"],
+      properties: {
+        episode_asset_id: { type: "string", title: "集信息资产" },
+      },
+    };
+    const inputNode: TaskNodeExecution = {
+      node_execution_id: "exec-episode-input",
+      node_id: "select_episode_metadata",
+      node_ref: "system.user_input.v1",
+      status: "waiting",
+      input_snapshot: {},
+      output_snapshot: null,
+      metadata: { input_schema: inputSchema, title: "选择集信息资产" },
+    };
+
+    render(
+      <SchemaFormControl
+        config={{
+          control_id: "ui.input.schema_form.v1",
+          variant: "default",
+          mode: "input",
+          options: {
+            fields: {
+              episode_asset_id: {
+                control_id: "ui.input.asset_picker.v1",
+                variant: "list",
+                mode: "input",
+                asset_type: "text",
+                filter_tag_names: ["集元数据"],
+                button_label: "选择集",
+                dialog_title: "选择集信息资产",
+              },
+            },
+          },
+        }}
+        node={inputNode}
+        onSubmit={onSubmit}
+        projectId="project-1"
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "选择集" }));
+    expect(await screen.findByRole("dialog", { name: "选择集信息资产" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([calledUrl]) => {
+        const called = new URL(String(calledUrl), "http://localhost");
+        return called.pathname === "/api/assets/search"
+          && called.searchParams.get("asset_type") === "text"
+          && called.searchParams.get("tag_ids") === "tag-episode";
+      })).toBe(true);
+    });
+    await userEvent.click(await screen.findByRole("button", { name: /23、私放晁天王/ }));
+    expect(screen.getByText("23、私放晁天王")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "提交并继续" }));
+
+    expect(onSubmit).toHaveBeenCalledWith({
+      episode_asset_id: "asset-episode-23",
     });
   });
 

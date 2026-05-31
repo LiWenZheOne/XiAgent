@@ -2,20 +2,18 @@ import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   attachAssetTag,
-  createAssetCollection,
   createAssetTag,
   deleteAsset,
-  deleteAssetCollection,
   deleteAssetTag,
   detachAssetTag,
   downloadAssetContent,
-  listAssetCollections,
   listAssetTags,
   listAssetTagsForAsset,
+  replaceAssetFile,
   searchAssets,
   updateAsset,
-  updateAssetCollection,
   uploadAsset,
+  uploadAssetWithMetadataCompletion,
 } from "../api/assets";
 import { getCurrentUser, login, register } from "../api/auth";
 import { ApiError, clearAccessToken, getAccessToken } from "../api/client";
@@ -23,7 +21,7 @@ import { createProject, listProjects } from "../api/projects";
 import { createTask, deleteTask, getTask, listTasks, rerunNode, saveInteractionDraft, streamTaskEvents, submitInteraction } from "../api/tasks";
 import type {
   AssetRecord,
-  AssetCollection,
+  AssetMetadata,
   AssetTag,
   AuthResponse,
   JsonSchema,
@@ -72,6 +70,18 @@ interface WorkflowTemplate {
   inputSchema: JsonSchema;
   contract: Record<string, unknown>;
   nodes: string[];
+}
+
+interface AssetEditorDraft {
+  name: string;
+  type: string;
+  summary: string;
+  relationships: string;
+  characterStatus: string;
+  variantName: string;
+  variantDescription: string;
+  accessories: string;
+  description: string;
 }
 
 export function App() {
@@ -285,7 +295,19 @@ export function App() {
       ) : null}
 
       {route === "assets" ? (
-        <AssetLibraryPage project={selectedProject} onProjectRequired={() => setRoute("projects")} />
+        <AssetLibraryPage
+          projects={projects}
+          project={selectedProject}
+          selectedProjectId={selectedProjectId}
+          onProjectChange={(projectId) => {
+            setSelectedProjectId(projectId);
+            setSelectedTaskId("");
+            setTasks([]);
+            setCreatingTask(false);
+            setReloadTasksKey((current) => current + 1);
+          }}
+          onProjectRequired={() => setRoute("projects")}
+        />
       ) : null}
 
       {route === "projects" ? (
@@ -1412,7 +1434,9 @@ function NodeExecutionDetails({
   const outputVisible = node.error || (!hidesGenericSections && nodeSectionVisible(nodeSpec, "output", true));
   const eventsVisible = !hidesGenericSections && nodeSectionVisible(nodeSpec, "events", true);
   const inputWrapped = nodeSectionWrapped(nodeSpec, "input", true);
+  const outputWrapped = nodeSectionWrapped(nodeSpec, "output", true);
   const InputControl = inputConfig ? getNodeUiControl(inputConfig.control_id) : null;
+  const OutputControl = outputConfig ? getNodeUiControl(outputConfig.control_id) : null;
 
   async function withBusy(action: () => Promise<void>) {
     if (busyRef.current) return;
@@ -1473,7 +1497,20 @@ function NodeExecutionDetails({
               onSubmit={inputCanSubmit ? (input) => withBusy(() => onInteraction(node.node_id, input)) : undefined}
             />
           ) : null}
-          {outputVisible ? (
+          {outputVisible && !outputWrapped && outputConfig && OutputControl ? (
+            <OutputControl
+              config={outputConfig}
+              imageAltPrefix={`${displayTitle} 输出图片`}
+              node={node}
+              nodeSpec={nodeSpec}
+              projectId={projectId}
+              slot="output"
+              snapshot={snapshot}
+              title={node.error ? "错误" : "输出"}
+              value={node.error ?? node.output_snapshot}
+            />
+          ) : null}
+          {outputVisible && outputWrapped ? (
             <NodeDataSection
               config={outputConfig}
               defaultOpen={outputDefaultOpen}
@@ -1811,82 +1848,35 @@ function ProjectsPage({
   );
 }
 
-type DirectoryAction = "create" | "rename" | "delete" | null;
 type TagAction = "create" | "delete" | null;
 type AssetLibraryScope = "combined" | "project" | "global";
 
-interface AssetCollectionTreeNode {
-  collection: AssetCollection;
-  children: AssetCollectionTreeNode[];
-}
-
-function buildAssetCollectionTree(collections: AssetCollection[]): AssetCollectionTreeNode[] {
-  const byParent = new Map<string, AssetCollection[]>();
-  for (const collection of collections) {
-    const parentId = collection.parent_id ?? "";
-    byParent.set(parentId, [...(byParent.get(parentId) ?? []), collection]);
-  }
-
-  function build(parentId: string): AssetCollectionTreeNode[] {
-    return (byParent.get(parentId) ?? []).map((collection) => ({
-      collection,
-      children: build(collection.collection_id),
-    }));
-  }
-
-  return build("");
-}
-
-function AssetCollectionTreeItems({
-  nodes,
-  selectedCollectionId,
-  onSelect,
+function AssetLibraryPage({
+  projects,
+  project,
+  selectedProjectId,
+  onProjectChange,
+  onProjectRequired,
 }: {
-  nodes: AssetCollectionTreeNode[];
-  selectedCollectionId: string;
-  onSelect: (collectionId: string) => void;
+  projects: ProjectRecord[];
+  project: ProjectRecord | null;
+  selectedProjectId: string;
+  onProjectChange: (projectId: string) => void;
+  onProjectRequired: () => void;
 }) {
-  return (
-    <>
-      {nodes.map((node) => (
-        <div className="asset-directory-node" key={node.collection.collection_id}>
-          <button
-            aria-selected={selectedCollectionId === node.collection.collection_id}
-            className={selectedCollectionId === node.collection.collection_id ? "directory-tree-item active" : "directory-tree-item"}
-            role="treeitem"
-            type="button"
-            onClick={() => onSelect(node.collection.collection_id)}
-          >
-            <span>{node.collection.name}</span>
-            {node.collection.asset_count === undefined ? null : <small>{node.collection.asset_count}</small>}
-          </button>
-          {node.children.length ? (
-            <div className="asset-directory-children" role="group">
-              <AssetCollectionTreeItems nodes={node.children} selectedCollectionId={selectedCollectionId} onSelect={onSelect} />
-            </div>
-          ) : null}
-        </div>
-      ))}
-    </>
-  );
-}
-
-function AssetLibraryPage({ project, onProjectRequired }: { project: ProjectRecord | null; onProjectRequired: () => void }) {
   const [assets, setAssets] = useState<AssetRecord[]>([]);
   const [keyword, setKeyword] = useState("");
   const [scope, setScope] = useState<AssetLibraryScope>("combined");
-  const [collections, setCollections] = useState<AssetCollection[]>([]);
   const [tags, setTags] = useState<AssetTag[]>([]);
-  const [selectedCollectionId, setSelectedCollectionId] = useState("");
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
   const [selectedAssetId, setSelectedAssetId] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [uploadName, setUploadName] = useState("");
+  const [uploadWorldBackground, setUploadWorldBackground] = useState("水浒传");
+  const [uploadAssetType, setUploadAssetType] = useState<"character" | "location" | "prop">("character");
+  const [smartUploading, setSmartUploading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
-  const [directoryAction, setDirectoryAction] = useState<DirectoryAction>(null);
-  const [directoryName, setDirectoryName] = useState("");
-  const [directorySaving, setDirectorySaving] = useState(false);
   const [assetRenameOpen, setAssetRenameOpen] = useState(false);
   const [assetRenameName, setAssetRenameName] = useState("");
   const [assetNameSaving, setAssetNameSaving] = useState(false);
@@ -1898,6 +1888,9 @@ function AssetLibraryPage({ project, onProjectRequired }: { project: ProjectReco
   const [assetTagFilter, setAssetTagFilter] = useState("");
   const [assetTagSavingId, setAssetTagSavingId] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
+  const [assetPreviewUrls, setAssetPreviewUrls] = useState<Record<string, string>>({});
+  const [assetDraft, setAssetDraft] = useState<AssetEditorDraft | null>(null);
+  const [replacingAssetId, setReplacingAssetId] = useState("");
 
   useEffect(() => {
     if (scope !== "global" && !project) return;
@@ -1909,7 +1902,6 @@ function AssetLibraryPage({ project, onProjectRequired }: { project: ProjectReco
       scope,
       project_id: projectId,
       keyword: keyword.trim() || undefined,
-      collection_id: selectedCollectionId || undefined,
       tag_ids: selectedTagIds,
     })
       .then((items) => {
@@ -1926,25 +1918,60 @@ function AssetLibraryPage({ project, onProjectRequired }: { project: ProjectReco
     return () => {
       active = false;
     };
-  }, [keyword, project, reloadKey, scope, selectedCollectionId, selectedTagIds]);
+  }, [keyword, project, reloadKey, scope, selectedTagIds]);
+
+  useEffect(() => {
+    const canCreateObjectUrl = typeof URL.createObjectURL === "function";
+    const imageAssets = assets.filter((asset) => asset.mime_type?.startsWith("image/"));
+    if (!canCreateObjectUrl || !imageAssets.length) {
+      setAssetPreviewUrls({});
+      return;
+    }
+
+    let active = true;
+    const objectUrls: string[] = [];
+    setAssetPreviewUrls({});
+
+    Promise.all(
+      imageAssets.map(async (asset) => {
+        try {
+          const blob = await downloadAssetContent(
+            asset.asset_id,
+            asset.scope === "project" ? asset.project_id ?? project?.project_id : undefined,
+          );
+          const url = URL.createObjectURL(blob);
+          objectUrls.push(url);
+          return [asset.asset_id, url] as const;
+        } catch {
+          return null;
+        }
+      }),
+    ).then((entries) => {
+      if (!active) {
+        objectUrls.forEach((url) => URL.revokeObjectURL(url));
+        return;
+      }
+      setAssetPreviewUrls(Object.fromEntries(entries.filter((entry): entry is readonly [string, string] => Boolean(entry))));
+    });
+
+    return () => {
+      active = false;
+      objectUrls.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [assets, project?.project_id]);
 
   useEffect(() => {
     if (scope !== "global" && !project) return;
     let active = true;
     const projectId = scope === "global" ? undefined : project?.project_id;
-    Promise.all([
-      listAssetCollections(scope, projectId),
-      listAssetTags(scope, projectId),
-    ])
-      .then(([nextCollections, nextTags]) => {
+    listAssetTags(scope, projectId)
+      .then((nextTags) => {
         if (!active) return;
-        setCollections(nextCollections);
         setTags(nextTags);
-        setSelectedCollectionId((current) => (nextCollections.some((item) => item.collection_id === current) ? current : ""));
         setSelectedTagIds((current) => current.filter((tagId) => nextTags.some((tag) => tag.tag_id === tagId)));
       })
       .catch((error) => {
-        if (active) setMessage(readableError(error, "资产目录或标签暂时不可用。"));
+        if (active) setMessage(readableError(error, "资产标签暂时不可用。"));
       });
     return () => {
       active = false;
@@ -1952,34 +1979,39 @@ function AssetLibraryPage({ project, onProjectRequired }: { project: ProjectReco
   }, [project, reloadKey, scope]);
 
   useEffect(() => {
-    setDirectoryAction(null);
-    setDirectoryName("");
     setTagAction(null);
     setTagName("");
   }, [project?.project_id, scope]);
 
   const selectedAsset = assets.find((asset) => asset.asset_id === selectedAssetId) ?? null;
-  const selectedCollection = collections.find((collection) => collection.collection_id === selectedCollectionId) ?? null;
   const selectedEditableTag = selectedTagIds.length === 1 ? tags.find((tag) => tag.tag_id === selectedTagIds[0]) ?? null : null;
   const selectedEditableTagIsEmpty = selectedEditableTag ? (selectedEditableTag.asset_count ?? 0) === 0 : false;
-  const collectionTree = useMemo(() => buildAssetCollectionTree(collections), [collections]);
-  const collectionWriteScope = scope === "global" ? "global" : "project";
-  const collectionProjectId = collectionWriteScope === "project" ? project?.project_id : undefined;
   const tagWriteScope = scope === "global" ? "global" : "project";
   const tagProjectId = tagWriteScope === "project" ? project?.project_id : undefined;
   const projectDisplayName = project?.name?.trim() || "项目";
   const combinedScopeLabel = `${projectDisplayName} + 全局`;
   const projectScopeLabel = `${projectDisplayName}资产`;
+  const quickTypeTags = ["角色", "地点", "道具", "集元数据"].map((name) => tags.find((tag) => tag.name === name)).filter((tag): tag is AssetTag => Boolean(tag));
   const filteredAssetTagOptions = useMemo(() => {
     const keyword = assetTagFilter.trim().toLowerCase();
     const compatibleTags = selectedAsset ? tags.filter((tag) => tagMatchesAssetScope(tag, selectedAsset)) : [];
     if (!keyword) return compatibleTags;
     return compatibleTags.filter((tag) => tag.name.toLowerCase().includes(keyword));
   }, [assetTagFilter, selectedAsset, tags]);
+  const selectedAssetPreviewUrl = selectedAsset ? assetPreviewUrls[selectedAsset.asset_id] ?? "" : "";
+  const selectedTagNames = selectedTagIds
+    .map((tagId) => tags.find((tag) => tag.tag_id === tagId)?.name)
+    .filter((name): name is string => Boolean(name));
+  const activeFilterText = [
+    "全部资产",
+    selectedTagNames.length ? `标签：${selectedTagNames.join("、")}` : "",
+    keyword.trim() ? `搜索：${keyword.trim()}` : "",
+  ].filter(Boolean).join(" / ");
 
   useEffect(() => {
     setAssetRenameOpen(false);
     setAssetRenameName("");
+    setAssetDraft(selectedAsset ? createAssetEditorDraft(selectedAsset) : null);
   }, [selectedAsset?.asset_id]);
 
   useEffect(() => {
@@ -2014,12 +2046,43 @@ function AssetLibraryPage({ project, onProjectRequired }: { project: ProjectReco
       scope: scope === "global" ? "global" : "project",
       project_id: scope === "global" ? undefined : project?.project_id,
       name: cleanName,
-      collection_ids: selectedCollectionId ? [selectedCollectionId] : undefined,
       publish: true,
     });
     setFile(null);
     setUploadName("");
     setReloadKey((current) => current + 1);
+  }
+
+  async function handleSmartUpload() {
+    const cleanName = uploadName.trim();
+    const cleanBackground = uploadWorldBackground.trim();
+    if (!file || !cleanName || !cleanBackground) return;
+    if (scope !== "global" && !project) {
+      onProjectRequired();
+      return;
+    }
+    setSmartUploading(true);
+    setMessage("");
+    try {
+      const result = await uploadAssetWithMetadataCompletion({
+        file,
+        scope: scope === "global" ? "global" : "project",
+        project_id: scope === "global" ? undefined : project?.project_id,
+        name: cleanName,
+        asset_type: uploadAssetType,
+        world_background: cleanBackground,
+        publish: true,
+      });
+      setFile(null);
+      setUploadName("");
+      setSelectedAssetId(result.asset.asset_id);
+      setAssets((current) => [result.asset, ...current.filter((asset) => asset.asset_id !== result.asset.asset_id)]);
+      setMessage(`已智能上传并补全：${result.asset.name}`);
+    } catch (error) {
+      setMessage(readableError(error, "智能上传失败，请稍后重试。"));
+    } finally {
+      setSmartUploading(false);
+    }
   }
 
   async function handleDownload(asset: AssetRecord) {
@@ -2038,6 +2101,30 @@ function AssetLibraryPage({ project, onProjectRequired }: { project: ProjectReco
     setReloadKey((current) => current + 1);
   }
 
+  async function handleReplaceAssetImage(asset: AssetRecord, nextFile: File | undefined | null) {
+    if (!nextFile || replacingAssetId) return;
+    if (!nextFile.type.startsWith("image/")) {
+      setMessage("请选择图像文件。");
+      return;
+    }
+    setReplacingAssetId(asset.asset_id);
+    setMessage("");
+    try {
+      const updated = await replaceAssetFile({
+        asset_id: asset.asset_id,
+        file: nextFile,
+      });
+      setAssets((current) => current.map((item) => item.asset_id === updated.asset_id ? updated : item));
+      setSelectedAssetId(updated.asset_id);
+      setMessage(`已替换图像：${updated.name}`);
+      setReloadKey((current) => current + 1);
+    } catch (error) {
+      setMessage(readableError(error, "图像替换失败，请稍后重试。"));
+    } finally {
+      setReplacingAssetId("");
+    }
+  }
+
   function handleStartAssetRename(asset: AssetRecord) {
     setAssetRenameName(asset.name);
     setAssetRenameOpen(true);
@@ -2053,6 +2140,7 @@ function AssetLibraryPage({ project, onProjectRequired }: { project: ProjectReco
       const renamed = await updateAsset({
         asset_id: selectedAsset.asset_id,
         name: cleanName,
+        metadata: selectedAsset.metadata as Record<string, unknown>,
       });
       setAssets((current) => current.map((asset) => asset.asset_id === renamed.asset_id ? renamed : asset));
       setAssetRenameOpen(false);
@@ -2066,70 +2154,30 @@ function AssetLibraryPage({ project, onProjectRequired }: { project: ProjectReco
     }
   }
 
-  function handleSelectCollection(collectionId: string) {
-    setSelectedCollectionId(collectionId);
-    setDirectoryAction(null);
-    setDirectoryName("");
+  function handleDraftFieldChange(key: keyof AssetEditorDraft, value: string) {
+    setAssetDraft((current) => current ? { ...current, [key]: value } : current);
   }
 
-  function handleStartDirectoryAction(action: Exclude<DirectoryAction, null>) {
-    if (action !== "create" && !selectedCollection) return;
-    setDirectoryAction(action);
-    setDirectoryName(action === "rename" ? selectedCollection?.name ?? "" : "");
-  }
-
-  async function handleSaveDirectory(event: FormEvent<HTMLFormElement>) {
+  async function handleSaveAssetBusinessFields(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const cleanName = directoryName.trim();
-    if (!cleanName) return;
-    if (collectionWriteScope === "project" && !collectionProjectId) {
-      onProjectRequired();
-      return;
-    }
-    setDirectorySaving(true);
+    if (!selectedAsset || !assetDraft) return;
+    setAssetNameSaving(true);
     setMessage("");
     try {
-      if (directoryAction === "create") {
-        const collection = await createAssetCollection({
-          scope: collectionWriteScope,
-          project_id: collectionProjectId,
-          parent_id: selectedCollectionId || null,
-          name: cleanName,
-        });
-        setSelectedCollectionId(collection.collection_id);
-        setMessage(`已创建目录：${collection.name}`);
-      }
-      if (directoryAction === "rename" && selectedCollection) {
-        const collection = await updateAssetCollection({
-          collection_id: selectedCollection.collection_id,
-          name: cleanName,
-        });
-        setMessage(`已重命名目录：${collection.name}`);
-      }
-      setDirectoryAction(null);
-      setDirectoryName("");
+      const metadata = applyAssetEditorDraft(selectedAsset.metadata, assetDraft);
+      const updated = await updateAsset({
+        asset_id: selectedAsset.asset_id,
+        name: assetDraft.name.trim() || selectedAsset.name,
+        metadata,
+      });
+      setAssets((current) => current.map((asset) => asset.asset_id === updated.asset_id ? updated : asset));
+      setAssetDraft(createAssetEditorDraft(updated));
+      setMessage(`已保存资产字段：${updated.name}`);
       setReloadKey((current) => current + 1);
     } catch (error) {
-      setMessage(readableError(error, "目录保存失败，请稍后重试。"));
+      setMessage(readableError(error, "资产字段保存失败，请稍后重试。"));
     } finally {
-      setDirectorySaving(false);
-    }
-  }
-
-  async function handleConfirmDeleteCollection() {
-    if (!selectedCollection) return;
-    setDirectorySaving(true);
-    setMessage("");
-    try {
-      await deleteAssetCollection(selectedCollection.collection_id);
-      setMessage(`已删除目录：${selectedCollection.name}`);
-      setSelectedCollectionId("");
-      setDirectoryAction(null);
-      setReloadKey((current) => current + 1);
-    } catch (error) {
-      setMessage(readableError(error, "目录删除失败，请稍后重试。"));
-    } finally {
-      setDirectorySaving(false);
+      setAssetNameSaving(false);
     }
   }
 
@@ -2222,203 +2270,267 @@ function AssetLibraryPage({ project, onProjectRequired }: { project: ProjectReco
 
   return (
     <main className="asset-page">
-      <section className="panel asset-toolbar">
-        <div>
+      <section className="panel asset-library-hero">
+        <div className="asset-library-title">
           <p className="eyebrow">AssetService</p>
           <h1>资产库</h1>
           <p>资产来自后端服务，项目资产和全局资产保持隔离。</p>
         </div>
-        <div className="toolbar-actions">
-          <button className={assetScopeButtonClass(scope === "combined")} disabled={!project} type="button" onClick={() => setScope("combined")}>
-            {combinedScopeLabel}
-          </button>
-          <button className={assetScopeButtonClass(scope === "project")} disabled={!project} type="button" onClick={() => setScope("project")}>
-            {projectScopeLabel}
-          </button>
-          <button className={assetScopeButtonClass(scope === "global")} type="button" onClick={() => setScope("global")}>
-            全局资产
-          </button>
-          <input aria-label="搜索资产" placeholder="搜索资产" value={keyword} onChange={(event) => setKeyword(event.target.value)} />
-        </div>
-        <div className="asset-tag-management">
-          <div className="asset-tag-management-head">
-            <div>
-              <p className="eyebrow">标签</p>
-              <h2>资产标签</h2>
-            </div>
-            <div className="asset-tag-toolbar" role="toolbar" aria-label="资产库标签操作">
-              <button className="secondary-button" type="button" onClick={() => handleStartTagAction("create")}>
-                新建标签
-              </button>
-              <button
-                className="secondary-button danger"
-                disabled={!selectedEditableTag || !selectedEditableTagIsEmpty}
-                title={selectedEditableTag && !selectedEditableTagIsEmpty ? "标签仍被资产使用" : undefined}
-                type="button"
-                onClick={() => handleStartTagAction("delete")}
+        <div className="asset-library-controls" role="group" aria-label="资产范围与搜索">
+          <div className="asset-library-toolbar">
+            <label className="asset-project-select">
+              <span>项目</span>
+              <select
+                aria-label="资产项目"
+                value={selectedProjectId}
+                onChange={(event) => onProjectChange(event.target.value)}
               >
-                删除标签
+                {projects.map((item) => (
+                  <option key={item.project_id} value={item.project_id}>{item.name}</option>
+                ))}
+              </select>
+            </label>
+            <div className="asset-scope-tabs" role="group" aria-label="资产范围">
+              <button className={assetScopeButtonClass(scope === "combined")} disabled={!project} type="button" onClick={() => setScope("combined")}>
+                {combinedScopeLabel}
+              </button>
+              <button className={assetScopeButtonClass(scope === "project")} disabled={!project} type="button" onClick={() => setScope("project")}>
+                {projectScopeLabel}
+              </button>
+              <button className={assetScopeButtonClass(scope === "global")} type="button" onClick={() => setScope("global")}>
+                全局资产
               </button>
             </div>
           </div>
-          <div className="tag-filter-group" aria-label="资产标签筛选">
-            {tags.length ? tags.map((tag) => {
-              const checked = selectedTagIds.includes(tag.tag_id);
-              return (
-                <label className={checked ? "tag-filter active" : "tag-filter"} key={tag.tag_id}>
-                  <input
-                    aria-label={`筛选标签 ${tag.name}`}
-                    checked={checked}
-                    type="checkbox"
-                    onChange={(event) => handleToggleTag(tag.tag_id, event.target.checked)}
-                  />
-                  <span>{tag.name}{tag.asset_count === undefined ? "" : ` ${tag.asset_count}`}</span>
-                </label>
-              );
-            }) : <span className="muted">暂无标签</span>}
-          </div>
-          {tagAction === "create" ? (
-            <form className="tag-edit-form" onSubmit={handleSaveTag}>
-              <label className="compact-field">
-                <span>标签名称</span>
-                <input aria-label="标签名称" value={tagName} onChange={(event) => setTagName(event.target.value)} />
-              </label>
-              <div className="button-row">
-                <button className="secondary-button" type="button" onClick={() => setTagAction(null)} disabled={tagSaving}>
-                  取消
-                </button>
-                <button className="primary-button" type="submit" disabled={tagSaving || !tagName.trim()}>
-                  创建标签
-                </button>
-              </div>
-            </form>
-          ) : null}
-          {tagAction === "delete" && selectedEditableTag ? (
-            <div className="tag-edit-form">
-              <p>确认删除“{selectedEditableTag.name}”？</p>
-              <div className="button-row">
-                <button className="secondary-button" type="button" onClick={() => setTagAction(null)} disabled={tagSaving}>
-                  取消
-                </button>
-                <button className="primary-button danger" type="button" onClick={() => void handleConfirmDeleteTag()} disabled={tagSaving}>
-                  确认删除标签
-                </button>
-              </div>
-            </div>
-          ) : null}
+          <input aria-label="搜索资产" placeholder="搜索资产名称、标签或描述" value={keyword} onChange={(event) => setKeyword(event.target.value)} />
         </div>
       </section>
       {message ? <p className="toast-message">{message}</p> : null}
       <div className="asset-layout">
-        <aside className="panel asset-directory-panel">
-          <div className="section-title-row">
-            <div>
-              <p className="eyebrow">目录</p>
-              <h2>资产目录</h2>
+        <aside className="asset-sidebar">
+          <section className="panel asset-sidebar-section">
+            <div className="section-title-row">
+              <div>
+                <p className="eyebrow">上传</p>
+                <h2>新增资产</h2>
+              </div>
             </div>
-          </div>
-          <div className="asset-directory-actions">
-            <button className="secondary-button" type="button" onClick={() => handleStartDirectoryAction("create")}>
-              {selectedCollection ? "新建子目录" : "新建目录"}
-            </button>
-            <button className="secondary-button" disabled={!selectedCollection} type="button" onClick={() => handleStartDirectoryAction("rename")}>
-              重命名目录
-            </button>
-            <button className="secondary-button danger" disabled={!selectedCollection} type="button" onClick={() => handleStartDirectoryAction("delete")}>
-              删除目录
-            </button>
-          </div>
-          <div className="asset-directory-tree" role="tree" aria-label="资产目录">
-            <button
-              aria-selected={!selectedCollectionId}
-              className={!selectedCollectionId ? "directory-tree-item active" : "directory-tree-item"}
-              role="treeitem"
-              type="button"
-              onClick={() => handleSelectCollection("")}
-            >
-              <span>全部目录</span>
-            </button>
-            {collectionTree.length ? (
-              <AssetCollectionTreeItems nodes={collectionTree} selectedCollectionId={selectedCollectionId} onSelect={handleSelectCollection} />
-            ) : (
-              <p className="muted">暂无目录</p>
-            )}
-          </div>
-          {directoryAction === "create" || directoryAction === "rename" ? (
-            <form className="directory-edit-form" onSubmit={handleSaveDirectory}>
-              <label className="compact-field">
-                <span>目录名称</span>
-                <input aria-label="目录名称" value={directoryName} onChange={(event) => setDirectoryName(event.target.value)} />
+            <div className="asset-create-stack">
+              <label
+                className={file ? "asset-upload-dropzone has-file" : "asset-upload-dropzone"}
+                onDragOver={(event) => {
+                  event.preventDefault();
+                }}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  setFile(event.dataTransfer.files?.[0] ?? null);
+                }}
+              >
+                <input
+                  aria-label="上传文件"
+                  type="file"
+                  onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+                />
+                <strong>{file ? file.name : "点击选择文件"}</strong>
+                <span>{file ? formatBytes(file.size) : "或拖拽文件到这里"}</span>
               </label>
-              <div className="button-row">
-                <button className="secondary-button" type="button" onClick={() => setDirectoryAction(null)} disabled={directorySaving}>
-                  取消
-                </button>
-                <button className="primary-button" type="submit" disabled={directorySaving || !directoryName.trim()}>
-                  {directoryAction === "create" ? "创建目录" : "保存目录"}
+              <label className="compact-field">
+                <span>上传资产名称</span>
+                <input
+                  aria-label="上传资产名称"
+                  placeholder="填写资产名，不必等同文件名"
+                  value={uploadName}
+                  onChange={(event) => setUploadName(event.target.value)}
+                />
+              </label>
+              <button className="primary-button" disabled={!file || !uploadName.trim()} type="button" onClick={() => void handleUpload()}>
+                上传到资产库
+              </button>
+              <div className="asset-smart-upload-fields">
+                <label className="compact-field">
+                  <span>世界背景</span>
+                  <textarea
+                    aria-label="世界背景"
+                    placeholder="例如：水浒传"
+                    value={uploadWorldBackground}
+                    onChange={(event) => setUploadWorldBackground(event.target.value)}
+                  />
+                </label>
+                <label className="compact-field">
+                  <span>资产类型</span>
+                  <select
+                    aria-label="智能上传资产类型"
+                    value={uploadAssetType}
+                    onChange={(event) => setUploadAssetType(event.target.value as "character" | "location" | "prop")}
+                  >
+                    <option value="character">角色</option>
+                    <option value="location">地点</option>
+                    <option value="prop">道具</option>
+                  </select>
+                </label>
+                <button
+                  className="secondary-button"
+                  disabled={!file || !uploadName.trim() || !uploadWorldBackground.trim() || smartUploading}
+                  type="button"
+                  onClick={() => void handleSmartUpload()}
+                >
+                  {smartUploading ? "补全中..." : "智能上传并补全"}
                 </button>
               </div>
-            </form>
-          ) : null}
-          {directoryAction === "delete" && selectedCollection ? (
-            <div className="directory-edit-form">
-              <p>确认删除“{selectedCollection.name}”及其子目录？目录内资产会保留在资产库中。</p>
-              <div className="button-row">
-                <button className="secondary-button" type="button" onClick={() => setDirectoryAction(null)} disabled={directorySaving}>
-                  取消
+              <p className="asset-operation-hint">普通上传只保存文件；智能上传会调用 LLM 根据资产名、类型和世界背景补齐业务字段并贴上类型标签。</p>
+            </div>
+          </section>
+          <section className="panel asset-sidebar-section asset-tag-management">
+            <div className="asset-tag-management-head">
+              <div>
+                <p className="eyebrow">标签</p>
+                <h2>资产标签</h2>
+              </div>
+              <div className="asset-tag-toolbar" role="toolbar" aria-label="资产库标签操作">
+                <button className="secondary-button" type="button" onClick={() => handleStartTagAction("create")}>
+                  新建标签
                 </button>
-                <button className="primary-button danger" type="button" onClick={() => void handleConfirmDeleteCollection()} disabled={directorySaving}>
-                  确认删除目录
+                <button
+                  className="secondary-button danger"
+                  disabled={!selectedEditableTag || !selectedEditableTagIsEmpty}
+                  title={selectedEditableTag && !selectedEditableTagIsEmpty ? "标签仍被资产使用" : undefined}
+                  type="button"
+                  onClick={() => handleStartTagAction("delete")}
+                >
+                  删除标签
                 </button>
               </div>
             </div>
-          ) : null}
+            <div className="tag-filter-group" aria-label="资产标签筛选">
+              {tags.length ? tags.map((tag) => {
+                const checked = selectedTagIds.includes(tag.tag_id);
+                return (
+                  <label className={checked ? "tag-filter active" : "tag-filter"} key={tag.tag_id}>
+                    <input
+                      aria-label={`筛选标签 ${tag.name}`}
+                      checked={checked}
+                      type="checkbox"
+                      onChange={(event) => handleToggleTag(tag.tag_id, event.target.checked)}
+                    />
+                    <span>{tag.name}{tag.asset_count === undefined ? "" : ` ${tag.asset_count}`}</span>
+                  </label>
+                );
+              }) : <span className="muted">暂无标签</span>}
+            </div>
+            {tagAction === "create" ? (
+              <form className="tag-edit-form" onSubmit={handleSaveTag}>
+                <label className="compact-field">
+                  <span>标签名称</span>
+                  <input aria-label="标签名称" value={tagName} onChange={(event) => setTagName(event.target.value)} />
+                </label>
+                <div className="button-row">
+                  <button className="secondary-button" type="button" onClick={() => setTagAction(null)} disabled={tagSaving}>
+                    取消
+                  </button>
+                  <button className="primary-button" type="submit" disabled={tagSaving || !tagName.trim()}>
+                    创建标签
+                  </button>
+                </div>
+              </form>
+            ) : null}
+            {tagAction === "delete" && selectedEditableTag ? (
+              <div className="tag-edit-form">
+                <p>确认删除“{selectedEditableTag.name}”？</p>
+                <div className="button-row">
+                  <button className="secondary-button" type="button" onClick={() => setTagAction(null)} disabled={tagSaving}>
+                    取消
+                  </button>
+                  <button className="primary-button danger" type="button" onClick={() => void handleConfirmDeleteTag()} disabled={tagSaving}>
+                    确认删除标签
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </section>
         </aside>
         <section className="panel asset-list-panel">
           <div className="asset-list-header">
             <div className="asset-list-title-row">
-              <h2>资产列表</h2>
+              <div>
+                <h2>资产列表</h2>
+                <p>{loading ? "正在加载资产..." : `共 ${assets.length} 个资产`} · {activeFilterText}</p>
+              </div>
+              {quickTypeTags.length ? (
+                <div className="asset-quick-filter-row" aria-label="类型快速筛选">
+                  {quickTypeTags.map((tag) => {
+                    const active = selectedTagIds.includes(tag.tag_id);
+                    return (
+                      <button
+                        className={active ? "asset-quick-filter active" : "asset-quick-filter"}
+                        key={tag.tag_id}
+                        type="button"
+                        onClick={() => handleToggleTag(tag.tag_id, !active)}
+                      >
+                        {tag.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
             </div>
           </div>
           {loading ? <p className="muted">正在加载资产...</p> : null}
           {!loading && !assets.length ? <p className="empty-box">暂无资产，可以上传文件。</p> : null}
           <div className="asset-grid">
-            {assets.map((asset) => (
-              <button className={asset.asset_id === selectedAssetId ? "asset-card active" : "asset-card"} key={asset.asset_id} type="button" onClick={() => setSelectedAssetId(asset.asset_id)}>
-                {asset.metadata.public_url && asset.mime_type?.startsWith("image/") ? <img src={asset.metadata.public_url} alt={asset.name} /> : <span className="asset-icon">{asset.asset_type === "text" ? "文" : "档"}</span>}
-                <strong>{asset.name}</strong>
-                <small>{asset.scope === "global" ? "全局资产" : "项目资产"} · {formatBytes(asset.size_bytes)}</small>
-              </button>
-            ))}
+            {assets.map((asset) => {
+              const previewUrl = assetPreviewUrls[asset.asset_id] ?? "";
+              return (
+                <button className={asset.asset_id === selectedAssetId ? "asset-card active" : "asset-card"} key={asset.asset_id} type="button" onClick={() => setSelectedAssetId(asset.asset_id)}>
+                  {previewUrl ? <img src={previewUrl} alt={asset.name} /> : <span className="asset-icon">{asset.asset_type === "text" ? "文" : asset.mime_type?.startsWith("image/") ? "图" : "档"}</span>}
+                  <strong>{asset.name}</strong>
+                  <small>{asset.scope === "global" ? "全局资产" : "项目资产"} · {formatBytes(asset.size_bytes)}</small>
+                </button>
+              );
+            })}
           </div>
         </section>
         <aside className="panel asset-detail-panel">
-          <h2>资产详情</h2>
           {selectedAsset ? (
             <>
-              <h3>{selectedAsset.name}</h3>
-              <dl className="context-list">
+              <div className="asset-detail-head">
+                <label
+                  className={replacingAssetId === selectedAsset.asset_id ? "asset-detail-preview replacing" : "asset-detail-preview"}
+                  title="点击选择图像，或拖拽图像到这里替换"
+                  onDragOver={(event) => {
+                    event.preventDefault();
+                  }}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    void handleReplaceAssetImage(selectedAsset, event.dataTransfer.files?.[0]);
+                  }}
+                >
+                  <input
+                    aria-label="替换资产图像"
+                    accept="image/*"
+                    disabled={Boolean(replacingAssetId)}
+                    type="file"
+                    onChange={(event) => {
+                      void handleReplaceAssetImage(selectedAsset, event.target.files?.[0]);
+                      event.currentTarget.value = "";
+                    }}
+                  />
+                  {selectedAssetPreviewUrl ? <img src={selectedAssetPreviewUrl} alt={selectedAsset.name} /> : <span className="asset-icon">{selectedAsset.asset_type === "text" ? "文" : selectedAsset.mime_type?.startsWith("image/") ? "图" : "档"}</span>}
+                  <span className="asset-detail-replace-hint">{replacingAssetId === selectedAsset.asset_id ? "替换中..." : "点击或拖拽替换"}</span>
+                </label>
                 <div>
-                  <dt>类型</dt>
-                  <dd>{selectedAsset.mime_type || selectedAsset.asset_type}</dd>
+                  <p className="eyebrow">资产详情</p>
+                  <h2>{selectedAsset.name}</h2>
+                  <div className="asset-detail-badges">
+                    <span>{selectedAsset.scope === "global" ? "全局资产" : "项目资产"}</span>
+                    <span>{selectedAsset.mime_type || selectedAsset.asset_type}</span>
+                    <span>{formatBytes(selectedAsset.size_bytes)}</span>
+                  </div>
                 </div>
-                <div>
-                  <dt>范围</dt>
-                  <dd>{selectedAsset.scope === "global" ? "全局资产" : "项目资产"}</dd>
-                </div>
-                <div>
-                  <dt>大小</dt>
-                  <dd>{formatBytes(selectedAsset.size_bytes)}</dd>
-                </div>
-                <div>
-                  <dt>状态</dt>
-                  <dd>{selectedAsset.deleted_at ? "已删除" : selectedAsset.metadata.public_url ? "已发布" : "未发布"}</dd>
-                </div>
-              </dl>
+              </div>
               <div className="asset-detail-actions" role="group" aria-label="资产操作">
-                {selectedAsset.metadata.public_url ? (
+                {selectedAssetPreviewUrl || selectedAsset.metadata.public_url ? (
                   <>
-                    <a className="secondary-button asset-action-button" href={selectedAsset.metadata.public_url} target="_blank" rel="noreferrer">
+                    <a className="secondary-button asset-action-button" href={selectedAssetPreviewUrl || selectedAsset.metadata.public_url} target="_blank" rel="noreferrer">
                       预览资产
                     </a>
                     <button className="secondary-button asset-action-button" type="button" onClick={() => void handleCopyAssetUrl(selectedAsset)}>
@@ -2472,6 +2584,57 @@ function AssetLibraryPage({ project, onProjectRequired }: { project: ProjectReco
                   )) : <span className="muted">暂无标签</span>}
                 </div>
               </div>
+              {assetDraft ? (
+                <form className="asset-business-form" onSubmit={(event) => void handleSaveAssetBusinessFields(event)}>
+                  <div className="section-title-row">
+                    <div>
+                      <p className="eyebrow">业务字段</p>
+                      <h3>资产信息</h3>
+                    </div>
+                    <button className="primary-button" disabled={assetNameSaving} type="submit">
+                      保存字段
+                    </button>
+                  </div>
+                  <div className="asset-business-grid">
+                    <label className="compact-field">
+                      <span>名称</span>
+                      <input aria-label="业务资产名称" value={assetDraft.name} onChange={(event) => handleDraftFieldChange("name", event.target.value)} />
+                    </label>
+                    <label className="compact-field">
+                      <span>类型</span>
+                      <input aria-label="资产类型" value={assetDraft.type} onChange={(event) => handleDraftFieldChange("type", event.target.value)} />
+                    </label>
+                    <label className="compact-field">
+                      <span>变体名</span>
+                      <input aria-label="变体名" value={assetDraft.variantName} onChange={(event) => handleDraftFieldChange("variantName", event.target.value)} />
+                    </label>
+                    <label className="compact-field">
+                      <span>配件</span>
+                      <input aria-label="配件" value={assetDraft.accessories} onChange={(event) => handleDraftFieldChange("accessories", event.target.value)} />
+                    </label>
+                    <label className="compact-field span-2">
+                      <span>社会关系</span>
+                      <textarea aria-label="社会关系" value={assetDraft.relationships} onChange={(event) => handleDraftFieldChange("relationships", event.target.value)} />
+                    </label>
+                    <label className="compact-field span-2">
+                      <span>生平背景</span>
+                      <textarea aria-label="生平背景" value={assetDraft.summary} onChange={(event) => handleDraftFieldChange("summary", event.target.value)} />
+                    </label>
+                    <label className="compact-field span-2">
+                      <span>当前状态</span>
+                      <textarea aria-label="当前状态" value={assetDraft.characterStatus} onChange={(event) => handleDraftFieldChange("characterStatus", event.target.value)} />
+                    </label>
+                    <label className="compact-field span-2">
+                      <span>变体描述</span>
+                      <textarea aria-label="变体描述" value={assetDraft.variantDescription} onChange={(event) => handleDraftFieldChange("variantDescription", event.target.value)} />
+                    </label>
+                    <label className="compact-field span-2">
+                      <span>地点/道具描述</span>
+                      <textarea aria-label="地点或道具描述" value={assetDraft.description} onChange={(event) => handleDraftFieldChange("description", event.target.value)} />
+                    </label>
+                  </div>
+                </form>
+              ) : null}
               {assetTagDialogOpen ? (
                 <div className="asset-picker-modal">
                   <button className="modal-scrim" type="button" aria-label="关闭资产标签弹窗" onClick={() => setAssetTagDialogOpen(false)} />
@@ -2514,24 +2677,6 @@ function AssetLibraryPage({ project, onProjectRequired }: { project: ProjectReco
           ) : (
             <p className="muted">选择资产查看详情。</p>
           )}
-          <div className="asset-create-stack">
-            <label className="compact-field">
-              <span>上传文件</span>
-              <input type="file" onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
-            </label>
-            <label className="compact-field">
-              <span>上传资产名称</span>
-              <input
-                aria-label="上传资产名称"
-                placeholder="填写资产名，不必等同文件名"
-                value={uploadName}
-                onChange={(event) => setUploadName(event.target.value)}
-              />
-            </label>
-            <button className="secondary-button" disabled={!file || !uploadName.trim()} type="button" onClick={() => void handleUpload()}>
-              上传到资产库
-            </button>
-          </div>
         </aside>
       </div>
     </main>
@@ -2925,6 +3070,62 @@ function tagMatchesAssetScope(tag: AssetTag, asset: AssetRecord): boolean {
   if (tag.scope !== asset.scope) return false;
   if (asset.scope !== "project") return true;
   return (tag.project_id ?? null) === (asset.project_id ?? null);
+}
+
+function createAssetEditorDraft(asset: AssetRecord): AssetEditorDraft {
+  const metadata = asset.metadata as Record<string, unknown>;
+  return {
+    name: asset.name,
+    type: metadataText(metadata, "type") || metadataText(metadata, "asset_type"),
+    summary: metadataText(metadata, "summary"),
+    relationships: metadataText(metadata, "relationships") || metadataText(metadata, "social_relationships") || metadataText(metadata, "relationship"),
+    characterStatus: metadataText(metadata, "character_status"),
+    variantName: metadataText(metadata, "variant_name"),
+    variantDescription: metadataText(metadata, "variant_description"),
+    accessories: metadataListText(metadata, "accessories"),
+    description: metadataText(metadata, "description") || metadataText(metadata, "appearance_description"),
+  };
+}
+
+function applyAssetEditorDraft(metadata: AssetMetadata, draft: AssetEditorDraft): Record<string, unknown> {
+  const next: Record<string, unknown> = { ...(metadata as Record<string, unknown>) };
+  setMetadataText(next, "type", draft.type);
+  setMetadataText(next, "summary", draft.summary);
+  setMetadataText(next, "relationships", draft.relationships);
+  setMetadataText(next, "character_status", draft.characterStatus);
+  setMetadataText(next, "variant_name", draft.variantName);
+  setMetadataText(next, "variant_description", draft.variantDescription);
+  setMetadataText(next, "description", draft.description);
+  const accessories = draft.accessories.split(/[、,，\n]/).map((item) => item.trim()).filter(Boolean);
+  if (accessories.length) next.accessories = accessories;
+  else delete next.accessories;
+  return next;
+}
+
+function metadataText(metadata: Record<string, unknown>, key: string): string {
+  const value = metadata[key];
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return "";
+}
+
+function metadataListText(metadata: Record<string, unknown>, key: string): string {
+  const value = metadata[key];
+  if (Array.isArray(value)) return value.map(readableAssetFieldValue).filter(Boolean).join("、");
+  return metadataText(metadata, key);
+}
+
+function setMetadataText(metadata: Record<string, unknown>, key: string, value: string) {
+  const clean = value.trim();
+  if (clean) metadata[key] = clean;
+  else delete metadata[key];
+}
+
+function readableAssetFieldValue(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (Array.isArray(value)) return value.map(readableAssetFieldValue).filter(Boolean).join("、");
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
 }
 
 function assetScopeButtonClass(active: boolean): string {

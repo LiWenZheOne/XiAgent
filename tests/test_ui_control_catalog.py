@@ -17,6 +17,7 @@ def test_builtin_ui_controls_have_unique_ids() -> None:
     assert "ui.display.asset_task_summary.v1" in {control.control_id for control in controls}
     assert "ui.input.schema_form.v1" in {control.control_id for control in controls}
     assert "ui.input.asset_image_picker.v1" in {control.control_id for control in controls}
+    assert "ui.input.asset_picker.v1" in {control.control_id for control in controls}
 
 
 def test_image_three_choice_control_declares_expected_variants() -> None:
@@ -87,6 +88,17 @@ def test_schema_form_and_asset_image_picker_controls_are_registered() -> None:
                 "items": {"type": "string", "minLength": 1},
             }
         },
+        "additionalProperties": False,
+    }
+
+    text_asset_picker = catalog.get("ui.input.asset_picker.v1")
+    assert text_asset_picker.kind == "input"
+    assert text_asset_picker.variants[0].name == "list"
+    assert "input" in text_asset_picker.variants[0].modes
+    assert text_asset_picker.variants[0].submit_schema == {
+        "type": "object",
+        "required": ["value"],
+        "properties": {"value": {"type": "string", "minLength": 1}},
         "additionalProperties": False,
     }
 
