@@ -1,9 +1,9 @@
-﻿workflow:
+workflow:
   id: asset_storyboard_generation
-  version: "1.0.0"
+  version: "1.1.0"
   scope: global
-  name: 资产分镜生成
-  description: 从剧本中提取角色、地点和道具资产，完成人工确认、缺图补生成和最终资产确认后，继续进行分镜生成与图像审核。
+  name: 分镜生成
+  description: 从集元数据资产读取集名称、资产目录和原剧本内容，确认后拆分剧本、为分段分配资产并生成分镜图像。
   output_schema:
     type: object
     required: ["decision"]
@@ -13,10 +13,8 @@
         minLength: 1
       selected_image_url:
         type: string
-        minLength: 1
       revision_notes:
         type: string
-        minLength: 1
     additionalProperties: false
   ui:
     layout:
@@ -24,51 +22,24 @@
       default_collapsed_sections: ["input", "events"]
       default_expanded_sections: ["output"]
     stages:
-      - id: p1_input
-        name: P1 用户输入
-        description: 收集剧本、世界背景和目标分镜信息。
+      - id: p1_episode
+        name: P1 集信息确认
+        description: 选择集元数据资产，确认集名称、资产目录和原剧本内容。
         nodes:
-          - collect_asset_storyboard_input
-      - id: p2_asset_analysis
-        name: P2 资产分析
-        description: 提取角色、地点、道具和角色变体，并完成已有资产、变体和配件匹配。
-        nodes:
-          - extract_characters
-          - lookup_existing_assets
-          - match_by_name
-          - semantic_match_characters
-          - enrich_characters
-          - extract_scenes
-          - lookup_scene_assets
-          - match_scenes_by_name
-          - enrich_scenes
-          - match_variants
-          - check_accessories
-          - extract_props
-          - lookup_prop_assets
-          - match_props_by_name
-          - enrich_props
-      - id: p3_user_confirm
-        name: P3 资产列表汇总
-        description: 汇总识别到的角色、地点、道具及匹配结果，支持逐项补充图像。
-        nodes:
-          - review_assets
-      - id: p4_asset_generation
-        name: P4 资产生成
-        description: 生成资产设定提示词，上传或自动补生成未上传图像。
-        nodes:
-          - generate_prompt_v2
-          - upload_images
-          - prepare_asset_images
-          - generate_missing_asset_images
-          - merge_completed_asset_images
-      - id: p5_final_confirm
-        name: P5 最终确定
-        description: 汇总最终角色资产图像，作为后续分镜生成输入。
+          - select_episode_metadata
+          - load_episode_metadata
+          - confirm_episode_context
+      - id: p2_segments
+        name: P2 分段资产分配
+        description: 拆分剧本，并按每个分段分配在场资产。
         nodes:
           - split_script
           - assign_assets_to_segments
           - assemble_storyboard_context
+      - id: p3_storyboard
+        name: P3 分镜生成
+        description: 生成分镜描述、审核提示词并生成目标分镜图像。
+        nodes:
           - describe_panels
           - review_storyboard_prompt
           - extract_panel_image_urls
@@ -116,23 +87,138 @@
               items_path: "$node.output.results"
               image_url_path: url
               label_path: text
-      ai.runninghub_image_to_image.v2:
-        controls:
-          output:
-            control_id: ui.display.image_viewer.v1
-            variant: grid_modal
-            mode: readonly
-            bindings:
-              items_path: "$node.output.asset_images"
-              image_url_path: image_url
-              label_path: full_name
 
 nodes:
-  - id: collect_asset_storyboard_input
+  - id: select_episode_metadata
     ref: system.user_input.v1
-    name: 剧本输入
+    name: 选择集
     inputs:
-      script:
+      episode_asset_id:
+        from_user: true
+        schema:
+          type: string
+          minLength: 1
+          title: 集信息资产ID
+      storyboard_target:
+        from_user: true
+        schema:
+          type: object
+          properties:
+            segment_index:
+              type: integer
+              minimum: 0
+              default: 0
+            panel_index:
+              type: integer
+              minimum: 0
+              default: 0
+          additionalProperties: false
+    outputs:
+      type: object
+      required: ["episode_asset_id"]
+      properties:
+        episode_asset_id:
+          type: string
+          minLength: 1
+        storyboard_target:
+          type: object
+          properties:
+            segment_index:
+              type: integer
+              minimum: 0
+              default: 0
+            panel_index:
+              type: integer
+              minimum: 0
+              default: 0
+          additionalProperties: false
+      additionalProperties: false
+    config:
+      title: 选择集信息资产
+      description: 选择资产库中带“集元数据”标签的集信息资产。
+    ui:
+      controls:
+        input:
+          control_id: ui.input.schema_form.v1
+          variant: default
+          mode: input
+          options:
+            fields:
+              episode_asset_id:
+                control_id: ui.input.asset_picker.v1
+                variant: list
+                mode: input
+                asset_type: text
+                filter_tag_names: ["集元数据"]
+                button_label: 选择集
+                dialog_title: 选择集信息资产
+
+  - id: load_episode_metadata
+    ref: tool.episode_metadata_from_asset.v1
+    name: 读取集信息
+    inputs:
+      episode_asset_id:
+        from: "$nodes.select_episode_metadata.output.episode_asset_id"
+    outputs:
+      type: object
+      required: ["episode_name", "episode_summary", "source_script", "asset_catalog", "episode_asset_id"]
+      properties:
+        episode_name:
+          type: string
+          minLength: 1
+        episode_summary:
+          type: string
+        source_script:
+          type: string
+          minLength: 1
+        background:
+          type: string
+        asset_catalog:
+          type: object
+          additionalProperties: true
+        episode_asset_id:
+          type: string
+          minLength: 1
+      additionalProperties: false
+
+  - id: confirm_episode_context
+    ref: system.human_approval.v1
+    name: 确认集信息
+    inputs:
+      question:
+        template: |
+          请确认本次分镜生成使用的集信息。可以直接确认，也可以修改集名称、剧情概括、资产目录或原剧本内容后提交。
+
+          集名称：
+          {episode_name}
+
+          集剧情概括：
+          {episode_summary}
+
+          资产目录：
+          {asset_catalog}
+
+          原剧本内容：
+          {source_script}
+        vars:
+          episode_name:
+            from: "$nodes.load_episode_metadata.output.episode_name"
+          episode_summary:
+            from: "$nodes.load_episode_metadata.output.episode_summary"
+          asset_catalog:
+            from: "$nodes.load_episode_metadata.output.asset_catalog"
+          source_script:
+            from: "$nodes.load_episode_metadata.output.source_script"
+      episode_name:
+        from_user: true
+        schema:
+          type: string
+          minLength: 1
+      episode_summary:
+        from_user: true
+        schema:
+          type: string
+      source_script:
         from_user: true
         schema:
           type: string
@@ -141,8 +227,12 @@ nodes:
         from_user: true
         schema:
           type: string
-          minLength: 1
           default: 水浒传
+      asset_catalog:
+        from_user: true
+        schema:
+          type: object
+          additionalProperties: true
       storyboard_target:
         from_user: true
         required: false
@@ -160,15 +250,22 @@ nodes:
           additionalProperties: false
     outputs:
       type: object
-      required: ["script", "background"]
+      required: ["episode_name", "source_script", "background", "asset_catalog", "storyboard_target"]
       properties:
-        script:
+        episode_name:
+          type: string
+          minLength: 1
+        episode_summary:
+          type: string
+        source_script:
           type: string
           minLength: 1
         background:
           type: string
-          minLength: 1
           default: 水浒传
+        asset_catalog:
+          type: object
+          additionalProperties: true
         storyboard_target:
           type: object
           properties:
@@ -182,1464 +279,13 @@ nodes:
               default: 0
           additionalProperties: false
       additionalProperties: false
-    config:
-      title: 剧本输入
-      description: 上传 Word/TXT 或直接粘贴剧本，并确认世界背景。
-    ui:
-      controls:
-        input:
-          control_id: ui.input.script_text.v1
-          variant: default
-          mode: input
-          options:
-            submit_placement: stage_header
-      sections:
-        input:
-          wrapper: false
-        output:
-          visible: false
-        events:
-          visible: false
-
-  # ===== P1: 角色资产提取与匹配 =====
-
-  - id: extract_characters
-    ref: ai.deepseek_structured_json.v1
-    name: 提取角色
-    inputs:
-      system:
-        template: |
-          仅返回合法 JSON。你是专业的剧本分析师。请从剧本中提取所有角色信息。
-          世界背景（原作）：{background}。
-
-          请用提问式思维链步骤完成分析，并把每一步的结论摘要写入 reasoning 字段：
-          1. 当前剧本属于原作的哪个剧情阶段？这会影响哪些人物身份、处境和常见装束？
-          2. 哪些段落是叙述事实，哪些只是对话、计划、命令、提及或回忆？只有叙述事实可以作为角色出场依据。
-          3. 哪些角色满足收录条件？条件是：叙述段中有动作或状态描写，或作为对话段发言者且叙述段中在场。仅在对话中被提及、派遣、回忆的角色不收录。
-          4. 这些角色的全名是什么？代称、绰号、非全名称呼需要结合原作推断全名；多人合称要拆成具体角色，没有名称的龙套可保留为合称。
-          5. 每个角色的生平背景是什么？summary 只写长期身份、原作背景和人物定位，不写当前动作、被绑、受伤、押送、服装或临时处境。
-          6. 每个角色当前剧情状态是什么？character_status 只写此刻/本段剧情中的身份、处境或状态，不写生平背景。
-          7. 每个角色在当前情景下应该是什么稳定造型？必须结合世界背景、身份、职业/阶层、地点、时代和剧情阶段推导一个具体服装或稳定外观造型。
-          8. 这个稳定造型应该叫什么 variant_name？variant_name 必须是可复用的服装或造型名称，如"官兵装束"、"渔民短打"、"道士服"、"僧衣"、"旅人布衣"、"水军装束"、"囚服"、"夜行衣"；禁止填"默认"、"基础"、"普通"、"无特殊造型"，禁止包含角色名，禁止使用"角色名_服装名"格式，禁止用被绑、受伤、押送、奔跑等临时状态命名。
-          9. 哪些内容不是变体依据？被绑起来、被押送、受伤、疲惫、奔跑、打斗、表情、姿态、镜头动作、所在地点、天气、光照、剧情处境都不是 variant_name 的命名依据，也不得写入 variant_description 或 accessories。
-          10. 这个变体的稳定视觉设定是什么？variant_description 至少 40 字，按头部/发型、上身、下装、鞋履、颜色材质、身份识别特征、稳定配件描述，只写可复用视觉设定，禁止输出"默认装束，无特殊造型描述"这类空泛描述。
-          11. 当前情景下有哪些稳定可穿戴/携带配件？例如面巾、披风、围巾、斗笠、斗篷、包袱、随身兵器挂件。只有叙述段显示正在佩戴、携带、遮挡、披挂，或此情景下极可能稳定附着于角色时才写入 accessories。束缚用绳索、临时镣铐、被绑状态造成的限制物不是角色配件。
-        vars:
-          background:
-            from: "$nodes.collect_asset_storyboard_input.output.background"
-      prompt:
-        template: |
-          请从以下剧本中提取所有角色信息。
-
-          剧本内容：
-          {script}
-
-          返回一个仅包含以下根键的 JSON 对象：
-          - reasoning：按 system 中 11 个问题整理的分析结论摘要（字符串，不能为空）
-          - characters：角色数组
-          - character_names：所有角色的全名数组（仅字符串）
-
-          每个角色对象必须包含：
-          - full_name：根据世界背景推断的全名（如"武松"而非"武二郎"），保存时固定使用全名作为资产名
-          - aliases：别名列表
-          - summary：角色生平背景/身份定位梗概（≤100字）；只写角色在原作或世界背景中的长期身份、经历和人物背景，不写当前剧情状态、动作、伤势、被绑、押送、服装或临时处境
-          - character_status：当前剧情阶段该角色的上下文状态；只写此刻/本段剧情中的身份、处境、状态或正在经历的情况，不写生平背景、长期履历或原作人物介绍；该字段仅供理解上下文，不作为变体依据
-          - variant_name：回答"这个稳定造型应该叫什么？"后得到的服装/造型名称；必须是"官兵装束"、"渔民短打"、"道士服"、"囚服"、"夜行衣"、"僧衣"这类可复用造型名；禁止输出"默认"、"基础"、"普通"、"无特殊造型"，禁止包含角色名或临时状态
-          - variant_description：回答"这个变体的稳定视觉设定是什么？"后得到的详细描述，至少 40 字；按头部/发型、上身、下装、鞋履、颜色材质、身份识别特征、稳定配件描述；不得写被绑、受伤、动作、姿态、表情、场景、天气或剧情处境；不得输出"默认装束，无特殊造型描述"这类空泛描述
-          - accessories：当前变体包含的稳定可穿戴/携带配件列表（如["面巾", "披风"]，无配件时为空数组；不要把身份、身体特征、普通服装整体、束缚状态或剧情道具写成配件）
-
-          根层级除 reasoning、characters 和 character_names 外不得包含其他键。
-        vars:
-          script:
-            from: "$nodes.collect_asset_storyboard_input.output.script"
-          background:
-            from: "$nodes.collect_asset_storyboard_input.output.background"
-      max_attempts:
-        value: 2
-    outputs:
-      type: object
-      required: ["reasoning", "characters", "character_names"]
-      properties:
-        reasoning:
-          type: string
-          minLength: 1
-        characters:
-          type: array
-          items:
-            type: object
-            required: ["full_name", "aliases", "summary", "character_status", "variant_name", "variant_description", "accessories"]
-            properties:
-              full_name:
-                type: string
-                minLength: 1
-              aliases:
-                type: array
-                items:
-                  type: string
-              summary:
-                type: string
-                minLength: 1
-              character_status:
-                type: string
-                minLength: 1
-              variant_name:
-                type: string
-                minLength: 1
-              variant_description:
-                type: string
-                minLength: 1
-              accessories:
-                type: array
-                items:
-                  type: string
-            additionalProperties: false
-        character_names:
-          type: array
-          items:
-            type: string
-            minLength: 1
-      additionalProperties: false
-
-  - id: lookup_existing_assets
-    ref: tool.asset_lookup.v1
-    name: 检索已有角色资产
-    inputs:
-      scope:
-        value: "combined"
-      asset_type:
-        value: "text"
-      tags:
-        value: ["角色"]
-      limit:
-        value: 200
-    outputs:
-      type: object
-      required: ["total", "assets"]
-      properties:
-        total:
-          type: integer
-          minimum: 0
-        assets:
-          type: array
-          items:
-            type: object
-            required: ["asset_id", "name"]
-            properties:
-              asset_id:
-                type: string
-                minLength: 1
-              name:
-                type: string
-                minLength: 1
-              asset_type:
-                type: string
-              mime_type:
-                type: string
-              storage_uri:
-                type: string
-              metadata:
-                type: object
-              text_content:
-                type: string
-            additionalProperties: true
-      additionalProperties: false
-
-  - id: match_by_name
-    ref: tool.asset_lookup.v1
-    name: 按名称匹配角色
-    inputs:
-      scope:
-        value: "combined"
-      names:
-        from: "$nodes.extract_characters.output.character_names"
-      asset_type:
-        value: "text"
-      tags:
-        value: ["角色"]
-      limit:
-        value: 200
-    outputs:
-      type: object
-      required: ["total", "assets"]
-      properties:
-        total:
-          type: integer
-          minimum: 0
-        assets:
-          type: array
-          items:
-            type: object
-            required: ["asset_id", "name"]
-            properties:
-              asset_id:
-                type: string
-                minLength: 1
-              name:
-                type: string
-                minLength: 1
-              asset_type:
-                type: string
-              mime_type:
-                type: string
-              storage_uri:
-                type: string
-              metadata:
-                type: object
-              text_content:
-                type: string
-            additionalProperties: true
-      additionalProperties: false
-
-  - id: semantic_match_characters
-    ref: ai.deepseek_structured_json.v1
-    name: 语义匹配角色
-    inputs:
-      system:
-        value: |
-          仅返回合法 JSON。你是资产库角色匹配器，只判断“提取到的角色资产”是否对应“资产库候选角色”中的同一人物。
-          工程化匹配原则：
-          1. 严格区分输入分区：提取到的角色资产是待匹配对象，资产库候选角色只是候选集合，不得把资产库字段补写成提取结果。
-          2. 精确名称匹配已由程序完成；本节点只处理未精确匹配角色的语义匹配。
-          3. 只依据全名、别名、绰号、身份、人物梗概和世界背景判断是否同一人；不要依据服装、变体、配件或临时剧情状态判断角色身份。
-          4. 必须给出明确 true/false，不存在“无法确定”；证据不足时 matched=false。
-      prompt:
-        template: |
-          请判断以下未匹配角色是否与资产库中已有角色是同一人。
-
-          ## A. 提取到的角色资产（待匹配，来源：剧本）
-          {unmatched_characters}
-
-          ## B. 资产库候选角色（只用于匹配，不得改写 A）
-          {existing_assets}
-
-          ## C. 匹配准则
-          - 一个提取角色最多匹配一个资产库角色。
-          - 角色全名、别名、绰号、身份和人物梗概指向同一人物时 matched=true。
-          - 只存在服装、变体、配件、场景、动作或临时状态相似时，不得判定为同一人。
-          - 资产库没有足够证据时 matched=false，matched_asset_name 为空字符串，matched_asset_id 为空字符串。
-
-          ## D. 输出 JSON
-          返回一个仅包含一个根键的 JSON 对象：
-          - match_results：数组，每个未匹配角色一条记录
-
-          每条记录必须包含：
-          - full_name：角色全名（与输入一致）
-          - matched：true 或 false
-          - matched_asset_name：匹配到的资产名（matched=true时必填）
-          - matched_asset_id：匹配到的资产ID（matched=true时必填）
-          - reason：≤50字判断理由
-
-          根层级除 match_results 外不得包含其他键。
-        vars:
-          unmatched_characters:
-            from: "$nodes.extract_characters.output.characters"
-          existing_assets:
-            from: "$nodes.lookup_existing_assets.output.assets"
-      max_attempts:
-        value: 2
-    outputs:
-      type: object
-      required: ["match_results"]
-      properties:
-        match_results:
-          type: array
-          items:
-            type: object
-            required: ["full_name", "matched", "reason"]
-            properties:
-              full_name:
-                type: string
-                minLength: 1
-              matched:
-                type: boolean
-              matched_asset_name:
-                type: string
-              matched_asset_id:
-                type: string
-              reason:
-                type: string
-                minLength: 1
-            additionalProperties: false
-      additionalProperties: false
-
-  # ===== 角色数据 enrich =====
-
-  - id: enrich_characters
-    ref: tool.enrich_characters.v1
-    name: 汇总角色匹配结果
-    inputs:
-      characters:
-        from: "$nodes.extract_characters.output.characters"
-      matched_by_name:
-        from: "$nodes.match_by_name.output.assets"
-      semantic_matches:
-        from: "$nodes.semantic_match_characters.output.match_results"
-      existing_assets:
-        from: "$nodes.lookup_existing_assets.output.assets"
-    outputs:
-      type: object
-      required: ["characters"]
-      properties:
-        characters:
-          type: array
-          items:
-            type: object
-            required: ["full_name", "matched"]
-            properties:
-              full_name:
-                type: string
-                minLength: 1
-              matched:
-                type: boolean
-              matched_asset_id:
-                type: ["string", "null"]
-              matched_asset_name:
-                type: string
-              existing_variants:
-                type: array
-                items:
-                  type: object
-                  required: ["asset_id", "name", "variant"]
-                  properties:
-                    asset_id:
-                      type: string
-                      minLength: 1
-                    name:
-                      type: string
-                      minLength: 1
-                    variant:
-                      type: string
-                      minLength: 1
-                    metadata:
-                      type: object
-            additionalProperties: true
-      additionalProperties: false
-
-  # ===== 地点提取管道 =====
-
-  - id: extract_scenes
-    ref: ai.deepseek_structured_json.v1
-    name: 提取地点
-    inputs:
-      system:
-        template: |
-          仅返回合法 JSON。你是专业的剧本资产分析师。请从剧本中提取所有需要资产化的地点信息。
-          世界背景（原作）：{background}。
-          注意：这里的“地点”是资产意义上的地点、场所或建筑，不是剧情意义上的一场戏、镜头段落或事件片段。不要按戏份切分地点。
-
-          思维链要求：在输出最终 JSON 前，你必须先逐步分析并记录你的思考过程：
-          1. 判断当前剧本对应原作的哪一回、剧情发展到什么阶段。
-          2. 逐段分析剧本，识别剧本中出现或隐含的地点资产，合并同一地点的多次出现。
-          3. 为每个地点命名、描述、判定时间特征和地点类型；描述必须结合世界背景/原作说明这个地点在哪里、是干什么的、通常承载什么功能。
-          将你的完整分析过程写入 reasoning 字段。
-        vars:
-          background:
-            from: "$nodes.collect_asset_storyboard_input.output.background"
-      prompt:
-        template: |
-          请从以下剧本中提取所有地点资产信息。地点是空间/场所资产，不是剧情中的一场戏。
-
-          剧本内容：
-          {script}
-
-          返回一个仅包含以下根键的 JSON 对象：
-          - reasoning：你的逐步分析过程（字符串，不能为空）
-          - scenes：地点数组
-          - scene_names：所有地点的名称数组（仅字符串）
-
-          每个地点对象必须包含：
-          - name：地点名称
-          - description：地点描述（≤100字，结合世界背景/原作说明地点在哪里、用途是什么）
-          - time_of_day：时间特征（如"白天"、"夜晚"、"黄昏"等）
-          - location_type：地点类型（如"室内"、"户外"、"宫殿"、"山林"等）
-
-          根层级除 reasoning、scenes 和 scene_names 外不得包含其他键。
-        vars:
-          script:
-            from: "$nodes.collect_asset_storyboard_input.output.script"
-          background:
-            from: "$nodes.collect_asset_storyboard_input.output.background"
-      max_attempts:
-        value: 2
-    outputs:
-      type: object
-      required: ["reasoning", "scenes", "scene_names"]
-      properties:
-        reasoning:
-          type: string
-          minLength: 1
-        scenes:
-          type: array
-          items:
-            type: object
-            required: ["name", "description", "time_of_day", "location_type"]
-            properties:
-              name:
-                type: string
-                minLength: 1
-              description:
-                type: string
-                minLength: 1
-              time_of_day:
-                type: string
-                minLength: 1
-              location_type:
-                type: string
-                minLength: 1
-            additionalProperties: false
-        scene_names:
-          type: array
-          items:
-            type: string
-            minLength: 1
-      additionalProperties: false
-
-  - id: lookup_scene_assets
-    ref: tool.asset_lookup.v1
-    name: 检索已有地点资产
-    inputs:
-      scope:
-        value: "combined"
-      asset_type:
-        value: "text"
-      tags:
-        value: ["地点"]
-      limit:
-        value: 200
-    outputs:
-      type: object
-      required: ["total", "assets"]
-      properties:
-        total:
-          type: integer
-          minimum: 0
-        assets:
-          type: array
-          items:
-            type: object
-            required: ["asset_id", "name"]
-            properties:
-              asset_id:
-                type: string
-                minLength: 1
-              name:
-                type: string
-                minLength: 1
-              asset_type:
-                type: string
-              mime_type:
-                type: string
-              storage_uri:
-                type: string
-              metadata:
-                type: object
-              text_content:
-                type: string
-            additionalProperties: true
-      additionalProperties: false
-
-  - id: match_scenes_by_name
-    ref: tool.asset_lookup.v1
-    name: 按名称匹配地点
-    inputs:
-      scope:
-        value: "combined"
-      names:
-        from: "$nodes.extract_scenes.output.scene_names"
-      asset_type:
-        value: "text"
-      tags:
-        value: ["地点"]
-      limit:
-        value: 200
-    outputs:
-      type: object
-      required: ["total", "assets"]
-      properties:
-        total:
-          type: integer
-          minimum: 0
-        assets:
-          type: array
-          items:
-            type: object
-            required: ["asset_id", "name"]
-            properties:
-              asset_id:
-                type: string
-                minLength: 1
-              name:
-                type: string
-                minLength: 1
-              asset_type:
-                type: string
-              mime_type:
-                type: string
-              storage_uri:
-                type: string
-              metadata:
-                type: object
-              text_content:
-                type: string
-            additionalProperties: true
-      additionalProperties: false
-
-  - id: enrich_scenes
-    ref: tool.enrich_characters.v1
-    name: 汇总地点匹配结果
-    inputs:
-      characters:
-        from: "$nodes.extract_scenes.output.scenes"
-      matched_by_name:
-        from: "$nodes.match_scenes_by_name.output.assets"
-      existing_assets:
-        from: "$nodes.lookup_scene_assets.output.assets"
-    outputs:
-      type: object
-      required: ["characters"]
-      properties:
-        characters:
-          type: array
-          items:
-            type: object
-            required: ["name", "matched"]
-            properties:
-              name:
-                type: string
-                minLength: 1
-              matched:
-                type: boolean
-              matched_asset_id:
-                type: ["string", "null"]
-              matched_asset_name:
-                type: string
-            additionalProperties: true
-      additionalProperties: false
-
-  # ===== P2: 变体匹配 =====
-
-  - id: match_variants
-    ref: ai.parallel_deepseek_structured_json.v1
-    name: 匹配角色变体
-    inputs:
-      system:
-        value: |
-          仅返回合法 JSON。你是资产库角色变体匹配器，只负责把“提取到的角色变体资产”匹配到“资产库候选变体”。
-          工程化匹配原则：
-          1. 严格区分输入分区：variant_name、variant_description、accessories 是提取到的待匹配变体；existing_variants 是资产库候选变体。
-          2. 变体是否存在已经由上游 extract_characters 决定；本节点不得根据剧情处境、动作或临时状态新增变体依据。
-          3. 只比较稳定服装、稳定外观造型、可穿戴/携带配件和 existing_variants 的 variant、name、metadata.tags。
-          4. 被绑起来、被押送、受伤、疲惫、奔跑、打斗、表情、姿态、镜头动作、地点、天气、光照等临时状态必须忽略。
-          5. 如果已提取变体无法匹配 existing_variants，才标记 is_new_variant=true，并把 new_variant_name 填为 角色名_已提取变体标签。
-      prompt_template:
-        value: |
-          请为以下已提取角色变体匹配已有资产。
-
-          ## A. 提取到的角色变体资产（待匹配）
-          字段来源：full_name、variant_name、variant_description、accessories、character_status。
-
-          ## B. 资产库候选变体
-          字段来源：同一 JSON 对象的 existing_variants；每个候选包含 asset_id、name、variant 和 metadata.tags。
-
-          ## C. 输入 JSON
-          {item}
-
-          ## D. 匹配准则
-          - 请将 A 中的 variant_name、variant_description、accessories 与 B 中的 existing_variants 做语义匹配。
-          - character_status 只可作为上下文参考，不能作为新增变体依据。
-          - 不得把 existing_variants 中的候选字段写回为提取结果。
-          - 如只因被绑、受伤、姿态、表情、动作、天气、场景不同，不得创建新变体。
-
-          ## E. 输出 JSON
-          返回一个 JSON 对象：
-          - full_name：角色全名
-          - accessories：上游已提取的角色当前配件列表，不得自行新增
-          - matched_variant：匹配到的变体标签（无匹配时为空字符串）
-          - matched_variant_id：匹配到的变体资产ID（无匹配时为null）
-          - is_new_variant：上游已提取变体是否未匹配到已有变体资产
-          - new_variant_name：is_new_variant=true时必填，格式：角色名_上游variant_name；不得使用被绑、受伤、动作、场景等临时状态命名
-          - default_variant_status：角色默认变体的状态描述；existing_variants 为空时返回空字符串
-          - default_variant_storage_uri：角色默认变体的参考图URL；existing_variants 为空或无参考图时返回空字符串
-          - reason：≤50字判断理由
-      items:
-        from: "$nodes.enrich_characters.output.characters"
-      max_attempts:
-        value: 2
-    outputs:
-      type: object
-      required: ["results"]
-      properties:
-        results:
-          type: array
-          items:
-            type: object
-            required: ["full_name", "accessories", "matched_variant", "is_new_variant", "default_variant_status", "reason"]
-            properties:
-              full_name:
-                type: string
-                minLength: 1
-              accessories:
-                type: array
-                items:
-                  type: string
-              matched_variant:
-                type: string
-              matched_variant_id:
-                type: ["string", "null"]
-              is_new_variant:
-                type: boolean
-              new_variant_name:
-                type: string
-              default_variant_status:
-                type: string
-              default_variant_storage_uri:
-                type: string
-              reason:
-                type: string
-                minLength: 1
-            additionalProperties: false
-      additionalProperties: false
-
-  - id: check_accessories
-    ref: ai.parallel_deepseek_structured_json.v1
-    name: 检查角色配件
-    inputs:
-      system:
-        value: |
-          仅返回合法 JSON。你是资产库角色配件匹配器，只检查“提取到的角色配件”是否已存在于“资产库候选变体/配件”中。
-          工程化匹配原则：
-          1. 严格区分输入分区：accessories 是上游提取到的待检查配件；existing_variants 是资产库候选变体/配件来源。
-          2. 配件是独立变体维度：基础服装是一个变体，基础服装+配件是另一个变体；一个变体只对应一个图像。
-          3. 只检查上游已提取配件，不得自行新增配件。
-          4. 不得把被绑、受伤、动作、姿态、剧情处境、地点、天气或临时限制物补充为新配件。
-      prompt_template:
-        value: |
-          请检查以下角色的配件状态。
-
-          ## A. 提取到的角色配件（待检查）
-          字段来源：accessories。
-
-          ## B. 资产库候选变体/配件
-          字段来源：existing_variants 及其 name、variant、metadata.tags。
-
-          ## C. 输入 JSON
-          {item}
-
-          ## D. 输出 JSON
-          返回一个 JSON 对象：
-          - full_name：角色全名
-          - has_new_accessories：上游已提取配件中是否有未匹配配件
-          - new_accessories：上游已提取但未匹配的配件名称数组，不得自行新增
-          - existing_accessories：已有配件名称数组
-          - reason：≤50字判断理由
-      items:
-        from: "$nodes.enrich_characters.output.characters"
-      max_attempts:
-        value: 2
-    outputs:
-      type: object
-      required: ["results"]
-      properties:
-        results:
-          type: array
-          items:
-            type: object
-            required: ["full_name", "has_new_accessories", "new_accessories", "existing_accessories", "reason"]
-            properties:
-              full_name:
-                type: string
-                minLength: 1
-              has_new_accessories:
-                type: boolean
-              new_accessories:
-                type: array
-                items:
-                  type: string
-              existing_accessories:
-                type: array
-                items:
-                  type: string
-              reason:
-                type: string
-                minLength: 1
-            additionalProperties: false
-      additionalProperties: false
-
-  # ===== 道具提取与匹配 =====
-
-  - id: extract_props
-    ref: ai.deepseek_structured_json.v1
-    name: 提取道具
-    inputs:
-      system:
-        template: |
-          仅返回合法 JSON。你是专业的剧本分析师。请从以下剧本中提取所有关键道具（props）。
-          世界背景（原作）：{background}。
-
-          请分析剧本中出现的所有关键道具，包括武器、工具、物品等。
-          道具收录条件：在叙述段中被角色使用、持有、提及或具有叙事意义的物品。
-          排除条件：仅为背景装饰的无名物品、对话中提及但未实际出现或使用的物品。
-          衣服、服装、鞋帽、披风、围巾、面巾、斗笠、斗篷等穿戴类外观元素不作为道具提取；它们属于角色变体或角色配件，只能由角色提取节点写入 variant_name、variant_description 或 accessories。
-          只有可从角色身上独立拿取、使用、赠予、争夺或作为剧情实体流转的物件才可作为道具；普通穿着状态不能作为道具。
-          如果道具与某个角色有明确持有、使用、携带、赠予或争夺关系，请记录关联角色；没有明确关联时留空或省略。
-          将你的分析过程写入 reasoning 字段。
-        vars:
-          background:
-            from: "$nodes.collect_asset_storyboard_input.output.background"
-      prompt:
-        template: |
-          请从以下剧本中提取所有关键道具。
-
-          剧本内容：
-          {script}
-
-          返回一个仅包含以下根键的 JSON 对象：
-          - reasoning：你的逐步分析过程（字符串，不能为空）
-          - props：道具数组
-          - prop_names：所有道具名称数组（仅字符串）
-
-          每个道具对象必须包含：
-          - full_name：道具名称（如"青龙偃月刀"）
-          - description：道具描述（≤100字）
-          - category：道具类别（如"武器"、"工具"、"容器"、"书籍/信件"等；不要使用"服装"作为道具类别，普通穿戴类外观元素不进入 props）
-          - related_character：关联角色（可选；仅当剧本明确说明某角色持有、使用、携带、赠予或争夺该道具时填写角色名，否则可省略或为空字符串）
-
-          根层级除 reasoning、props 和 prop_names 外不得包含其他键。
-        vars:
-          script:
-            from: "$nodes.collect_asset_storyboard_input.output.script"
-          background:
-            from: "$nodes.collect_asset_storyboard_input.output.background"
-      max_attempts:
-        value: 2
-    outputs:
-      type: object
-      required: ["reasoning", "props", "prop_names"]
-      properties:
-        reasoning:
-          type: string
-          minLength: 1
-        props:
-          type: array
-          items:
-            type: object
-            required: ["full_name", "description", "category"]
-            properties:
-              full_name:
-                type: string
-                minLength: 1
-              description:
-                type: string
-                minLength: 1
-              category:
-                type: string
-                minLength: 1
-              related_character:
-                type: string
-            additionalProperties: false
-        prop_names:
-          type: array
-          items:
-            type: string
-            minLength: 1
-      additionalProperties: false
-
-  - id: lookup_prop_assets
-    ref: tool.asset_lookup.v1
-    name: 检索已有道具资产
-    inputs:
-      scope:
-        value: "combined"
-      asset_type:
-        value: "text"
-      tags:
-        value: ["道具"]
-      limit:
-        value: 200
-    outputs:
-      type: object
-      required: ["total", "assets"]
-      properties:
-        total:
-          type: integer
-          minimum: 0
-        assets:
-          type: array
-          items:
-            type: object
-            required: ["asset_id", "name"]
-            properties:
-              asset_id:
-                type: string
-                minLength: 1
-              name:
-                type: string
-                minLength: 1
-              asset_type:
-                type: string
-              mime_type:
-                type: string
-              storage_uri:
-                type: string
-              metadata:
-                type: object
-              text_content:
-                type: string
-            additionalProperties: true
-      additionalProperties: false
-
-  - id: match_props_by_name
-    ref: tool.asset_lookup.v1
-    name: 按名称匹配道具
-    inputs:
-      scope:
-        value: "combined"
-      names:
-        from: "$nodes.extract_props.output.prop_names"
-      asset_type:
-        value: "text"
-      tags:
-        value: ["道具"]
-      limit:
-        value: 200
-    outputs:
-      type: object
-      required: ["total", "assets"]
-      properties:
-        total:
-          type: integer
-          minimum: 0
-        assets:
-          type: array
-          items:
-            type: object
-            required: ["asset_id", "name"]
-            properties:
-              asset_id:
-                type: string
-                minLength: 1
-              name:
-                type: string
-                minLength: 1
-              asset_type:
-                type: string
-              mime_type:
-                type: string
-              storage_uri:
-                type: string
-              metadata:
-                type: object
-              text_content:
-                type: string
-            additionalProperties: true
-      additionalProperties: false
-
-  - id: enrich_props
-    ref: tool.enrich_characters.v1
-    name: 汇总道具匹配结果
-    inputs:
-      characters:
-        from: "$nodes.extract_props.output.props"
-      matched_by_name:
-        from: "$nodes.match_props_by_name.output.assets"
-      semantic_matches:
-        value: []
-      existing_assets:
-        from: "$nodes.lookup_prop_assets.output.assets"
-    outputs:
-      type: object
-      required: ["characters"]
-      properties:
-        characters:
-          type: array
-          items:
-            type: object
-            required: ["full_name", "matched"]
-            properties:
-              full_name:
-                type: string
-                minLength: 1
-              matched:
-                type: boolean
-              matched_asset_id:
-                type: ["string", "null"]
-              matched_asset_name:
-                type: string
-              existing_variants:
-                type: array
-                items:
-                  type: object
-                  required: ["asset_id", "name", "variant"]
-                  properties:
-                    asset_id:
-                      type: string
-                      minLength: 1
-                    name:
-                      type: string
-                      minLength: 1
-                    variant:
-                      type: string
-                      minLength: 1
-                    metadata:
-                      type: object
-            additionalProperties: true
-      additionalProperties: false
-
-  # ===== 资产审核 =====
-
-  - id: review_assets
-    ref: system.human_approval.v1
-    name: 资产列表汇总
-    inputs:
-      question:
-        template: |
-          请审核以下资产提取和匹配结果。
-
-          ## 角色资产
-          ### A. 提取到的角色资产
-          {characters}
-
-          ### B. 资产库角色名称匹配结果
-          {match_by_name}
-
-          ### C. 资产库角色语义匹配结果
-          {semantic_match}
-
-          ## 角色变体与配件
-          ### A. 资产库角色变体匹配结果
-          {variant_result}
-
-          ### B. 资产库角色配件匹配结果
-          {accessory_result}
-
-          ## 地点资产
-          ### A. 提取到的地点资产
-          {scenes}
-
-          ### B. 资产库地点名称匹配结果
-          {scene_matches}
-
-          ## 道具资产
-          ### A. 提取到的道具资产
-          {props}
-
-          ### B. 资产库道具名称匹配结果
-          {prop_matches}
-
-          请确认资产匹配是否正确，或提供修改意见。
-        vars:
-          characters:
-            from: "$nodes.extract_characters.output.characters"
-          match_by_name:
-            from: "$nodes.match_by_name.output.assets"
-          semantic_match:
-            from: "$nodes.semantic_match_characters.output.match_results"
-          variant_result:
-            from: "$nodes.match_variants.output.results"
-          accessory_result:
-            from: "$nodes.check_accessories.output.results"
-          scenes:
-            from: "$nodes.extract_scenes.output.scenes"
-          scene_matches:
-            from: "$nodes.match_scenes_by_name.output.assets"
-          props:
-            from: "$nodes.extract_props.output.props"
-          prop_matches:
-            from: "$nodes.match_props_by_name.output.assets"
-      characters:
-        from: "$nodes.extract_characters.output.characters"
-      background:
-        from: "$nodes.collect_asset_storyboard_input.output.background"
-      script:
-        from: "$nodes.collect_asset_storyboard_input.output.script"
-      enriched_characters:
-        from: "$nodes.enrich_characters.output.characters"
-      match_by_name:
-        from: "$nodes.match_by_name.output.assets"
-      semantic_match:
-        from: "$nodes.semantic_match_characters.output.match_results"
-      scenes:
-        from: "$nodes.extract_scenes.output.scenes"
-      enriched_scenes:
-        from: "$nodes.enrich_scenes.output.characters"
-      scene_matches:
-        from: "$nodes.match_scenes_by_name.output.assets"
-      props:
-        from: "$nodes.extract_props.output.props"
-      enriched_props:
-        from: "$nodes.enrich_props.output.characters"
-      prop_matches:
-        from: "$nodes.match_props_by_name.output.assets"
-      variant_results:
-        from: "$nodes.match_variants.output.results"
-      accessory_results:
-        from: "$nodes.check_accessories.output.results"
-      decision:
-        from_user: true
-        schema:
-          type: string
-          minLength: 1
-      approved:
-        from_user: true
-        required: false
-        schema:
-          type: boolean
-      comment:
-        from_user: true
-        required: false
-        schema:
-          type: string
-      approved_assets:
-        from_user: true
-        schema:
-          type: object
-      additional_asset_request:
-        from_user: true
-        required: false
-        schema:
-          type: string
-      asset_images:
-        from_user: true
-        required: false
-        schema:
-          type: array
-          items:
-            type: object
-            required: ["asset_type", "asset_key", "image_url"]
-            properties:
-              asset_type:
-                type: string
-              asset_key:
-                type: string
-              full_name:
-                type: string
-              image_url:
-                type: string
-              source:
-                type: string
-            additionalProperties: true
-    outputs:
-      type: object
-      required: ["decision"]
-      properties:
-        decision:
-          type: string
-          minLength: 1
-        approved_assets:
-          type: object
-        additional_asset_request:
-          type: string
-        asset_images:
-          type: array
-          items:
-            type: object
-            additionalProperties: true
-      additionalProperties: true
-    ui:
-      sections:
-        input:
-          visible: false
-        output:
-          visible: false
-        events:
-          visible: false
-      controls:
-        interaction:
-          control_id: ui.interaction.asset_summary_table.v1
-          variant: tabbed_table
-          mode: interactive
-
-  # ===== 筛选需生成资产 =====
-
-  - id: filter_assets_for_generation
-    ref: tool.filter_assets_for_generation.v1
-    name: 筛选需生成资产
-    inputs:
-      approved_assets:
-        from: "$nodes.review_assets.output.approved_assets"
-    outputs:
-      type: object
-      required: ["approved_assets", "asset_count"]
-      properties:
-        approved_assets:
-          type: object
-          required: ["characters", "assets", "props"]
-          properties:
-            characters:
-              type: array
-              items:
-                type: object
-            assets:
-              type: array
-              items:
-                type: object
-            props:
-              type: array
-              items:
-                type: object
-          additionalProperties: true
-        asset_count:
-          type: integer
-          minimum: 0
-      additionalProperties: false
-
-  # ===== 手动上传图像 =====
-
-  - id: upload_images
-    ref: system.human_approval.v1
-    name: 上传或关联资产图像
-    inputs:
-      question:
-        template: |
-          请为以下角色变体上传/关联图像。
-
-          角色信息：
-          {characters}
-
-          变体匹配结果：
-          {variant_result}
-
-          配件检查结果：
-          {accessory_result}
-
-          图像上传规格：
-          - 格式：PNG 或 JPG
-          - 建议分辨率：2K（2048×2048 或更高）
-          - 宽高比：建议 1:1（正方形）
-          - 文件大小：单个文件不超过 10MB
-
-          变体图像命名规范：{{角色名}}_{{变体名}}.
-
-        vars:
-          characters:
-            from: "$nodes.extract_characters.output.characters"
-          variant_result:
-            from: "$nodes.match_variants.output.results"
-          accessory_result:
-            from: "$nodes.check_accessories.output.results"
-      characters:
-        from: "$nodes.extract_characters.output.characters"
-      enriched_characters:
-        from: "$nodes.enrich_characters.output.characters"
-      variant_results:
-        from: "$nodes.match_variants.output.results"
-      accessory_results:
-        from: "$nodes.check_accessories.output.results"
-      prompt_results:
-        from: "$nodes.generate_prompt_v2.output.prompt_results"
-      approved_assets:
-        from: "$nodes.review_assets.output.approved_assets"
-      decision:
-        from_user: true
-        schema:
-          type: string
-          enum: ["finish", "generate_missing"]
-      asset_images:
-        from_user: true
-        schema:
-          type: array
-          items:
-            type: object
-            required: ["asset_type", "asset_key", "image_url"]
-            properties:
-              asset_type:
-                type: string
-                minLength: 1
-              asset_key:
-                type: string
-                minLength: 1
-              full_name:
-                type: string
-              image_url:
-                type: string
-                minLength: 1
-              asset_id:
-                type: string
-              source:
-                type: string
-            additionalProperties: true
-      target_asset_key:
-        value: ""
-    outputs:
-      type: object
-      required: ["decision", "asset_images"]
-      properties:
-        decision:
-          type: string
-          enum: ["finish", "generate_missing"]
-        asset_images:
-          type: array
-          items:
-            type: object
-            required: ["asset_type", "asset_key", "image_url"]
-            properties:
-              asset_type:
-                type: string
-                minLength: 1
-              asset_key:
-                type: string
-                minLength: 1
-              full_name:
-                type: string
-              image_url:
-                type: string
-                minLength: 1
-              asset_id:
-                type: string
-              source:
-                type: string
-            additionalProperties: true
-        target_asset_key:
-          type: string
-        prompt_results:
-          type: array
-          items:
-            type: object
-            additionalProperties: true
-      additionalProperties: true
-    ui:
-      sections:
-        input:
-          visible: false
-        output:
-          visible: false
-        events:
-          visible: false
-      controls:
-        interaction:
-          control_id: ui.interaction.asset_image_cards.v1
-          variant: grouped_cards
-          mode: interactive
-
-  # ===== 自动生成路径：提示词生成 =====
-
-  - id: generate_prompt_v2
-    ref: ai.deepseek_structured_json.v1
-    name: 生成资产设定提示词
-    inputs:
-      system:
-        value: |
-          仅返回合法 JSON。你是一位资产设定提示词专家。本节点只输出文本提示词和参考图 URL，不输出图像结果、Markdown 图片或 HTML。
-          角色资产提示词用于生成稳定角色设定，不用于生成某个剧情镜头。
-          角色提示词只能描述服装、外貌、发型、体貌、身份识别特征和必要随身配件。
-          角色提示词不得包含动作、姿态、表情、镜头调度、场景气氛、正在发生的剧情、受伤/疲惫/奔跑/打斗等临时状态。
-          对比角色设定与默认变体状态，只保留稳定造型差异；临时情景信息只能用于判断应排除哪些内容，不能写入 prompt。
-          提示词格式：请将图中角色的xx改成xx，保持风格和其它特征不变。
-          必须先输出 think（思考过程），再输出 prompt（最终提示词）。
-          对所有角色进行批量处理，不能遗漏任何角色。
-      prompt:
-        template: |
-          请为以下所有需要补图的角色、地点和道具生成图生图修改提示词。
-
-          剧本内容：
-          {script}
-
-          角色列表：
-          {characters}
-
-          审核确认后的资产列表：
-          {approved_assets}
-
-          变体匹配结果（含默认变体状态）：
-          {variant_results}
-
-          配件检查结果：
-          {accessory_results}
-
-          地点匹配汇总：
-          {enriched_scenes}
-
-          道具匹配汇总：
-          {enriched_props}
-
-          需要生成图像的资产列表（每项已包含 reference_image_ref）：
-          {assets_for_generation}
-
-          返回一个仅包含一个根键的 JSON 对象：
-          - prompt_results：数组，每个需要图像的资产一条记录
-
-          每条记录必须包含：
-          - full_name：资产名称
-          - think：思考过程，逐项对比稳定设定差异，列出要添加/去除/修改的部分；不要把剧情动作、受伤、奔跑、打斗等临时状态当成角色设定
-          - prompt：最终文本提示词。角色只写服装、外貌、发型、体貌、身份识别特征和必要随身配件；不得写动作、姿态、表情、场景、剧情、受伤或其他临时状态；不得输出图片、图片链接、Markdown 或 HTML
-          - reference_image_ref：结构化参考图对象，必须原样复制对应资产的 reference_image_ref；不得输出任何 URL 字段。
-
-          根层级除 prompt_results 外不得包含其他键。
-        vars:
-          script:
-            from: "$nodes.collect_asset_storyboard_input.output.script"
-          characters:
-            from: "$nodes.extract_characters.output.characters"
-          approved_assets:
-            from: "$nodes.review_assets.output.approved_assets"
-          variant_results:
-            from: "$nodes.match_variants.output.results"
-          accessory_results:
-            from: "$nodes.check_accessories.output.results"
-          enriched_scenes:
-            from: "$nodes.enrich_scenes.output.characters"
-          enriched_props:
-            from: "$nodes.enrich_props.output.characters"
-          assets_for_generation:
-            from: "$nodes.filter_assets_for_generation.output.approved_assets"
-      max_attempts:
-        value: 2
-    outputs:
-      type: object
-      required: ["prompt_results"]
-      properties:
-        prompt_results:
-          type: array
-          items:
-            type: object
-            required: ["full_name", "think", "prompt", "reference_image_ref"]
-            properties:
-              full_name:
-                type: string
-                minLength: 1
-              think:
-                type: string
-                minLength: 1
-              prompt:
-                type: string
-                minLength: 1
-              reference_image_ref:
-                type: object
-                required: ["kind"]
-                properties:
-                  kind:
-                    type: string
-                    enum: ["asset", "data_uri"]
-                  asset_id:
-                    type: string
-                    minLength: 1
-                  data:
-                    type: string
-                    minLength: 1
-                  role:
-                    type: string
-                additionalProperties: false
-            additionalProperties: false
-      additionalProperties: false
-
-  - id: prepare_asset_images
-    ref: tool.complete_asset_images.v1
-    name: 筛选未上传图像
-    inputs:
-      decision:
-        from: "$nodes.upload_images.output.decision"
-      prompt_results:
-        from: "$nodes.upload_images.output.prompt_results"
-      manual_images:
-        from: "$nodes.upload_images.output.asset_images"
-      target_asset_key:
-        from: "$nodes.upload_images.output.target_asset_key"
-    outputs:
-      type: object
-      required: ["asset_images", "missing_prompt_results", "missing_count", "next_action"]
-      properties:
-        asset_images:
-          type: array
-          items:
-            type: object
-            additionalProperties: true
-        missing_prompt_results:
-          type: array
-          items:
-            type: object
-            additionalProperties: true
-        missing_count:
-          type: integer
-          minimum: 0
-        next_action:
-          type: string
-          enum: ["finish", "generate_missing"]
-      additionalProperties: false
-
-  # ===== 生成未上传图像 =====
-
-  - id: generate_missing_asset_images
-    ref: ai.runninghub_image_to_image.v2
-    name: 生成未上传资产图像
-    inputs:
-      prompt_results:
-        from: "$nodes.prepare_asset_images.output.missing_prompt_results"
-      aspect_ratio:
-        value: "1:1"
-      resolution:
-        value: "2k"
-    outputs:
-      type: object
-      required: ["asset_images"]
-      properties:
-        asset_images:
-          type: array
-          items:
-            type: object
-            required: ["full_name", "image_url", "source"]
-            properties:
-              full_name:
-                type: string
-                minLength: 1
-              image_url:
-                type: string
-                minLength: 1
-              variant:
-                type: string
-              asset_id:
-                type: string
-              source:
-                type: string
-                minLength: 1
-              runninghub_task_id:
-                type: string
-            additionalProperties: true
-      additionalProperties: false
-
-  # ===== 合并资产图像（上传/补生成） =====
-
-  - id: merge_completed_asset_images
-    ref: tool.complete_asset_images.v1
-    name: 合并资产图像
-    inputs:
-      decision:
-        value: "finish"
-      prompt_results:
-        from: "$nodes.generate_prompt_v2.output.prompt_results"
-      manual_images:
-        from: "$nodes.prepare_asset_images.output.asset_images"
-      auto_images:
-        from: "$nodes.generate_missing_asset_images.output.asset_images"
-    outputs:
-      type: object
-      required: ["asset_images", "missing_prompt_results", "missing_count", "next_action"]
-      properties:
-        asset_images:
-          type: array
-          items:
-            type: object
-            additionalProperties: true
-        missing_prompt_results:
-          type: array
-          items:
-            type: object
-            additionalProperties: true
-        missing_count:
-          type: integer
-          minimum: 0
-        next_action:
-          type: string
-          enum: ["finish", "generate_missing"]
-      additionalProperties: false
-
-  # ===== 剧本拆分 =====
 
   - id: split_script
     ref: tool.script_split.v1
     name: 拆分剧本
     inputs:
       script:
-        from: "$nodes.collect_asset_storyboard_input.output.script"
+        from: "$nodes.confirm_episode_context.output.source_script"
     outputs:
       type: object
       required: ["count", "segments"]
@@ -1671,46 +317,45 @@ nodes:
             additionalProperties: false
       additionalProperties: false
 
-  # ===== 角色资产分配到段落 =====
-
   - id: assign_assets_to_segments
     ref: ai.deepseek_structured_json.v1
     name: 分配段落资产
     inputs:
       system:
         value: |
-          仅返回合法 JSON。你是剧本分镜助手。请根据角色资产图像和剧本段落，判断每个段落中出现的角色和关键道具。
-          只包含在叙事段落中实际出现的角色。仅在对话中提及的角色不算。
-          使用角色全名与资产列表进行匹配。如果一个角色在多个段落中持续出现，每个段落都要记录。
+          仅返回合法 JSON。你是剧本分镜助手。请根据集资产目录和剧本段落，为每个分段分配实际出现或应作为参考的角色、地点和关键道具。
+          只包含叙事段落中实际出现或直接影响画面的资产；仅在对话中提及但不在场的角色不要加入 characters。
       prompt:
         template: |
-          请为以下剧本段落分配角色资产。
+          请为以下剧本段落分配资产。
 
-          剧本段落（含段落索引）：
+          剧本段落：
           {segments}
 
-          可用角色资产图像（含全名与结构化图像引用）：
-          {asset_images}
+          集资产目录：
+          {asset_catalog}
 
-          世界背景（原作）：
+          世界背景：
           {background}
 
           返回一个仅包含一个根键的 JSON 对象：
           - segment_assignments：数组，每个段落一条记录
 
           每条记录必须包含：
-          - segment_index：段落索引（整数，与输入段落对应）
-          - characters：该段落中出现的角色数组，每个包含 full_name、image_ref、variant
-          - key_props：关键道具数组（字符串，无道具时为空数组）
+          - segment_index：段落索引
+          - location：本段主要地点，没有则空字符串
+          - time：本段时间，没有则空字符串
+          - characters：本段实际出现角色数组，每个包含 full_name、image_ref、variant、image_url
+          - key_props：关键道具数组
 
-          根层级除 segment_assignments 外不得包含其他键。
+          image_ref 优先使用资产目录中已有的结构化图像引用；如果只有 asset_id，返回 {"kind":"asset","asset_id":"...","role":"reference"}。
         vars:
           segments:
             from: "$nodes.split_script.output.segments"
-          asset_images:
-            from: "$nodes.merge_completed_asset_images.output.asset_images"
+          asset_catalog:
+            from: "$nodes.confirm_episode_context.output.asset_catalog"
           background:
-            from: "$nodes.collect_asset_storyboard_input.output.background"
+            from: "$nodes.confirm_episode_context.output.background"
       max_attempts:
         value: 2
     outputs:
@@ -1726,6 +371,10 @@ nodes:
               segment_index:
                 type: integer
                 minimum: 0
+              location:
+                type: string
+              time:
+                type: string
               characters:
                 type: array
                 items:
@@ -1753,6 +402,12 @@ nodes:
                       additionalProperties: false
                     variant:
                       type: string
+                    image_url:
+                      type: string
+                    accessories:
+                      type: array
+                      items:
+                        type: string
                   additionalProperties: false
               key_props:
                 type: array
@@ -1762,8 +417,6 @@ nodes:
             additionalProperties: false
       additionalProperties: false
 
-  # ===== 上下文组装 =====
-
   - id: assemble_storyboard_context
     ref: tool.assemble_storyboard_context.v1
     name: 组装分镜上下文
@@ -1772,8 +425,6 @@ nodes:
         from: "$nodes.split_script.output.segments"
       segment_assignments:
         from: "$nodes.assign_assets_to_segments.output.segment_assignments"
-      background:
-        from: "$nodes.collect_asset_storyboard_input.output.background"
     outputs:
       type: object
       required: ["context_string"]
@@ -1783,57 +434,24 @@ nodes:
           minLength: 1
       additionalProperties: false
 
-  # ===== 分镜描述 =====
-
   - id: describe_panels
     ref: ai.deepseek_structured_json.v1
     name: 描述分镜画面
     inputs:
       system:
         value: |
-          仅返回合法 JSON。你是一位专业的分镜设计师。
-          核心原则：
-          - 先读情绪，再选镜头语言。选择能够放大场景核心情绪的拍摄角度、景别与透视。
-          - 拒绝默认构图：避免中心对称、平面布局或懒惰对称。
-          - 每个分格必须有明确的视觉意图。
-          - 不要描写对话、服装或角色的外貌特征。
-          - 禁止出现腿部相关描写。标注角色朝向镜头/背向镜头。
-          - 仅在场角色可出现在分格中；缺席角色不得被提及。
-          - 使用现在时。禁止未来时或"预示"类描写。
-          自检清单（在 thinking 中回答）：纵深层次、叙事道具、光影冲突、动态瞬间捕捉、角度潜台词。
+          仅返回合法 JSON。你是漫画分镜导演，请根据每个段落文本和资产分配，为每个段落设计分格画面。
+          输出必须能直接用于后续图像提示词组装。
       prompt:
         template: |
-          为以下所有段落设计分镜。返回一个仅包含一个根键的 JSON 对象：
-          - segment_descriptions：段落描述对象数组，按段落顺序排列，每个段落一个
+          请根据上下文描述分镜画面。
 
-          每个段落描述对象必须包含：
-          - index：整数（段落索引，从 0 开始）
-          - segment_title：本段落的简短标题
-          - thinking：字符串（对本段的自检推理）
-          - panels：分格对象数组
-
-          每个分格对象必须包含：
-          - description：字符串（分格视觉描述）
-          - style：字符串（艺术风格描述）
-          - constraints：字符串（技术约束）
-
-          每个分格对象还可以使用以下键：
-          - character_focus
-          - environment_details
-          - shot_type
-          - camera_angle
-          - composition
-          - lighting
-          - mood
-          - action
-          - key_props
-          - continuity_notes
-
-          根层级除 segment_descriptions 外不得包含其他键。
-          分格对象不得包含上述以外的其他键。
-
-          上下文（含段落文本、角色分配、世界背景）：
+          上下文：
           {segments_context}
+
+          返回一个仅包含 segment_descriptions 的 JSON 对象。
+          segment_descriptions 每项包含 index、segment_title、thinking、panels。
+          每个 panel 必须包含 description、style、constraints，可选 character_focus、environment_details、shot_type、camera_angle、composition、lighting、mood、action、key_props、continuity_notes。
         vars:
           segments_context:
             from: "$nodes.assemble_storyboard_context.output.context_string"
@@ -1875,39 +493,27 @@ nodes:
                       minLength: 1
                     character_focus:
                       type: string
-                      minLength: 1
                     environment_details:
                       type: string
-                      minLength: 1
                     shot_type:
                       type: string
-                      minLength: 1
                     camera_angle:
                       type: string
-                      minLength: 1
                     composition:
                       type: string
-                      minLength: 1
                     lighting:
                       type: string
-                      minLength: 1
                     mood:
                       type: string
-                      minLength: 1
                     action:
                       type: string
-                      minLength: 1
                     key_props:
                       type: string
-                      minLength: 1
                     continuity_notes:
                       type: string
-                      minLength: 1
                   additionalProperties: false
             additionalProperties: false
       additionalProperties: false
-
-  # ===== 分镜审核 =====
 
   - id: review_storyboard_prompt
     ref: system.human_approval.v1
@@ -1917,24 +523,14 @@ nodes:
         template: |
           请审核以下分镜描述。
 
-          段落分镜描述（含分格设计、镜头语言）：
+          段落分镜描述：
           {segment_descriptions}
 
-          角色资产参考图像：
-          {asset_images}
-
-          上下文（段落文本、角色分配、背景）：
+          上下文：
           {context}
-
-          请确认分镜描述是否合理，或提供修改意见。
-
-          输出格式（严格 JSON）：
-          {{"decision": "approve 或 reject", "corrections": {{"corrected_prompt": "修改后的提示词", "corrected_image_refs": ["修正后的结构化参考图数组"]}}}}
         vars:
           segment_descriptions:
             from: "$nodes.describe_panels.output.segment_descriptions"
-          asset_images:
-            from: "$nodes.merge_completed_asset_images.output.asset_images"
           context:
             from: "$nodes.assemble_storyboard_context.output.context_string"
       decision:
@@ -1942,43 +538,12 @@ nodes:
         schema:
           type: string
           minLength: 1
-      approved:
-        from_user: true
-        required: false
-        schema:
-          type: boolean
-      comment:
-        from_user: true
-        required: false
-        schema:
-          type: string
       corrections:
         from_user: true
         required: false
         schema:
           type: object
-          properties:
-            corrected_prompt:
-              type: string
-            corrected_image_refs:
-              type: array
-              items:
-                type: object
-                required: ["kind"]
-                properties:
-                  kind:
-                    type: string
-                    enum: ["asset", "data_uri"]
-                  asset_id:
-                    type: string
-                    minLength: 1
-                  data:
-                    type: string
-                    minLength: 1
-                  role:
-                    type: string
-                additionalProperties: false
-          additionalProperties: false
+          additionalProperties: true
     outputs:
       type: object
       required: ["decision"]
@@ -1988,31 +553,8 @@ nodes:
           minLength: 1
         corrections:
           type: object
-          properties:
-            corrected_prompt:
-              type: string
-            corrected_image_refs:
-              type: array
-              items:
-                type: object
-                required: ["kind"]
-                properties:
-                  kind:
-                    type: string
-                    enum: ["asset", "data_uri"]
-                  asset_id:
-                    type: string
-                    minLength: 1
-                  data:
-                    type: string
-                    minLength: 1
-                  role:
-                    type: string
-                additionalProperties: false
-          additionalProperties: false
+          additionalProperties: true
       additionalProperties: false
-
-  # ===== 提取目标分格的参考图 =====
 
   - id: extract_panel_image_urls
     ref: ai.deepseek_structured_json.v1
@@ -2020,40 +562,28 @@ nodes:
     inputs:
       system:
         value: |
-          仅返回合法 JSON。你是分镜数据提取助手。
-          请从分镜描述和角色资产分配中提取目标分格的结构化参考图，并保留分格描述信息。
-          只返回目标段落和目标分格的数据。
+          仅返回合法 JSON。你是分镜数据提取助手，请从分镜描述和资产分配中提取目标分格的参考图和描述信息。
       prompt:
         template: |
-          请提取目标分格的结构化参考图和描述信息。
-
-          所有段落的角色资产分配：
+          所有段落资产分配：
           {segment_assignments}
 
-          所有段落的分镜描述：
+          所有段落分镜描述：
           {segment_descriptions}
 
           目标段落索引：{segment_index}
           目标分格索引：{panel_index}
 
-           返回一个仅包含一个根键的 JSON 对象：
-           - panel_image_refs：目标分格中出现的角色参考图数组，每个包含 full_name、image_ref、variant
-           - image_refs：所有 panel_image_refs 中 image_ref 的结构化对象数组
-           - description：目标分格的视觉描述（字符串）
-           - style：目标分格的艺术风格（字符串）
-           - constraints：目标分格的技术约束（字符串）
-
-           根层级除 panel_image_refs、image_refs、description、style、constraints 外不得包含其他键。
-          如果目标段落索引或分格索引超出范围，返回空数组和空字符串。
+          返回一个仅包含 panel_image_refs、image_refs、description、style、constraints 的 JSON 对象。
         vars:
           segment_assignments:
             from: "$nodes.assign_assets_to_segments.output.segment_assignments"
           segment_descriptions:
             from: "$nodes.describe_panels.output.segment_descriptions"
           segment_index:
-            from: "$nodes.collect_asset_storyboard_input.output.storyboard_target.segment_index"
+            from: "$nodes.confirm_episode_context.output.storyboard_target.segment_index"
           panel_index:
-            from: "$nodes.collect_asset_storyboard_input.output.storyboard_target.panel_index"
+            from: "$nodes.confirm_episode_context.output.storyboard_target.panel_index"
       max_attempts:
         value: 1
     outputs:
@@ -2115,9 +645,7 @@ nodes:
         constraints:
           type: string
           minLength: 1
-      additionalProperties: true
-
-  # ===== 提示词组装 =====
+      additionalProperties: false
 
   - id: assemble_prompt_v2
     ref: tool.storyboard_prompt_assembler.v1
@@ -2131,32 +659,12 @@ nodes:
         from: "$nodes.extract_panel_image_urls.output.constraints"
       generation_rules:
         value: |
-          风格指令
-          参考《罗小黑战记》的线条、色彩逻辑和视觉质感生成高质量、细节丰富、富有张力的漫画。
-          - 线条：典型的矢量图风格，干净且流畅，轮廓线利落。
-          - 色彩：无复杂渐变，纯色块填充为主，阴影较浅，边缘锐利，阴影偏冷色调，软 cel shading。
-          - 角色体型：所有角色都是胶囊形设计（达摩式 / 蛋形），下半身是个球，没有腿。
-          - 透视：strict perspective with foreshortening，近大远小，强纵深（depth of field），layered foreground-midground-background composition。
-          - 风格标签：digital illustration, chibi style, children's book art style, manhwa style, clean lineart, soft cel shading, vibrant colors, dynamic action atmosphere, masterpiece, best quality, 8k。
-          角色一致性约束
-          - 保持人物武器和参考完全一致。
-          - 人物比例不变。
-          - 所有角色为达摩/不倒翁体型：上半身正常比例，下半身为圆润饱满的半球形底部。
-          - 完全没有腿部、没有膝盖、没有脚踝、没有足部。
-          时代背景约束
-          - 时代背景在中国古代，以水浒传为背景。
-          - 根据时代背景和当前情景设计环境和物件。
-          - 装饰和场景内的物体丰富，并与角色风格一致。
-          透视与空间约束
-          - 严格遵守近大远小的透视关系。
-          - 透视线体现强烈的空间纵深感。
-          - 前景遮挡感强烈。
-          - 每个分格的消失点必须统一。
-          - 多分格页面：采用不规则的梯形与矩形组合排版，打破平庸的视觉节奏。
-          场景比例约束
-          - 场景建筑比例符合 chibi style（不追求写实建筑比例）。
+          风格指令：参考《罗小黑战记》的线条、色彩逻辑和视觉质感生成高质量漫画。
+          角色一致性：保持参考图人物比例、武器和关键服饰一致。
+          时代背景：中国古代，以水浒传为背景。
+          透视与构图：强纵深、前中后景分层、漫画分格画面。
       negative_prompt:
-        value: low quality, bad anatomy, worst quality, text, watermark, signature, ugly, bad proportions, deformed, realistic, gradient shading, complex textures, red lines, guidelines, nose, legs, feet, ankles, knees, thighs, calves, toes, footwear, shoes, boots, sandals, photorealistic, flat composition, no depth
+        value: low quality, bad anatomy, worst quality, text, watermark, signature, realistic, legs, feet, shoes
       image_refs:
         from: "$nodes.extract_panel_image_urls.output.image_refs"
     outputs:
@@ -2180,10 +688,8 @@ nodes:
                 enum: ["asset", "data_uri"]
               asset_id:
                 type: string
-                minLength: 1
               data:
                 type: string
-                minLength: 1
               role:
                 type: string
             additionalProperties: false
@@ -2194,8 +700,6 @@ nodes:
           type: string
           minLength: 1
       additionalProperties: false
-
-  # ===== 图像生成 =====
 
   - id: generate_image_v2
     ref: ai.runninghub_image_to_image.v1
@@ -2246,8 +750,6 @@ nodes:
           type: string
       additionalProperties: false
 
-  # ===== 分镜图像审核 =====
-
   - id: review_storyboard_image
     ref: system.human_approval.v1
     name: 审核分镜图像
@@ -2256,29 +758,19 @@ nodes:
         template: |
           请审核生成的分镜图像。
 
-          生成的分镜图像URL：
+          图像 URL：
           {image_url}
 
-          使用的提示词：
+          使用提示词：
           {prompt}
 
-          使用的角色参考图像：
-          {reference_images}
-
-          分格视觉描述：
+          分格描述：
           {description}
-
-          请确认图像是否符合分镜要求，是否需要重新生成或调整。
-
-          输出格式（严格 JSON）：
-          {{"decision": "approve 或 reject", "selected_image_url": "选定的图像URL", "revision_notes": "修改说明"}}
         vars:
           image_url:
             from: "$nodes.generate_image_v2.output.image_url"
           prompt:
             from: "$nodes.assemble_prompt_v2.output.prompt"
-          reference_images:
-            from: "$nodes.extract_panel_image_urls.output.panel_image_refs"
           description:
             from: "$nodes.extract_panel_image_urls.output.description"
       decision:
@@ -2286,16 +778,6 @@ nodes:
         schema:
           type: string
           minLength: 1
-      approved:
-        from_user: true
-        required: false
-        schema:
-          type: boolean
-      comment:
-        from_user: true
-        required: false
-        schema:
-          type: string
       selected_image_url:
         from_user: true
         required: false
@@ -2321,50 +803,12 @@ nodes:
 
 edges:
   - from: START
-    to: collect_asset_storyboard_input
-  - from: collect_asset_storyboard_input
-    to: extract_characters
-  - from: collect_asset_storyboard_input
-    to: extract_props
-  - from: extract_characters
-    to: lookup_existing_assets
-  - from: extract_props
-    to: lookup_prop_assets
-  - from: lookup_prop_assets
-    to: match_props_by_name
-  - from: match_props_by_name
-    to: enrich_props
-  - from: enrich_props
-    to: review_assets
-  - from: lookup_existing_assets
-    to: match_by_name
-  - from: match_by_name
-    to: semantic_match_characters
-  - from: semantic_match_characters
-    to: enrich_characters
-  - from: enrich_characters
-    to: match_variants
-  - from: match_variants
-    to: check_accessories
-  - from: check_accessories
-    to: review_assets
-  - from: review_assets
-    to: filter_assets_for_generation
-  - from: filter_assets_for_generation
-    to: generate_prompt_v2
-  - from: generate_prompt_v2
-    to: upload_images
-  - from: upload_images
-    to: prepare_asset_images
-  - from: prepare_asset_images
-    to: generate_missing_asset_images
-    when: {path: "$nodes.prepare_asset_images.output.next_action", equals: "generate_missing"}
-  - from: prepare_asset_images
-    to: merge_completed_asset_images
-    when: {path: "$nodes.prepare_asset_images.output.next_action", equals: "finish"}
-  - from: generate_missing_asset_images
-    to: merge_completed_asset_images
-  - from: merge_completed_asset_images
+    to: select_episode_metadata
+  - from: select_episode_metadata
+    to: load_episode_metadata
+  - from: load_episode_metadata
+    to: confirm_episode_context
+  - from: confirm_episode_context
     to: split_script
   - from: split_script
     to: assign_assets_to_segments
@@ -2382,15 +826,5 @@ edges:
     to: generate_image_v2
   - from: generate_image_v2
     to: review_storyboard_image
-  - from: collect_asset_storyboard_input
-    to: extract_scenes
-  - from: extract_scenes
-    to: lookup_scene_assets
-  - from: lookup_scene_assets
-    to: match_scenes_by_name
-  - from: match_scenes_by_name
-    to: enrich_scenes
-  - from: enrich_scenes
-    to: review_assets
   - from: review_storyboard_image
     to: END
