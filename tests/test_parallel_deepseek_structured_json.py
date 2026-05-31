@@ -173,6 +173,86 @@ async def test_parallel_node_template_interpolation() -> None:
 
 
 @pytest.mark.asyncio
+async def test_parallel_node_filters_prompt_fields_and_passthroughs_program_fields() -> None:
+    responses = ['{"full_name": "林冲_囚服", "prompt": "黑灰短发，眉眼锋利"}']
+    router = FakeParallelRouter(responses)
+    node = ParallelDeepSeekStructuredJsonNode(
+        model_router=router,
+        provider="deepseek",
+        model="test-model",
+    )
+    ctx = NodeContext(
+        user_id="user-1",
+        project_id="project-1",
+        task_id="task-1",
+        node_id="generate_prompt",
+        node_execution_id="exec-1",
+        config={},
+        output_schema={
+            "type": "object",
+            "required": ["results"],
+            "properties": {
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "required": ["full_name", "prompt", "reference_image_ref"],
+                        "properties": {
+                            "full_name": {"type": "string"},
+                            "prompt": {"type": "string"},
+                            "reference_image_ref": {
+                                "type": "object",
+                                "required": ["kind", "asset_id"],
+                                "properties": {
+                                    "kind": {"type": "string"},
+                                    "asset_id": {"type": "string"},
+                                },
+                                "additionalProperties": False,
+                            },
+                        },
+                        "additionalProperties": False,
+                    },
+                }
+            },
+            "additionalProperties": False,
+        },
+        asset_service=None,
+        event_sink=None,
+        logger=None,
+    )
+
+    result = await node.run(
+        ctx,
+        {
+            "items": [
+                {
+                    "name": "林冲",
+                    "variant_description": "黑灰短发，眉眼锋利。",
+                    "reference_image_ref": {"kind": "asset", "asset_id": "template-character"},
+                }
+            ],
+            "prompt_template": "Process: {item}",
+            "prompt_fields": ["name", "variant_description"],
+            "passthrough_fields": ["reference_image_ref"],
+            "max_attempts": 1,
+        },
+    )
+
+    assert result.output["results"] == [
+        {
+            "full_name": "林冲_囚服",
+            "prompt": "黑灰短发，眉眼锋利",
+            "reference_image_ref": {"kind": "asset", "asset_id": "template-character"},
+        }
+    ]
+    user_prompt = router.requests[0].messages[-1].content
+    schema_prompt = router.requests[0].messages[0].content
+    assert "reference_image_ref" not in user_prompt
+    assert "reference_image_ref" not in schema_prompt
+    assert "variant_description" in user_prompt
+
+
+@pytest.mark.asyncio
 async def test_parallel_node_with_system_prompt() -> None:
     responses = ['{"result": "ok"}']
     router = FakeParallelRouter(responses)

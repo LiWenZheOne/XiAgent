@@ -56,6 +56,14 @@ class ParallelDeepSeekStructuredJsonNode(BaseNode):
                     },
                     "system": {"type": "string"},
                     "prompt_template": {"type": "string", "minLength": 1},
+                    "prompt_fields": {
+                        "type": "array",
+                        "items": {"type": "string", "minLength": 1},
+                    },
+                    "passthrough_fields": {
+                        "type": "array",
+                        "items": {"type": "string", "minLength": 1},
+                    },
                     "max_attempts": {"type": "integer", "minimum": 1},
                 },
                 "required": ["items", "prompt_template"],
@@ -101,14 +109,18 @@ class ParallelDeepSeekStructuredJsonNode(BaseNode):
         if not isinstance(system, str) or not system.strip():
             system = None
 
+        prompt_fields = _string_list(inputs.get("prompt_fields"))
+        passthrough_fields = _string_list(inputs.get("passthrough_fields"))
         schema = ctx.output_schema if ctx is not None else self.describe().output_schema
         item_schema = schema.get("properties", {}).get("results", {}).get("items", {})
+        llm_item_schema = _schema_without_passthrough_fields(item_schema, passthrough_fields)
 
         async def process_one(item: dict[str, Any]) -> dict[str, Any]:
-            item_json = json.dumps(item, ensure_ascii=False)
+            prompt_item = _project_item(item, prompt_fields)
+            item_json = json.dumps(prompt_item, ensure_ascii=False)
             prompt = prompt_template.replace("{item}", item_json)
 
-            schema_instruction = _schema_instruction(item_schema)
+            schema_instruction = _schema_instruction(llm_item_schema)
             last_error: ValidationError | None = None
             current_prompt = prompt
 
@@ -141,7 +153,7 @@ class ParallelDeepSeekStructuredJsonNode(BaseNode):
                         )
                 else:
                     try:
-                        validate_json_value(item_schema, parsed)
+                        validate_json_value(llm_item_schema, parsed)
                     except ValidationError as exc:
                         last_error = ValidationError(
                             code="structured_json_validation_failed",
@@ -149,7 +161,7 @@ class ParallelDeepSeekStructuredJsonNode(BaseNode):
                             details={"attempt": attempt + 1, "error": exc.details},
                         )
                     else:
-                        return parsed
+                        return _with_passthrough_fields(parsed, item, passthrough_fields)
 
                 current_prompt = (
                     f"{prompt}\n\n"
@@ -196,3 +208,46 @@ def _normalise_items(value: Any) -> list[dict[str, Any]]:
             normalised.setdefault("_source_collection", key)
             items.append(normalised)
     return items
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item.strip() for item in value if isinstance(item, str) and item.strip()]
+
+
+def _project_item(item: dict[str, Any], fields: list[str]) -> dict[str, Any]:
+    if not fields:
+        return item
+    return {field: item[field] for field in fields if field in item}
+
+
+def _schema_without_passthrough_fields(schema: Any, passthrough_fields: list[str]) -> Any:
+    if not isinstance(schema, dict) or not passthrough_fields:
+        return schema
+    next_schema = dict(schema)
+    properties = next_schema.get("properties")
+    if isinstance(properties, dict):
+        next_schema["properties"] = {
+            key: value for key, value in properties.items() if key not in passthrough_fields
+        }
+    required = next_schema.get("required")
+    if isinstance(required, list):
+        next_schema["required"] = [
+            key for key in required if not (isinstance(key, str) and key in passthrough_fields)
+        ]
+    return next_schema
+
+
+def _with_passthrough_fields(
+    parsed: dict[str, Any],
+    source: dict[str, Any],
+    passthrough_fields: list[str],
+) -> dict[str, Any]:
+    if not passthrough_fields:
+        return parsed
+    result = dict(parsed)
+    for field in passthrough_fields:
+        if field in source:
+            result[field] = source[field]
+    return result

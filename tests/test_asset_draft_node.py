@@ -99,6 +99,7 @@ async def test_asset_draft_node_builds_prompt_and_returns_multiple_typed_assets(
     assert "必须从身份、职业/阶层、时代、地点和当前情景推导一个具体稳定造型名" in prompt_text
     assert "禁止填“默认”“基础”“普通”“无特殊造型”" in prompt_text
     assert "至少 40 字的详细稳定视觉设定" in prompt_text
+    assert "不要描述任何材质、布料质感、纹理或面料工艺" in prompt_text
     assert "禁止“默认装束，无特殊造型描述”" in prompt_text
     assert "穿戴类外观元素不作为 prop" in prompt_text
     assert "官兵押着犯人上船" in prompt_text
