@@ -8,6 +8,7 @@ export interface AssetSearchParams {
   asset_type?: string;
   collection_id?: string;
   tag_ids?: string[];
+  tag_names?: string[];
   mime_type?: string;
 }
 
@@ -28,6 +29,7 @@ export async function searchAssets(filters: AssetSearchParams = {}): Promise<Ass
   appendParam(params, "asset_type", filters.asset_type);
   appendParam(params, "collection_id", filters.collection_id);
   appendParam(params, "tag_ids", filters.tag_ids);
+  appendParam(params, "tag_names", filters.tag_names);
   appendParam(params, "mime_type", filters.mime_type);
 
   const query = params.toString();

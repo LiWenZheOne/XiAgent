@@ -502,6 +502,7 @@ async def search_assets(
     mime_type: str | None = None,
     collection_id: str | None = None,
     tag_ids: str | None = None,
+    tag_names: str | None = None,
 ) -> dict:
     result = await services.assets.search_assets(
         user_id=current_user.user_id,
@@ -512,6 +513,7 @@ async def search_assets(
         mime_type=mime_type,
         collection_id=collection_id,
         tag_ids=_split_ids(tag_ids),
+        tag_names=_split_ids(tag_names),
     )
     return {"items": [asdict(asset) for asset in result.items], "total": result.total}
 

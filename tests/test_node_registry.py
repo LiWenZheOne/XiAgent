@@ -277,6 +277,10 @@ async def test_episode_metadata_nodes_roundtrip_payload() -> None:
         def __init__(self, text_content: str) -> None:
             self.text_content = text_content
 
+    class FakeSearchResult:
+        def __init__(self, items: list[FakeAsset]) -> None:
+            self.items = items
+
     class FakeAssetService:
         def __init__(self) -> None:
             self.created: dict[str, FakeAsset] = {}
@@ -296,6 +300,9 @@ async def test_episode_metadata_nodes_roundtrip_payload() -> None:
 
         async def get_asset_content(self, **kwargs: Any) -> FakeAssetContent:
             return FakeAssetContent(self.created[kwargs["asset_id"]].text_content)
+
+        async def search_assets(self, **kwargs: Any) -> FakeSearchResult:
+            return FakeSearchResult([])
 
     service = FakeAssetService()
     ctx = NodeContext(
@@ -328,7 +335,7 @@ async def test_episode_metadata_nodes_roundtrip_payload() -> None:
     )
 
     assert service.created["asset-episode"].metadata["type"] == "episode_metadata"
-    assert service.created["asset-episode"].metadata["tags"] == ["集元数据", "23、私放晁天王"]
+    assert "tags" not in service.created["asset-episode"].metadata
     assert loaded.output["episode_name"] == "23、私放晁天王"
     assert loaded.output["source_script"] == "宋江见了晁盖。"
     assert result.output["asset_images"] == [{"full_name": "宋江", "asset_id": "asset-songjiang"}]

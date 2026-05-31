@@ -55,6 +55,7 @@ class AssetLookupNode(BaseNode):
                                 "asset_type": {"type": "string"},
                                 "mime_type": {"type": "string"},
                                 "storage_uri": {"type": "string"},
+                                "tags": {"type": "array", "items": {"type": "string"}},
                                 "metadata": {"type": "object"},
                             },
                             "required": ["asset_id", "name"],
@@ -124,6 +125,7 @@ class AssetLookupNode(BaseNode):
             keyword=keyword,
             asset_type=asset_type,
             mime_type=mime_type,
+            tag_names=tags,
             limit=limit,
         )
 
@@ -140,31 +142,15 @@ class AssetLookupNode(BaseNode):
                 total=sum(1 for item in result.items if item.name in name_set),
             )
 
-        if tags is not None and tags:
-            tag_set = set(tags)
-            result = type(result)(
-                items=[
-                    item
-                    for item in result.items
-                    if isinstance(item.metadata, dict)
-                    and isinstance(item.metadata.get("tags"), list)
-                    and any(t in tag_set for t in item.metadata["tags"])
-                ],
-                total=sum(
-                    1
-                    for item in result.items
-                    if isinstance(item.metadata, dict)
-                    and isinstance(item.metadata.get("tags"), list)
-                    and any(t in tag_set for t in item.metadata["tags"])
-                ),
-            )
-
         assets: list[dict[str, Any]] = []
         for item in result.items:
+            item_tags = await _asset_tag_names(ctx, item)
             asset_dict: dict[str, Any] = {
                 "asset_id": item.asset_id,
                 "name": item.name,
             }
+            if item_tags:
+                asset_dict["tags"] = item_tags
             if item.asset_type is not None:
                 asset_dict["asset_type"] = item.asset_type
             if item.mime_type is not None:
@@ -181,3 +167,15 @@ class AssetLookupNode(BaseNode):
             status="succeeded",
             output={"total": result.total, "assets": assets},
         )
+
+
+async def _asset_tag_names(ctx: NodeContext, asset: Any) -> list[str]:
+    records = await ctx.asset_service.list_asset_tags(
+        user_id=ctx.user_id,
+        asset_id=asset.asset_id,
+    )
+    return [
+        tag.name.strip()
+        for tag in records
+        if isinstance(getattr(tag, "name", None), str) and tag.name.strip()
+    ]

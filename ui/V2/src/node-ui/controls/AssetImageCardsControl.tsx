@@ -1,7 +1,8 @@
 import { type ChangeEvent, type DragEvent, useEffect, useMemo, useState } from "react";
 
-import { generateAssetImage, searchAssets, uploadAsset } from "../../api/assets";
-import type { AssetRecord, AssetScope } from "../../api/types";
+import { createAssetTag, generateAssetImage, listAssetTags, searchAssets, uploadAsset } from "../../api/assets";
+import type { AssetRecord, AssetScope, AssetTag } from "../../api/types";
+import { assetNameFromTagNames, assetTagNamesForCatalogAsset, catalogAssetTypeTags } from "../../utils/assetNaming";
 import type { NodeUiControlProps } from "../types";
 import { createStoredZip, extensionFromBlobOrUrl, safeAssetImageFileName } from "./assetZip";
 
@@ -76,6 +77,7 @@ export function AssetImageCardsControl({
   const [pickerCard, setPickerCard] = useState<AssetImageCard | null>(null);
   const [pickerKeyword, setPickerKeyword] = useState("");
   const [pickerAssets, setPickerAssets] = useState<AssetRecord[]>([]);
+  const [libraryTags, setLibraryTags] = useState<AssetTag[]>([]);
   const [pickerLoading, setPickerLoading] = useState(false);
   const [pickerError, setPickerError] = useState("");
   const [libraryBusy, setLibraryBusy] = useState(false);
@@ -89,19 +91,34 @@ export function AssetImageCardsControl({
   }, [cards]);
 
   useEffect(() => {
+    let active = true;
+    listAssetTags("combined", projectId && projectId !== "global" ? projectId : undefined)
+      .then((items) => {
+        if (active) setLibraryTags(items);
+      })
+      .catch(() => {
+        if (active) setLibraryTags([]);
+      });
+    return () => {
+      active = false;
+    };
+  }, [projectId]);
+
+  useEffect(() => {
     if (!pickerCard) return;
     let active = true;
     setPickerLoading(true);
     setPickerError("");
+    const tagName = tagNameForAssetType(pickerCard.assetType);
     searchAssets({
       scope: "combined",
       project_id: projectId && projectId !== "global" ? projectId : undefined,
       keyword: pickerKeyword.trim() || undefined,
-      asset_type: "text",
+      tag_names: tagName ? [tagName] : undefined,
     })
       .then((items) => {
         if (!active) return;
-        setPickerAssets(items.filter((asset) => assetMatchesCardType(asset, pickerCard.assetType)));
+        setPickerAssets(tagName ? items : []);
       })
       .catch((nextError) => {
         if (active) setPickerError(nextError instanceof Error ? nextError.message : "资产搜索失败。");
@@ -112,7 +129,7 @@ export function AssetImageCardsControl({
     return () => {
       active = false;
     };
-  }, [pickerCard, pickerKeyword, projectId]);
+  }, [libraryTags, pickerCard, pickerKeyword, projectId]);
 
   async function persistDraft(
     nextImages: ImageState,
@@ -187,6 +204,12 @@ export function AssetImageCardsControl({
         const fullName = cardDisplayName(edit, group);
         const imageUrl = images[card.assetKey];
         const imageFile = await fileFromImageUrl(imageUrl, fullName);
+        const tagIds = await ensureAssetTagIds({
+          projectId,
+          tags: assetLibraryTags(card, edit, group),
+          currentTags: libraryTags,
+          onTagsChanged: setLibraryTags,
+        });
         return uploadAsset({
           file: imageFile,
           scope: uploadScope(projectId),
@@ -196,11 +219,11 @@ export function AssetImageCardsControl({
           metadata: {
             type: card.assetType,
             asset_type: card.assetType,
-            tags: assetLibraryTags(card, edit, group),
             prompt: edit.prompt.trim(),
             appearance_description: card.referenceAppearanceDescription || "",
             source: "asset_catalog_workflow",
           },
+          tag_ids: tagIds,
         });
       }));
       onSubmit?.(finishPayload(createdAssets.map((asset) => asset.asset_id).filter(Boolean)));
@@ -818,16 +841,52 @@ function readonlyImages(value: unknown): ImageState {
 
 function assetLibraryTags(card: AssetImageCard, edit: CardEditState, group: TabKey): string[] {
   const name = edit.name.trim() || card.title;
-  if (group === "character") {
-    return ["角色", name, normalizedVariantName(name, edit.variantName) || "默认", edit.accessories.trim()].filter(Boolean);
+  return assetTagNamesForCatalogAsset({
+    group: group === "character" || group === "scene" || group === "prop" ? group : "asset",
+    name,
+    variantName: normalizedVariantName(name, edit.variantName) || "默认",
+    accessories: edit.accessories.trim(),
+  });
+}
+
+async function ensureAssetTagIds(options: {
+  projectId?: string;
+  tags: string[];
+  currentTags: AssetTag[];
+  onTagsChanged: (tags: AssetTag[]) => void;
+}): Promise<string[]> {
+  const scope = uploadScope(options.projectId);
+  const project_id = options.projectId && options.projectId !== "global" ? options.projectId : undefined;
+  let knownTags = options.currentTags;
+  const tagIds: string[] = [];
+  for (const tagName of options.tags) {
+    const cleanName = tagName.trim();
+    if (!cleanName) continue;
+    let tag = knownTags.find((item) => item.name === cleanName && item.scope === scope && (item.project_id || undefined) === project_id);
+    if (!tag) {
+      try {
+        tag = await createAssetTag({ scope, project_id, name: cleanName });
+        knownTags = [...knownTags, tag];
+      } catch (error) {
+        const refreshedTags = await listAssetTags(scope, project_id);
+        const existingTag = refreshedTags.find((item) => item.name === cleanName && item.scope === scope && (item.project_id || undefined) === project_id);
+        if (!existingTag) throw error;
+        tag = existingTag;
+        knownTags = refreshedTags;
+      }
+      options.onTagsChanged(knownTags);
+    }
+    tagIds.push(tag.tag_id);
   }
-  if (group === "scene") {
-    return ["地点", name, edit.variantName.trim()].filter(Boolean);
-  }
-  if (group === "prop") {
-    return ["道具", name, edit.variantName.trim(), edit.accessories.trim()].filter(Boolean);
-  }
-  return ["资产", name].filter(Boolean);
+  return tagIds;
+}
+
+function tagNameForAssetType(assetType: string): string {
+  const group = tabKeyForAssetType(assetType);
+  if (group === "character") return catalogAssetTypeTags.character;
+  if (group === "scene") return catalogAssetTypeTags.scene;
+  if (group === "prop") return catalogAssetTypeTags.prop;
+  return "";
 }
 
 async function fileFromImageUrl(imageUrl: string, fullName: string): Promise<File> {
@@ -863,10 +922,12 @@ function cardEditFromCard(card: AssetImageCard): CardEditState {
 
 function cardDisplayName(edit: CardEditState, group: TabKey): string {
   const name = edit.name.trim();
-  const variantName = normalizedVariantName(name, edit.variantName);
-  const parts = [name, variantName, edit.accessories.trim()]
-    .filter((part, index) => part && !(index === 1 && group === "character" && part === "默认"));
-  return parts.length ? parts.join("_") : "未命名资产";
+  return assetNameFromTagNames(assetTagNamesForCatalogAsset({
+    group: group === "character" || group === "scene" || group === "prop" ? group : "asset",
+    name,
+    variantName: normalizedVariantName(name, edit.variantName) || "默认",
+    accessories: edit.accessories.trim(),
+  })) || "未命名资产";
 }
 
 function normalizedVariantName(name: string, variantName: string): string {
@@ -961,31 +1022,8 @@ function displayValue(value: unknown): string {
   return "";
 }
 
-function assetMatchesCardType(asset: AssetRecord, assetType: string): boolean {
-  const tabKey = tabKeyForAssetType(assetType);
-  const expected = groupLabels[tabKey];
-  const metadata = asset.metadata as Record<string, unknown>;
-  const tags = Array.isArray(metadata.tags) ? metadata.tags : [];
-  const values = [
-    ...tags,
-    metadata.asset_type,
-    metadata.asset_kind,
-    metadata.category,
-    metadata.type,
-  ].map((value) => String(value ?? "").trim()).filter(Boolean);
-  return values.some((value) => (
-    value === expected
-    || value === tabKey
-    || (tabKey === "scene" && (value === "asset" || value === "location" || value === "地点" || value === "场景"))
-    || (tabKey === "character" && (value === "role" || value === "角色"))
-    || (tabKey === "prop" && value === "道具")
-  ));
-}
-
 function assetSummary(asset: AssetRecord): string {
-  const tags = Array.isArray(asset.metadata?.tags) ? asset.metadata.tags.filter((item) => typeof item === "string") : [];
-  const parts = [asset.scope === "project" ? "项目资产" : "全局资产", ...tags.slice(0, 2)];
-  return parts.join(" · ");
+  return asset.scope === "project" ? "项目资产" : "全局资产";
 }
 
 function imageRefFromAsset(asset: AssetRecord): ImageRef {

@@ -175,7 +175,7 @@ function mockFetch() {
       project_id: "global",
       mime_type: "image/png",
       size_bytes: 1024,
-      metadata: { public_url: "https://cdn.example.com/ref.png", tags: ["角色"], variant_description: "动态显示的变体描述" },
+      metadata: { public_url: "https://cdn.example.com/ref.png", variant_description: "动态显示的变体描述" },
       created_at: "2026-05-27T08:01:00Z",
     },
     {
@@ -233,6 +233,28 @@ function mockFetch() {
             status: "waiting",
             current_node_id: "choose_image",
             created_at: "2026-05-27T08:10:00Z",
+          },
+          {
+            task_id: "task-storyboard-23",
+            project_id: "global",
+            workflow_id: "asset_storyboard_generation",
+            workflow_name: "Asset Storyboard Generation",
+            workflow_version: "1.1.0",
+            status: "waiting",
+            current_node_id: "select_episode_metadata",
+            current_view: { summary: { episode_name: "23、私放晁天王" } },
+            created_at: "2026-05-27T08:09:30Z",
+          },
+          {
+            task_id: "task-episode-23",
+            project_id: "global",
+            workflow_id: "asset_catalog",
+            workflow_name: "资产提取",
+            workflow_version: "1.0.0",
+            status: "waiting",
+            current_node_id: "collect_asset_catalog_input",
+            current_view: { summary: { episode_name: "23、私放晁天王" } },
+            created_at: "2026-05-27T08:09:00Z",
           },
           ...createdTasks.filter((task) => task.project_id === "global"),
         ].filter((task) => !deletedTaskIds.has(task.task_id)),
@@ -439,6 +461,72 @@ function mockFetch() {
       url === "/api/assets/tags?scope=combined&project_id=project-2" ||
       url === "/api/assets/tags?scope=project&project_id=project-2"
     ) return jsonResponse({ items: assetTagItems() });
+    if (url === "/api/tasks/task-episode-23?project_id=global") {
+      return jsonResponse({
+        task: {
+          task_id: "task-episode-23",
+          project_id: "global",
+          workflow_id: "asset_catalog",
+          workflow_name: "资产提取",
+          workflow_version: "1.0.0",
+          status: "waiting",
+          current_node_id: "collect_asset_catalog_input",
+          current_view: { summary: { episode_name: "23、私放晁天王" } },
+          created_at: "2026-05-27T08:09:00Z",
+        },
+        workflow_snapshot: {
+          workflow: { id: "asset_catalog", version: "1.0.0", name: "资产提取" },
+          nodes: [{ id: "collect_asset_catalog_input", ref: "system.user_input.v1", name: "剧本输入" }],
+          edges: [],
+        },
+        node_executions: [
+          {
+            node_execution_id: "exec-episode-input",
+            node_id: "collect_asset_catalog_input",
+            node_ref: "system.user_input.v1",
+            status: "waiting",
+            input_snapshot: {},
+            output_snapshot: { episode_name: "23、私放晁天王" },
+            attempt: 1,
+          },
+        ],
+        node_attempts: {},
+        events: [],
+      });
+    }
+    if (url === "/api/tasks/task-storyboard-23?project_id=global") {
+      return jsonResponse({
+        task: {
+          task_id: "task-storyboard-23",
+          project_id: "global",
+          workflow_id: "asset_storyboard_generation",
+          workflow_name: "Asset Storyboard Generation",
+          workflow_version: "1.1.0",
+          status: "waiting",
+          current_node_id: "select_episode_metadata",
+          current_view: { summary: { episode_name: "23、私放晁天王" } },
+          created_at: "2026-05-27T08:09:30Z",
+        },
+        workflow_snapshot: {
+          workflow: { id: "asset_storyboard_generation", version: "1.1.0", name: "分镜生成" },
+          nodes: [{ id: "select_episode_metadata", ref: "system.user_input.v1", name: "选择集" }],
+          edges: [],
+        },
+        node_executions: [
+          {
+            node_execution_id: "exec-storyboard-episode",
+            node_id: "select_episode_metadata",
+            node_ref: "system.user_input.v1",
+            status: "waiting",
+            input_snapshot: {},
+            output_snapshot: { episode_name: "23、私放晁天王" },
+            attempt: 1,
+          },
+        ],
+        node_attempts: {},
+        events: [],
+      });
+    }
     if (url === "/api/tasks/task-1?project_id=global" || url === "/api/tasks/task-2?project_id=global" || url === "/api/tasks/task-1?project_id=project-1" || url === "/api/tasks/task-2?project_id=project-1") {
       const createdTask = createdTasks.find((task) => task.task_id === "task-2");
       const projectId = url.includes("project_id=global") ? "global" : "project-1";
@@ -564,6 +652,16 @@ describe("XiAgent V2 app", () => {
 
     expect(screen.getByRole("heading", { name: "全局项目" })).toBeInTheDocument();
     expect(screen.getByText("所有用户可访问的默认项目")).toBeInTheDocument();
+    const storyboardTask = screen.getByRole("button", { name: "打开 分镜生成" });
+    expect(storyboardTask).toHaveTextContent("第23集 私放晁天王");
+    await userEvent.click(storyboardTask);
+    await screen.findByLabelText("任务运行详情");
+    expect(screen.getByRole("button", { name: "打开 分镜生成" })).toHaveTextContent("第23集 私放晁天王");
+    const assetTask = screen.getByRole("button", { name: "打开 资产提取" });
+    expect(assetTask).toHaveTextContent("第23集 私放晁天王");
+    await userEvent.click(assetTask);
+    await screen.findByLabelText("任务运行详情");
+    expect(screen.getByRole("button", { name: "打开 资产提取" })).toHaveTextContent("第23集 私放晁天王");
     expect(screen.queryByLabelText("当前项目")).not.toBeInTheDocument();
   });
 
@@ -743,7 +841,7 @@ describe("XiAgent V2 app", () => {
             task_id: "task-1",
             project_id: "global",
             workflow_id: "asset_catalog",
-            workflow_name: "角色资产编目",
+            workflow_name: "资产提取",
             workflow_version: "1.0.0",
             status: "succeeded",
             current_node_id: "finish_summary",
@@ -753,7 +851,7 @@ describe("XiAgent V2 app", () => {
             workflow: {
               id: "asset_catalog",
               version: "1.0.0",
-              name: "角色资产编目",
+              name: "资产提取",
               ui: {
                 stages: [{ id: "p5_final", name: "P5 任务完成", nodes: ["finish_summary"] }],
               },
@@ -1209,14 +1307,29 @@ describe("XiAgent V2 app", () => {
     await userEvent.click(screen.getByRole("button", { name: "重命名资产" }));
     const nameInput = screen.getByLabelText("资产名称");
     await userEvent.clear(nameInput);
-    await userEvent.type(nameInput, "主角立绘");
+    await userEvent.type(nameInput, "角色_林冲_默认");
     await userEvent.click(screen.getByRole("button", { name: "保存资产名称" }));
 
     await waitFor(() => {
       const patchCall = fetchMock.mock.calls.find(([url, init]) => url === "/api/assets/asset-1" && init?.method === "PATCH");
       expect(patchCall).toBeTruthy();
-      expect(JSON.parse(String(patchCall?.[1]?.body))).toMatchObject({ name: "主角立绘" });
-      expect(screen.getByRole("heading", { name: "主角立绘" })).toBeInTheDocument();
+      expect(JSON.parse(String(patchCall?.[1]?.body))).toMatchObject({ name: "角色_林冲_默认" });
+      expect(screen.getByRole("heading", { name: "角色_林冲_默认" })).toBeInTheDocument();
+      expect(
+        fetchMock.mock.calls.some(([url, init]) =>
+          url === "/api/assets/tags" && init?.method === "POST" && JSON.parse(String(init?.body)).name === "林冲",
+        ),
+      ).toBe(true);
+      expect(
+        fetchMock.mock.calls.some(([url, init]) =>
+          url === "/api/assets/tags" && init?.method === "POST" && JSON.parse(String(init?.body)).name === "默认",
+        ),
+      ).toBe(true);
+      expect(
+        fetchMock.mock.calls.some(([url, init]) =>
+          String(url).startsWith("/api/assets/asset-1/tags/") && init?.method === "POST",
+        ),
+      ).toBe(true);
     });
   });
 
@@ -1228,7 +1341,6 @@ describe("XiAgent V2 app", () => {
     await userEvent.click(screen.getByRole("button", { name: "资产库" }));
     expect(await screen.findByRole("heading", { name: "参考图" })).toBeInTheDocument();
     expect(screen.getByLabelText("metadata public_url")).toHaveValue("https://cdn.example.com/ref.png");
-    expect(screen.getByLabelText("metadata tags")).toHaveValue(JSON.stringify(["角色"], null, 2));
     const variantDescription = screen.getByLabelText("metadata variant_description");
     expect(variantDescription).toHaveValue("动态显示的变体描述");
 

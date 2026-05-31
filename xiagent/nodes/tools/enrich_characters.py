@@ -74,7 +74,7 @@ class EnrichCharactersNode(BaseNode):
             if isinstance(match, dict) and isinstance(match.get("full_name"), str):
                 name_to_semantic[match["full_name"]] = match
 
-        # Build variant map from existing_assets using 4-level tags:
+        # Build variant map from existing_assets using asset library tags:
         # tags = ["角色", "林冲", "囚服", "佩刀"]
         #         L1     L2     L3    L4
         # L3 non-empty => variant; L3 empty => base image
@@ -82,10 +82,8 @@ class EnrichCharactersNode(BaseNode):
         for asset in existing_assets:
             if not isinstance(asset, dict):
                 continue
-            metadata = asset.get("metadata")
-            if not isinstance(metadata, dict):
-                continue
-            tags = metadata.get("tags")
+            metadata = asset.get("metadata") if isinstance(asset.get("metadata"), dict) else {}
+            tags = _asset_tags(asset)
             if not isinstance(tags, list) or len(tags) < 2:
                 continue
             # L1 = tags[0] (e.g. "角色"), L2 = tags[1] (e.g. "林冲")
@@ -100,6 +98,7 @@ class EnrichCharactersNode(BaseNode):
                     "name": asset.get("name", ""),
                     "variant": variant_tag,
                     "metadata": metadata,
+                    "tags": tags,
                 }
                 image_url = _asset_image_url(asset)
                 if image_url:
@@ -182,6 +181,13 @@ def _asset_image_url(asset: Mapping[str, Any]) -> str | None:
                 return value.strip()
 
     return None
+
+
+def _asset_tags(asset: Mapping[str, Any]) -> list[str]:
+    tags = asset.get("tags")
+    if isinstance(tags, list):
+        return [tag.strip() for tag in tags if isinstance(tag, str) and tag.strip()]
+    return []
 
 
 def _asset_image_ref(asset: Mapping[str, Any]) -> dict[str, Any] | None:

@@ -72,7 +72,18 @@ async def list_tasks(
         user_id=current_user.user_id,
         project_id=project_id,
     )
-    return {"items": [asdict(task) for task in tasks]}
+    items = []
+    for task in tasks:
+        item = asdict(task)
+        if _task_uses_episode_summary(task.workflow_id):
+            node_executions = await services.runtime.list_node_executions(
+                user_id=current_user.user_id,
+                project_id=project_id,
+                task_id=task.task_id,
+            )
+            _attach_task_episode_summary(item, node_executions)
+        items.append(item)
+    return {"items": items}
 
 
 @router.get("/{task_id}")
@@ -102,8 +113,11 @@ async def get_task(
         project_id=project_id,
         task_id=task_id,
     )
+    task_item = asdict(task)
+    if _task_uses_episode_summary(task.workflow_id):
+        _attach_task_episode_summary(task_item, node_executions)
     return {
-        "task": asdict(task),
+        "task": task_item,
         "node_executions": [asdict(execution) for execution in node_executions],
         "node_attempts": _group_node_attempts(node_executions),
         "events": [asdict(event) for event in events],
@@ -231,6 +245,36 @@ def _group_node_attempts(executions: list[NodeExecutionRecord]) -> dict[str, lis
     for execution in executions:
         grouped.setdefault(execution.node_id, []).append(asdict(execution))
     return grouped
+
+
+def _attach_task_episode_summary(item: dict[str, Any], node_executions: list[NodeExecutionRecord]) -> None:
+    episode_name = _task_episode_name(node_executions)
+    if not episode_name:
+        return
+    current_view = item.get("current_view")
+    if not isinstance(current_view, dict):
+        current_view = {}
+        item["current_view"] = current_view
+    summary = current_view.get("summary")
+    if not isinstance(summary, dict):
+        summary = {}
+        current_view["summary"] = summary
+    summary["episode_name"] = episode_name
+
+
+def _task_uses_episode_summary(workflow_id: str) -> bool:
+    return workflow_id in {"asset_catalog", "asset_storyboard_generation"}
+
+
+def _task_episode_name(node_executions: list[NodeExecutionRecord]) -> str:
+    for execution in reversed(node_executions):
+        for snapshot in (execution.output_snapshot, execution.input_snapshot):
+            if not isinstance(snapshot, dict):
+                continue
+            episode_name = snapshot.get("episode_name")
+            if isinstance(episode_name, str) and episode_name.strip():
+                return episode_name.strip()
+    return ""
 
 
 def _task_event_is_terminal(event_type: str) -> bool:

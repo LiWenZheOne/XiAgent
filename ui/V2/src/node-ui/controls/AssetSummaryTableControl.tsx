@@ -2,6 +2,7 @@ import { type ChangeEvent, useEffect, useMemo, useState } from "react";
 
 import { draftAssetFromDescription, searchAssets, uploadAsset } from "../../api/assets";
 import type { AssetRecord, AssetScope } from "../../api/types";
+import { catalogAssetTypeTags } from "../../utils/assetNaming";
 import type { NodeUiControlProps } from "../types";
 
 type TabKey = "character" | "asset" | "prop";
@@ -93,15 +94,16 @@ export function AssetSummaryTableControl({
     let active = true;
     setPickerLoading(true);
     setPickerError("");
+    const tagName = tagNameForRowType(pickerRow.type);
     searchAssets({
       scope: "combined",
       project_id: projectId && projectId !== "global" ? projectId : undefined,
       keyword: pickerKeyword.trim() || undefined,
-      asset_type: "text",
+      tag_names: tagName ? [tagName] : undefined,
     })
       .then((items) => {
         if (!active) return;
-        setPickerAssets(items.filter((asset) => assetMatchesRowType(asset, pickerRow.type)));
+        setPickerAssets(tagName ? items : []);
       })
       .catch((nextError) => {
         if (active) setPickerError(nextError instanceof Error ? nextError.message : "资产搜索失败。");
@@ -801,24 +803,15 @@ function textareaRows(value: string): number {
   return Math.min(8, Math.max(2, lineRows));
 }
 
-function assetMatchesRowType(asset: AssetRecord, type: TabKey): boolean {
-  const expected = tabLabels[type];
-  const metadata = asset.metadata as Record<string, unknown>;
-  const tags = Array.isArray(metadata.tags) ? metadata.tags : [];
-  const values = [
-    ...tags,
-    metadata.asset_type,
-    metadata.asset_kind,
-    metadata.category,
-    metadata.type,
-  ].map((value) => String(value ?? "").trim()).filter(Boolean);
-  return values.some((value) => value === expected || value === type || (type === "asset" && (value === "scene" || value === "场景")));
+function assetSummary(asset: AssetRecord): string {
+  return asset.scope === "project" ? "项目资产" : "全局资产";
 }
 
-function assetSummary(asset: AssetRecord): string {
-  const tags = Array.isArray(asset.metadata?.tags) ? asset.metadata.tags.filter((item) => typeof item === "string") : [];
-  const parts = [asset.scope === "project" ? "项目资产" : "全局资产", ...tags.slice(0, 2)];
-  return parts.join(" · ");
+function tagNameForRowType(type: TabKey): string {
+  if (type === "character") return catalogAssetTypeTags.character;
+  if (type === "asset") return catalogAssetTypeTags.scene;
+  if (type === "prop") return catalogAssetTypeTags.prop;
+  return "";
 }
 
 function assetImageUrl(asset: unknown): string | undefined {

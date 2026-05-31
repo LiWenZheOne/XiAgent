@@ -16,7 +16,7 @@ from xiagent.assets.models import (
     AssetSearchResult,
     AssetTagRecord,
 )
-from xiagent.core.errors import NotFoundError, ValidationError
+from xiagent.core.errors import ConflictError, NotFoundError, ValidationError
 from xiagent.core.ids import new_id
 from xiagent.core.services import AssetService, UserService
 from xiagent.infrastructure.database import connect_db
@@ -58,32 +58,46 @@ class SqliteAssetService(AssetService):
         now = _utc_now()
         metadata_json = _metadata_json(metadata)
         async with connect_db(self._database_path) as db:
-            await db.execute(
-                """
-                insert into assets (
-                  asset_id, scope, project_id, asset_type, name, mime_type, content_hash,
-                  size_bytes, storage_uri, text_content, metadata_json, created_by,
-                  created_at, updated_at, deleted_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    asset_id,
-                    scope,
-                    project_id,
-                    "text",
-                    clean_name,
-                    "text/plain",
-                    None,
-                    size_bytes,
-                    None,
-                    text,
-                    metadata_json,
-                    user_id,
-                    now,
-                    now,
-                    None,
-                ),
+            await _ensure_asset_name_available(
+                db,
+                scope=scope,
+                project_id=project_id,
+                name=clean_name,
             )
+            try:
+                await db.execute(
+                    """
+                    insert into assets (
+                      asset_id, scope, project_id, asset_type, name, mime_type, content_hash,
+                      size_bytes, storage_uri, text_content, metadata_json, created_by,
+                      created_at, updated_at, deleted_at
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        asset_id,
+                        scope,
+                        project_id,
+                        "text",
+                        clean_name,
+                        "text/plain",
+                        None,
+                        size_bytes,
+                        None,
+                        text,
+                        metadata_json,
+                        user_id,
+                        now,
+                        now,
+                        None,
+                    ),
+                )
+            except aiosqlite.IntegrityError as exc:
+                _raise_asset_name_conflict_from_integrity(
+                    exc,
+                    scope=scope,
+                    project_id=project_id,
+                    name=clean_name,
+                )
             await _insert_search_entry(
                 db,
                 asset_id=asset_id,
@@ -144,6 +158,12 @@ class SqliteAssetService(AssetService):
         clean_collection_ids = _clean_string_list(collection_ids)
         clean_tag_ids = _clean_string_list(tag_ids)
         async with connect_db(self._database_path) as db:
+            await _ensure_asset_name_available(
+                db,
+                scope=scope,
+                project_id=project_id,
+                name=clean_name,
+            )
             await _validate_index_targets(
                 db,
                 scope=scope,
@@ -179,32 +199,40 @@ class SqliteAssetService(AssetService):
 
             metadata_json = _metadata_json(clean_metadata)
             async with connect_db(self._database_path) as db:
-                await db.execute(
-                    """
-                    insert into assets (
-                      asset_id, scope, project_id, asset_type, name, mime_type, content_hash,
-                      size_bytes, storage_uri, text_content, metadata_json, created_by,
-                      created_at, updated_at, deleted_at
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        asset_id,
-                        scope,
-                        project_id,
-                        "file",
-                        clean_name,
-                        content_type,
-                        content_hash,
-                        size_bytes,
-                        storage_uri,
-                        None,
-                        metadata_json,
-                        user_id,
-                        now,
-                        now,
-                        None,
-                    ),
-                )
+                try:
+                    await db.execute(
+                        """
+                        insert into assets (
+                          asset_id, scope, project_id, asset_type, name, mime_type, content_hash,
+                          size_bytes, storage_uri, text_content, metadata_json, created_by,
+                          created_at, updated_at, deleted_at
+                        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            asset_id,
+                            scope,
+                            project_id,
+                            "file",
+                            clean_name,
+                            content_type,
+                            content_hash,
+                            size_bytes,
+                            storage_uri,
+                            None,
+                            metadata_json,
+                            user_id,
+                            now,
+                            now,
+                            None,
+                        ),
+                    )
+                except aiosqlite.IntegrityError as exc:
+                    _raise_asset_name_conflict_from_integrity(
+                        exc,
+                        scope=scope,
+                        project_id=project_id,
+                        name=clean_name,
+                    )
                 await _insert_search_entry(
                     db,
                     asset_id=asset_id,
@@ -457,14 +485,28 @@ class SqliteAssetService(AssetService):
         tag_id = new_id("tag")
         now = _utc_now()
         async with connect_db(self._database_path) as db:
-            await db.execute(
-                """
-                insert into asset_tags (
-                  tag_id, scope, project_id, name, description, created_by, created_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (tag_id, scope, project_id, clean_name, description, user_id, now, now),
+            await _ensure_asset_tag_name_available(
+                db,
+                scope=scope,
+                project_id=project_id,
+                name=clean_name,
             )
+            try:
+                await db.execute(
+                    """
+                    insert into asset_tags (
+                      tag_id, scope, project_id, name, description, created_by, created_at, updated_at
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (tag_id, scope, project_id, clean_name, description, user_id, now, now),
+                )
+            except aiosqlite.IntegrityError as exc:
+                _raise_asset_tag_name_conflict_from_integrity(
+                    exc,
+                    scope=scope,
+                    project_id=project_id,
+                    name=clean_name,
+                )
             row = await _fetch_one(db, "select * from asset_tags where tag_id = ?", (tag_id,))
         assert row is not None
         return _tag_from_row(row)
@@ -521,14 +563,29 @@ class SqliteAssetService(AssetService):
                 scope=existing["scope"],
                 project_id=existing["project_id"],
             )
-            await db.execute(
-                """
-                update asset_tags
-                set name = ?, description = ?, updated_at = ?
-                where tag_id = ?
-                """,
-                (clean_name, description, now, tag_id),
+            await _ensure_asset_tag_name_available(
+                db,
+                scope=existing["scope"],
+                project_id=existing["project_id"],
+                name=clean_name,
+                exclude_tag_id=tag_id,
             )
+            try:
+                await db.execute(
+                    """
+                    update asset_tags
+                    set name = ?, description = ?, updated_at = ?
+                    where tag_id = ?
+                    """,
+                    (clean_name, description, now, tag_id),
+                )
+            except aiosqlite.IntegrityError as exc:
+                _raise_asset_tag_name_conflict_from_integrity(
+                    exc,
+                    scope=existing["scope"],
+                    project_id=existing["project_id"],
+                    name=clean_name,
+                )
             row = await _fetch_one(db, "select * from asset_tags where tag_id = ?", (tag_id,))
         assert row is not None
         return _tag_from_row(row)
@@ -765,10 +822,25 @@ class SqliteAssetService(AssetService):
         metadata_json = _metadata_json(next_metadata)
         search_text = f"{clean_name}\n{asset.text_content or ''}\n{metadata_json}"
         async with connect_db(self._database_path) as db:
-            await db.execute(
-                "update assets set name = ?, metadata_json = ?, updated_at = ? where asset_id = ?",
-                (clean_name, metadata_json, now, asset_id),
+            await _ensure_asset_name_available(
+                db,
+                scope=asset.scope,
+                project_id=asset.project_id,
+                name=clean_name,
+                exclude_asset_id=asset_id,
             )
+            try:
+                await db.execute(
+                    "update assets set name = ?, metadata_json = ?, updated_at = ? where asset_id = ?",
+                    (clean_name, metadata_json, now, asset_id),
+                )
+            except aiosqlite.IntegrityError as exc:
+                _raise_asset_name_conflict_from_integrity(
+                    exc,
+                    scope=asset.scope,
+                    project_id=asset.project_id,
+                    name=clean_name,
+                )
             await db.execute(
                 "update asset_search_fts set search_text = ? where asset_id = ?",
                 (search_text, asset_id),
@@ -784,6 +856,85 @@ class SqliteAssetService(AssetService):
                 scope=asset.scope,
                 project_id=asset.project_id,
                 metadata=next_metadata,
+                search_text=clean_name,
+                now=now,
+            )
+            row = await _fetch_one(
+                db,
+                "select * from assets where asset_id = ? and deleted_at is null",
+                (asset_id,),
+            )
+
+        if row is None:
+            raise NotFoundError("asset_not_found", "Asset was not found", {"asset_id": asset_id})
+        return _asset_from_row(row)
+
+    async def update_text_asset(
+        self,
+        *,
+        user_id: str,
+        asset_id: str,
+        name: str,
+        text: str,
+        metadata: dict[str, Any],
+    ) -> AssetRecord:
+        clean_name = name.strip()
+        if not clean_name:
+            raise ValidationError("asset_name_required", "Asset name must not be empty")
+        if not text.strip():
+            raise ValidationError("asset_text_required", "Text asset content must not be empty")
+        asset = await self.get_asset(user_id=user_id, asset_id=asset_id)
+        if asset.asset_type != "text":
+            raise ValidationError("asset_not_text", "Only text assets can be updated with text content")
+        if asset.scope == "project":
+            await self._user_service.ensure_project_access(
+                user_id=user_id,
+                project_id=asset.project_id or "",
+                action="asset:write",
+            )
+        size_bytes = len(text.encode("utf-8"))
+        now = _utc_now()
+        metadata_json = _metadata_json(metadata)
+        search_text = f"{clean_name}\n{text}\n{metadata_json}"
+        async with connect_db(self._database_path) as db:
+            await _ensure_asset_name_available(
+                db,
+                scope=asset.scope,
+                project_id=asset.project_id,
+                name=clean_name,
+                exclude_asset_id=asset_id,
+            )
+            try:
+                await db.execute(
+                    """
+                    update assets
+                    set name = ?, text_content = ?, size_bytes = ?, metadata_json = ?, updated_at = ?
+                    where asset_id = ? and asset_type = 'text' and deleted_at is null
+                    """,
+                    (clean_name, text, size_bytes, metadata_json, now, asset_id),
+                )
+            except aiosqlite.IntegrityError as exc:
+                _raise_asset_name_conflict_from_integrity(
+                    exc,
+                    scope=asset.scope,
+                    project_id=asset.project_id,
+                    name=clean_name,
+                )
+            await db.execute(
+                "update asset_search_fts set search_text = ? where asset_id = ?",
+                (search_text, asset_id),
+            )
+            await db.execute(
+                "update asset_index_entries set search_text = ?, updated_at = ? where asset_id = ?",
+                (clean_name, now, asset_id),
+            )
+            await _ensure_episode_metadata_tag_entry(
+                db,
+                user_id=user_id,
+                asset_id=asset_id,
+                scope=asset.scope,
+                project_id=asset.project_id,
+                metadata=metadata,
                 search_text=clean_name,
                 now=now,
             )
@@ -903,6 +1054,7 @@ class SqliteAssetService(AssetService):
         asset_type: str | None = None,
         mime_type: str | None = None,
         tag_ids: list[str] | None = None,
+        tag_names: list[str] | None = None,
         collection_id: str | None = None,
         limit: int = 50,
         offset: int = 0,
@@ -915,6 +1067,7 @@ class SqliteAssetService(AssetService):
             asset_type=asset_type,
             mime_type=mime_type,
             tag_ids=tag_ids,
+            tag_names=tag_names,
             collection_id=collection_id,
         )
         async with connect_db(self._database_path) as db:
@@ -1008,6 +1161,7 @@ def _search_filter(
     asset_type: str | None,
     mime_type: str | None,
     tag_ids: list[str] | None,
+    tag_names: list[str] | None,
     collection_id: str | None,
 ) -> tuple[list[str], list[str]]:
     scope_where, parameters = _scope_filter(scope=scope, project_id=project_id)
@@ -1055,6 +1209,33 @@ def _search_filter(
         parameters.extend(index_parameters)
         parameters.extend(tag_parameters)
         parameters.append(len(clean_tag_ids))
+    clean_tag_names = _clean_string_list(tag_names)
+    if clean_tag_names:
+        placeholders = ", ".join("?" for _ in clean_tag_names)
+        index_where, index_parameters = _qualified_scope_filter(
+            "idx",
+            scope=scope,
+            project_id=project_id,
+        )
+        tag_where, tag_parameters = _qualified_scope_filter(
+            "tag",
+            scope=scope,
+            project_id=project_id,
+        )
+        where.append(
+            "asset_id in ("
+            "select idx.asset_id from asset_index_entries idx "
+            "join asset_tags tag on tag.tag_id = idx.tag_id "
+            f"where tag.name in ({placeholders}) "
+            f"and {' and '.join(index_where)} "
+            f"and {' and '.join(tag_where)} "
+            "group by idx.asset_id having count(distinct tag.name) = ?"
+            ")"
+        )
+        parameters.extend(clean_tag_names)
+        parameters.extend(index_parameters)
+        parameters.extend(tag_parameters)
+        parameters.append(len(set(clean_tag_names)))
     if collection_id is not None and collection_id.strip():
         start_where, start_parameters = _qualified_scope_filter(
             "start",
@@ -1145,6 +1326,94 @@ async def _validate_index_targets(
             scope=scope,
             project_id=project_id,
         )
+
+
+async def _ensure_asset_name_available(
+    db: aiosqlite.Connection,
+    *,
+    scope: str,
+    project_id: str | None,
+    name: str,
+    exclude_asset_id: str | None = None,
+) -> None:
+    query = """
+        select asset_id
+        from assets
+        where scope = ? and project_id is ? and name = ? and deleted_at is null
+    """
+    parameters: list[Any] = [scope, project_id, name]
+    if exclude_asset_id:
+        query += " and asset_id != ?"
+        parameters.append(exclude_asset_id)
+    query += " limit 1"
+    existing = await _fetch_one(db, query, tuple(parameters))
+    if existing is None:
+        return
+    raise ConflictError(
+        "asset_name_conflict",
+        "同一资产库中已存在同名资产。",
+        {"scope": scope, "project_id": project_id, "name": name},
+    )
+
+
+def _raise_asset_name_conflict_from_integrity(
+    exc: aiosqlite.IntegrityError,
+    *,
+    scope: str,
+    project_id: str | None,
+    name: str,
+) -> None:
+    if "idx_assets_live_scope_project_name" in str(exc):
+        raise ConflictError(
+            "asset_name_conflict",
+            "同一资产库中已存在同名资产。",
+            {"scope": scope, "project_id": project_id, "name": name},
+        ) from exc
+    raise exc
+
+
+async def _ensure_asset_tag_name_available(
+    db: aiosqlite.Connection,
+    *,
+    scope: str,
+    project_id: str | None,
+    name: str,
+    exclude_tag_id: str | None = None,
+) -> None:
+    query = """
+        select tag_id
+        from asset_tags
+        where scope = ? and project_id is ? and name = ?
+    """
+    parameters: list[Any] = [scope, project_id, name]
+    if exclude_tag_id:
+        query += " and tag_id != ?"
+        parameters.append(exclude_tag_id)
+    query += " limit 1"
+    existing = await _fetch_one(db, query, tuple(parameters))
+    if existing is None:
+        return
+    raise ConflictError(
+        "asset_tag_name_conflict",
+        "同一资产库中已存在同名标签。",
+        {"scope": scope, "project_id": project_id, "name": name},
+    )
+
+
+def _raise_asset_tag_name_conflict_from_integrity(
+    exc: aiosqlite.IntegrityError,
+    *,
+    scope: str,
+    project_id: str | None,
+    name: str,
+) -> None:
+    if "idx_asset_tags_scope_project_name" in str(exc):
+        raise ConflictError(
+            "asset_tag_name_conflict",
+            "同一资产库中已存在同名标签。",
+            {"scope": scope, "project_id": project_id, "name": name},
+        ) from exc
+    raise exc
 
 
 async def _validate_collection_scope(

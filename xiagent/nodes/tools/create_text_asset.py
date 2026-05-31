@@ -38,7 +38,7 @@ class CreateTextAssetNode(BaseNode):
                 "required": ["asset_id", "name", "asset_type"],
                 "additionalProperties": False,
             },
-            description="创建文本资产并写入资产库，支持 metadata.tags 四级标签。",
+            description="创建文本资产并写入资产库；资产分类应使用资产库标签系统。",
         )
 
     async def run(self, ctx: NodeContext | None, inputs: Mapping[str, Any]) -> NodeResult:

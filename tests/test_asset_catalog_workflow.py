@@ -613,6 +613,21 @@ def test_asset_catalog_match_by_name_uses_names_array() -> None:
     }
 
 
+def test_asset_catalog_lookup_matches_all_asset_types_by_tags() -> None:
+    contract = load_workflow_file(ASSET_CATALOG_WORKFLOW_PATH)
+    nodes_by_id = {node["id"]: node for node in contract["nodes"]}
+
+    for node_id in [
+        "lookup_existing_assets",
+        "match_by_name",
+        "lookup_scene_assets",
+        "match_scenes_by_name",
+        "lookup_prop_assets",
+        "match_props_by_name",
+    ]:
+        assert "asset_type" not in nodes_by_id[node_id]["inputs"]
+
+
 def test_asset_catalog_image_completion_references_prompt_results() -> None:
     contract = load_workflow_file(ASSET_CATALOG_WORKFLOW_PATH)
     nodes_by_id = {node["id"]: node for node in contract["nodes"]}
@@ -947,6 +962,7 @@ async def _seed_file_asset(
     from datetime import UTC, datetime
 
     asset_id = new_id("asset")
+    tag_id = new_id("asset_tag")
     now = datetime.now(UTC).isoformat()
     async with connect_db(database_path) as db:
         await db.execute(
@@ -960,10 +976,27 @@ async def _seed_file_asset(
             (
                 asset_id, "global", None, "file", name, "image/png", None,
                 0, storage_uri, None,
-                '{"tags": ["角色"], "variant_description": "官服参考图，头戴幞头，身穿深色官袍。"}',
+                '{"variant_description": "官服参考图，头戴幞头，身穿深色官袍。"}',
                 user_id,
                 now, now, None,
             ),
+        )
+        await db.execute(
+            """
+            INSERT INTO asset_tags (
+              tag_id, scope, project_id, name, description, created_by, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (tag_id, "global", None, "角色", None, user_id, now, now),
+        )
+        await db.execute(
+            """
+            INSERT INTO asset_index_entries (
+              entry_id, scope, project_id, asset_id, collection_id, tag_id,
+              search_text, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (new_id("asset_index"), "global", None, asset_id, None, tag_id, name, now, now),
         )
         await db.execute(
             """

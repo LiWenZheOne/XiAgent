@@ -175,6 +175,10 @@ async def migrate(path: Path) -> None:
             column_name="asset_refs_json",
             definition="asset_refs_json text not null default '[]'",
         )
+        await _ensure_unique_live_asset_names(db)
+        await _ensure_live_asset_name_unique_index(db)
+        await _ensure_unique_asset_tag_names(db)
+        await _ensure_asset_tag_name_unique_index(db)
         await _ensure_global_project(db)
 
 
@@ -192,6 +196,201 @@ async def _ensure_column(
         await cursor.close()
     if column_name not in columns:
         await db.execute(f"alter table {table_name} add column {definition}")
+
+
+async def _ensure_unique_live_asset_names(db) -> None:
+    duplicate_cursor = await db.execute(
+        """
+        select scope, coalesce(project_id, '') as project_key, name
+        from assets
+        where deleted_at is null
+        group by scope, coalesce(project_id, ''), name
+        having count(*) > 1
+        """
+    )
+    try:
+        duplicate_groups = await duplicate_cursor.fetchall()
+    finally:
+        await duplicate_cursor.close()
+
+    now = datetime.now(UTC).isoformat()
+    for group in duplicate_groups:
+        project_id = str(group["project_key"]) or None
+        asset_cursor = await db.execute(
+            """
+            select asset_id, name, text_content, metadata_json
+            from assets
+            where scope = ? and project_id is ? and name = ? and deleted_at is null
+            order by created_at asc, asset_id asc
+            """,
+            (group["scope"], project_id, group["name"]),
+        )
+        try:
+            rows = await asset_cursor.fetchall()
+        finally:
+            await asset_cursor.close()
+        for row in rows[1:]:
+            new_name = await _deduplicated_asset_name(
+                db,
+                scope=str(group["scope"]),
+                project_id=project_id,
+                base_name=str(row["name"]),
+                asset_id=str(row["asset_id"]),
+            )
+            search_text = f"{new_name}\n{row['text_content'] or ''}\n{row['metadata_json']}"
+            await db.execute(
+                "update assets set name = ?, updated_at = ? where asset_id = ?",
+                (new_name, now, row["asset_id"]),
+            )
+            await db.execute(
+                "update asset_search_fts set search_text = ? where asset_id = ?",
+                (search_text, row["asset_id"]),
+            )
+            await db.execute(
+                "update asset_index_entries set search_text = ?, updated_at = ? where asset_id = ?",
+                (new_name, now, row["asset_id"]),
+            )
+
+
+async def _deduplicated_asset_name(
+    db,
+    *,
+    scope: str,
+    project_id: str | None,
+    base_name: str,
+    asset_id: str,
+) -> str:
+    suffix = asset_id[-8:] if len(asset_id) >= 8 else asset_id
+    candidate = f"{base_name}_{suffix}"
+    counter = 2
+    while await _asset_name_exists(db, scope=scope, project_id=project_id, name=candidate):
+        candidate = f"{base_name}_{suffix}_{counter}"
+        counter += 1
+    return candidate
+
+
+async def _asset_name_exists(
+    db,
+    *,
+    scope: str,
+    project_id: str | None,
+    name: str,
+) -> bool:
+    cursor = await db.execute(
+        """
+        select 1
+        from assets
+        where scope = ? and project_id is ? and name = ? and deleted_at is null
+        limit 1
+        """,
+        (scope, project_id, name),
+    )
+    try:
+        return await cursor.fetchone() is not None
+    finally:
+        await cursor.close()
+
+
+async def _ensure_live_asset_name_unique_index(db) -> None:
+    await db.execute(
+        """
+        create unique index if not exists idx_assets_live_scope_project_name
+        on assets(scope, coalesce(project_id, ''), name)
+        where deleted_at is null
+        """
+    )
+
+
+async def _ensure_unique_asset_tag_names(db) -> None:
+    duplicate_cursor = await db.execute(
+        """
+        select scope, coalesce(project_id, '') as project_key, name
+        from asset_tags
+        group by scope, coalesce(project_id, ''), name
+        having count(*) > 1
+        """
+    )
+    try:
+        duplicate_groups = await duplicate_cursor.fetchall()
+    finally:
+        await duplicate_cursor.close()
+
+    now = datetime.now(UTC).isoformat()
+    for group in duplicate_groups:
+        project_id = str(group["project_key"]) or None
+        tag_cursor = await db.execute(
+            """
+            select tag_id, name
+            from asset_tags
+            where scope = ? and project_id is ? and name = ?
+            order by created_at asc, tag_id asc
+            """,
+            (group["scope"], project_id, group["name"]),
+        )
+        try:
+            rows = await tag_cursor.fetchall()
+        finally:
+            await tag_cursor.close()
+        for row in rows[1:]:
+            new_name = await _deduplicated_asset_tag_name(
+                db,
+                scope=str(group["scope"]),
+                project_id=project_id,
+                base_name=str(row["name"]),
+                tag_id=str(row["tag_id"]),
+            )
+            await db.execute(
+                "update asset_tags set name = ?, updated_at = ? where tag_id = ?",
+                (new_name, now, row["tag_id"]),
+            )
+
+
+async def _deduplicated_asset_tag_name(
+    db,
+    *,
+    scope: str,
+    project_id: str | None,
+    base_name: str,
+    tag_id: str,
+) -> str:
+    suffix = tag_id[-8:] if len(tag_id) >= 8 else tag_id
+    candidate = f"{base_name}_{suffix}"
+    counter = 2
+    while await _asset_tag_name_exists(db, scope=scope, project_id=project_id, name=candidate):
+        candidate = f"{base_name}_{suffix}_{counter}"
+        counter += 1
+    return candidate
+
+
+async def _asset_tag_name_exists(
+    db,
+    *,
+    scope: str,
+    project_id: str | None,
+    name: str,
+) -> bool:
+    cursor = await db.execute(
+        """
+        select 1
+        from asset_tags
+        where scope = ? and project_id is ? and name = ?
+        limit 1
+        """,
+        (scope, project_id, name),
+    )
+    try:
+        return await cursor.fetchone() is not None
+    finally:
+        await cursor.close()
+
+
+async def _ensure_asset_tag_name_unique_index(db) -> None:
+    await db.execute(
+        """
+        create unique index if not exists idx_asset_tags_scope_project_name
+        on asset_tags(scope, coalesce(project_id, ''), name)
+        """
+    )
 
 
 async def _ensure_global_project(db) -> None:

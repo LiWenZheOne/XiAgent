@@ -47,9 +47,11 @@ import {
   nodeDisplayTitle,
   statusLabel,
   statusTone,
+  taskSubtitle,
   taskTime,
   taskTitle,
 } from "../utils/display";
+import { assetTagNamesFromName } from "../utils/assetNaming";
 
 type Route = "workbench" | "assets" | "projects" | "controls";
 
@@ -507,7 +509,7 @@ function WorkbenchPage({
                 >
                   <span className={`status-badge ${statusTone(task.status)}`}>{statusLabel(task.status)}</span>
                   <strong>{taskTitle(task)}</strong>
-                  <span>{task.workflow_version ? `版本 ${task.workflow_version}` : statusLabel(task.status)}</span>
+                  <span>{taskSubtitle(task)}</span>
                   <small>{taskTime(task)}</small>
                 </button>
                 <button
@@ -2137,7 +2139,9 @@ function AssetLibraryPage({
         name: cleanName,
         metadata: selectedAsset.metadata as Record<string, unknown>,
       });
+      const syncedTags = await syncAssetTagsFromName(renamed, cleanName);
       setAssets((current) => current.map((asset) => asset.asset_id === renamed.asset_id ? renamed : asset));
+      setCurrentAssetTags(syncedTags);
       setAssetRenameOpen(false);
       setAssetRenameName("");
       setMessage(`已重命名资产：${renamed.name}`);
@@ -2174,7 +2178,9 @@ function AssetLibraryPage({
         name: assetDraft.name.trim() || selectedAsset.name,
         metadata,
       });
+      const syncedTags = await syncAssetTagsFromName(updated, updated.name);
       setAssets((current) => current.map((asset) => asset.asset_id === updated.asset_id ? updated : asset));
+      setCurrentAssetTags(syncedTags);
       setAssetDraft(createAssetEditorDraft(updated));
       setMessage(`已保存资产字段：${updated.name}`);
       setReloadKey((current) => current + 1);
@@ -2263,6 +2269,52 @@ function AssetLibraryPage({
     } finally {
       setAssetTagSavingId("");
     }
+  }
+
+  async function syncAssetTagsFromName(asset: AssetRecord, name: string): Promise<AssetTag[]> {
+    const tagNames = assetTagNamesFromName(name);
+    if (!tagNames.length) return currentAssetTags;
+    const scope = asset.scope === "global" ? "global" : "project";
+    const projectId = scope === "project" ? asset.project_id ?? project?.project_id : undefined;
+    let knownTags = tags;
+    let nextTags = currentAssetTags;
+    const targetTagIds: string[] = [];
+
+    for (const tagName of tagNames) {
+      let tag = knownTags.find((item) =>
+        item.name === tagName
+        && item.scope === scope
+        && (item.project_id || undefined) === projectId,
+      );
+      if (!tag) {
+        try {
+          tag = await createAssetTag({ scope, project_id: projectId, name: tagName });
+          knownTags = [...knownTags, tag];
+        } catch (error) {
+          const refreshedTags = await listAssetTags(scope, projectId);
+          const existingTag = refreshedTags.find((item) =>
+            item.name === tagName
+            && item.scope === scope
+            && (item.project_id || undefined) === projectId,
+          );
+          if (!existingTag) throw error;
+          tag = existingTag;
+          knownTags = refreshedTags;
+        }
+        setTags(knownTags);
+      }
+      targetTagIds.push(tag.tag_id);
+      if (!nextTags.some((item) => item.tag_id === tag.tag_id)) {
+        nextTags = await attachAssetTag(asset.asset_id, tag.tag_id);
+      }
+    }
+
+    for (const tag of [...nextTags]) {
+      if (tagMatchesAssetScope(tag, asset) && !targetTagIds.includes(tag.tag_id)) {
+        nextTags = await detachAssetTag(asset.asset_id, tag.tag_id);
+      }
+    }
+    return nextTags;
   }
 
   async function handleCopyAssetUrl(asset: AssetRecord) {

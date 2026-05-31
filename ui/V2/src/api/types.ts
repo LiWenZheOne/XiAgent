@@ -127,6 +127,13 @@ export interface TaskRecord {
   finished_at?: string | null;
   input_data?: Record<string, unknown>;
   contract?: Record<string, unknown>;
+  current_view?: {
+    status?: string;
+    active_node_outputs?: Record<string, string>;
+    final_output?: Record<string, unknown> | null;
+    summary?: Record<string, unknown>;
+    [key: string]: unknown;
+  };
 }
 
 export interface WorkflowSnapshot {

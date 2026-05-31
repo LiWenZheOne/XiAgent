@@ -631,6 +631,10 @@ function AssetPickerDialog({
   const selectedProjectName = selectedProject?.name?.trim() || (selectedProjectId === "global" ? "全局项目" : "项目资产");
   const libraryScope = assetLibraryScope(selectedProjectId);
   const libraryProjectId = libraryScope === "combined" ? selectedProjectId : undefined;
+  const configuredTagNames = useMemo(
+    () => Array.from(new Set(filterTagNames.map((name) => name.trim()).filter(Boolean))),
+    [filterTagNames],
+  );
 
   useEffect(() => {
     const nextProjectId = initialAssetLibraryProjectId(projectId);
@@ -663,12 +667,9 @@ function AssetPickerDialog({
       .then((nextTags) => {
         if (!active) return;
         setTags(nextTags);
-        const configuredTagIds = nextTags
-          .filter((tag) => filterTagNames.includes(tag.name))
-          .map((tag) => tag.tag_id);
         setTagIds((current) => {
           const compatibleCurrent = current.filter((tagId) => nextTags.some((tag) => tag.tag_id === tagId));
-          return configuredTagIds.length ? configuredTagIds : compatibleCurrent;
+          return compatibleCurrent;
         });
       })
       .catch((error) => {
@@ -677,7 +678,7 @@ function AssetPickerDialog({
     return () => {
       active = false;
     };
-  }, [filterTagNames, libraryProjectId, libraryScope]);
+  }, [libraryProjectId, libraryScope]);
 
   useEffect(() => {
     let active = true;
@@ -687,6 +688,7 @@ function AssetPickerDialog({
       project_id: libraryProjectId,
       keyword: keyword.trim() || undefined,
       tag_ids: tagIds,
+      tag_names: configuredTagNames.length ? configuredTagNames : undefined,
       asset_type: assetType,
     }).then((items) => {
       if (active) setAssets(items);
@@ -698,7 +700,7 @@ function AssetPickerDialog({
     return () => {
       active = false;
     };
-  }, [assetType, keyword, libraryProjectId, libraryScope, tagIds]);
+  }, [assetType, configuredTagNames, keyword, libraryProjectId, libraryScope, tagIds]);
 
   function openProjectDialog() {
     setDraftProjectId(selectedProjectId);
@@ -915,9 +917,8 @@ function assetRefPreviewFromAsset(asset: AssetRecord): AssetRefPreview {
 }
 
 function assetPickerSubtitle(asset: AssetRecord): string {
-  const tags = Array.isArray(asset.metadata.tags) ? asset.metadata.tags.map((tag) => String(tag)).filter(Boolean) : [];
   const type = asset.asset_type === "text" ? "文字资产" : asset.asset_type;
-  return [type, ...tags].filter(Boolean).join(" · ");
+  return type;
 }
 
 function imageRefKey(ref: ImageRef): string {
