@@ -1,9 +1,12 @@
 import { type ChangeEvent, type DragEvent, useEffect, useMemo, useState } from "react";
 
 import { createAssetTag, generateAssetImage, listAssetTags, searchAssets, uploadAsset } from "../../api/assets";
+import { ApiError } from "../../api/client";
 import type { AssetRecord, AssetScope, AssetTag } from "../../api/types";
 import { assetNameFromTagNames, assetTagNamesForCatalogAsset, catalogAssetTypeTags } from "../../utils/assetNaming";
 import type { NodeUiControlProps } from "../types";
+import { AssetPickerDialog } from "./AssetPickerDialog";
+import { assetSearchScopeForProject } from "./assetPicker";
 import { createStoredZip, extensionFromBlobOrUrl, safeAssetImageFileName } from "./assetZip";
 
 interface AssetImageCard {
@@ -48,6 +51,19 @@ type MatchState = Record<string, AssetMatch | null>;
 type CardEditsState = Record<string, CardEditState>;
 type TabKey = "character" | "scene" | "prop" | "other";
 
+interface AssetNameConflictDialog {
+  assetNames: string[];
+  scopeLabel: string;
+}
+
+interface AssetUploadPlan {
+  card: AssetImageCard;
+  edit: CardEditState;
+  group: TabKey;
+  fullName: string;
+  imageUrl: string;
+}
+
 const groupLabels: Record<string, string> = {
   character: "角色",
   scene: "地点",
@@ -75,13 +91,10 @@ export function AssetImageCardsControl({
   const [draggingKey, setDraggingKey] = useState("");
   const [error, setError] = useState("");
   const [pickerCard, setPickerCard] = useState<AssetImageCard | null>(null);
-  const [pickerKeyword, setPickerKeyword] = useState("");
-  const [pickerAssets, setPickerAssets] = useState<AssetRecord[]>([]);
   const [libraryTags, setLibraryTags] = useState<AssetTag[]>([]);
-  const [pickerLoading, setPickerLoading] = useState(false);
-  const [pickerError, setPickerError] = useState("");
   const [libraryBusy, setLibraryBusy] = useState(false);
   const [missingImageDialogOpen, setMissingImageDialogOpen] = useState(false);
+  const [assetNameConflictDialog, setAssetNameConflictDialog] = useState<AssetNameConflictDialog | null>(null);
   const tabs = useMemo(() => buildTabs(cards), [cards]);
   const selectedTab = tabs.some((tab) => tab.key === activeTab) ? activeTab : tabs[0]?.key ?? "character";
 
@@ -103,33 +116,6 @@ export function AssetImageCardsControl({
       active = false;
     };
   }, [projectId]);
-
-  useEffect(() => {
-    if (!pickerCard) return;
-    let active = true;
-    setPickerLoading(true);
-    setPickerError("");
-    const tagName = tagNameForAssetType(pickerCard.assetType);
-    searchAssets({
-      scope: "combined",
-      project_id: projectId && projectId !== "global" ? projectId : undefined,
-      keyword: pickerKeyword.trim() || undefined,
-      tag_names: tagName ? [tagName] : undefined,
-    })
-      .then((items) => {
-        if (!active) return;
-        setPickerAssets(tagName ? items : []);
-      })
-      .catch((nextError) => {
-        if (active) setPickerError(nextError instanceof Error ? nextError.message : "资产搜索失败。");
-      })
-      .finally(() => {
-        if (active) setPickerLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [libraryTags, pickerCard, pickerKeyword, projectId]);
 
   async function persistDraft(
     nextImages: ImageState,
@@ -197,12 +183,21 @@ export function AssetImageCardsControl({
     }
     setLibraryBusy(true);
     setError("");
+    setAssetNameConflictDialog(null);
     try {
-      const createdAssets = await Promise.all(readyCards.map(async (card) => {
+      const uploadPlans = readyCards.map((card): AssetUploadPlan => {
         const edit = edits[card.assetKey] ?? cardEditFromCard(card);
         const group = tabKeyForAssetType(card.assetType);
         const fullName = cardDisplayName(edit, group);
         const imageUrl = images[card.assetKey];
+        return { card, edit, group, fullName, imageUrl };
+      });
+      const conflict = await findAssetNameConflicts(uploadPlans, projectId);
+      if (conflict) {
+        setAssetNameConflictDialog(conflict);
+        return;
+      }
+      const createdAssets = await Promise.all(uploadPlans.map(async ({ card, edit, group, fullName, imageUrl }) => {
         const imageFile = await fileFromImageUrl(imageUrl, fullName);
         const tagIds = await ensureAssetTagIds({
           projectId,
@@ -210,25 +205,35 @@ export function AssetImageCardsControl({
           currentTags: libraryTags,
           onTagsChanged: setLibraryTags,
         });
-        return uploadAsset({
-          file: imageFile,
-          scope: uploadScope(projectId),
-          project_id: projectId && projectId !== "global" ? projectId : undefined,
-          name: fullName,
-          publish: true,
-          metadata: {
-            type: card.assetType,
-            asset_type: card.assetType,
-            prompt: edit.prompt.trim(),
-            appearance_description: card.referenceAppearanceDescription || "",
-            source: "asset_catalog_workflow",
-          },
-          tag_ids: tagIds,
-        });
+        try {
+          return await uploadAsset({
+            file: imageFile,
+            scope: uploadScope(projectId),
+            project_id: projectId && projectId !== "global" ? projectId : undefined,
+            name: fullName,
+            publish: true,
+            metadata: {
+              type: card.assetType,
+              asset_type: card.assetType,
+              prompt: edit.prompt.trim(),
+              appearance_description: card.referenceAppearanceDescription || "",
+              source: "asset_catalog_workflow",
+            },
+            tag_ids: tagIds,
+          });
+        } catch (error) {
+          throw enrichAssetNameConflict(error, fullName);
+        }
       }));
       onSubmit?.(finishPayload(createdAssets.map((asset) => asset.asset_id).filter(Boolean)));
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "资产入库失败。");
+      const conflict = assetNameConflictFromError(nextError);
+      if (conflict) {
+        setAssetNameConflictDialog(conflict);
+        setError("");
+      } else {
+        setError(nextError instanceof Error ? nextError.message : "资产入库失败。");
+      }
     } finally {
       setLibraryBusy(false);
     }
@@ -375,7 +380,6 @@ export function AssetImageCardsControl({
   function openAssetPicker(card: AssetImageCard) {
     if (readonly) return;
     setPickerCard(card);
-    setPickerKeyword(card.title);
   }
 
   function selectMatchedAsset(card: AssetImageCard, asset: AssetRecord) {
@@ -494,50 +498,41 @@ export function AssetImageCardsControl({
           </section>
         </div>
       ) : null}
-      {pickerCard ? (
+      {assetNameConflictDialog ? (
         <div className="confirm-backdrop" role="presentation">
-          <section className="asset-picker-dialog" role="dialog" aria-modal="true" aria-label="选择匹配资产">
-            <header>
-              <div>
-                <p className="eyebrow">选择{groupLabels[tabKeyForAssetType(pickerCard.assetType)] ?? "资产"}资产</p>
-                <h3>{pickerCard.title}</h3>
-              </div>
-              <button className="secondary-button" type="button" onClick={() => setPickerCard(null)}>关闭</button>
-            </header>
-            <label className="asset-picker-search">
-              <span>搜索资产</span>
-              <input autoFocus placeholder={`搜索${groupLabels[tabKeyForAssetType(pickerCard.assetType)] ?? "资产"}资产`} value={pickerKeyword} onChange={(event) => setPickerKeyword(event.target.value)} />
-            </label>
-            {pickerError ? <p className="form-error">{pickerError}</p> : null}
-            <div className="asset-picker-list">
-              {pickerLoading ? <p className="muted">正在搜索...</p> : null}
-              {!pickerLoading && pickerAssets.length ? pickerAssets.map((asset) => (
-                <button
-                  className="asset-picker-option"
-                  key={asset.asset_id}
-                  type="button"
-                  onClick={() => selectMatchedAsset(pickerCard, asset)}
-                >
-                  <strong>{asset.name}</strong>
-                  <span>{assetSummary(asset)}</span>
-                </button>
-              )) : null}
-              {!pickerLoading && !pickerAssets.length ? <p className="muted">没有找到对应类型的资产。</p> : null}
+          <section className="confirm-dialog asset-name-conflict-dialog" role="dialog" aria-modal="true" aria-label="资产名称重复">
+            <div>
+              <p className="eyebrow">无法一键入库</p>
+              <h2>资产名称重复</h2>
             </div>
+            <p>以下资产名称已在{assetNameConflictDialog.scopeLabel}或本次入库列表中重复：</p>
+            <ul className="asset-conflict-name-list">
+              {assetNameConflictDialog.assetNames.map((assetName) => (
+                <li key={assetName}>{assetName}</li>
+              ))}
+            </ul>
+            <p>请修改这张卡片的资产名称、变体或配件后再入库，或先处理资产库中的同名资产。</p>
             <div className="button-row end">
-              <button
-                className="secondary-button"
-                type="button"
-                onClick={() => {
-                  setMatches((current) => ({ ...current, [pickerCard.assetKey]: null }));
-                  setPickerCard(null);
-                }}
-              >
-                标记为未匹配
+              <button className="primary-button" type="button" onClick={() => setAssetNameConflictDialog(null)}>
+                知道了
               </button>
             </div>
           </section>
         </div>
+      ) : null}
+      {pickerCard ? (
+        <AssetPickerDialog
+          assetLabel={groupLabels[tabKeyForAssetType(pickerCard.assetType)] ?? "资产"}
+          projectId={projectId}
+          tagName={tagNameForAssetType(pickerCard.assetType)}
+          targetName={pickerCard.title}
+          onClear={() => {
+            setMatches((current) => ({ ...current, [pickerCard.assetKey]: null }));
+            setPickerCard(null);
+          }}
+          onClose={() => setPickerCard(null)}
+          onSelect={(asset) => selectMatchedAsset(pickerCard, asset)}
+        />
       ) : null}
     </section>
   );
@@ -946,6 +941,79 @@ function editedPromptResults(cards: AssetImageCard[], edits: CardEditsState, mat
   ));
 }
 
+async function findAssetNameConflicts(plans: AssetUploadPlan[], projectId?: string): Promise<AssetNameConflictDialog | null> {
+  const scope = uploadScope(projectId);
+  const project_id = projectId && projectId !== "global" ? projectId : undefined;
+  const plannedNames = plans.map((plan) => plan.fullName.trim()).filter(Boolean);
+  const duplicatedNames = namesDuplicatedInBatch(plannedNames);
+  const uniqueNames = Array.from(new Set(plannedNames));
+  const existingAssets = uniqueNames.length
+    ? await searchAssets({
+      ...assetSearchScopeForProject(project_id),
+      scope,
+      names: uniqueNames,
+      limit: Math.max(uniqueNames.length, 1),
+    })
+    : [];
+  const existingNames = existingAssets.map((asset) => asset.name).filter(Boolean);
+  const assetNames = Array.from(new Set([...duplicatedNames, ...existingNames])).sort((left, right) => left.localeCompare(right, "zh-Hans-CN"));
+  if (!assetNames.length) return null;
+  return {
+    assetNames,
+    scopeLabel: assetScopeLabel(scope),
+  };
+}
+
+function namesDuplicatedInBatch(names: string[]): string[] {
+  const counts = new Map<string, number>();
+  for (const name of names) {
+    counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+  return Array.from(counts.entries())
+    .filter(([, count]) => count > 1)
+    .map(([name]) => name);
+}
+
+function enrichAssetNameConflict(error: unknown, fallbackName: string): unknown {
+  const conflict = assetNameConflictFromError(error);
+  if (!conflict && error instanceof ApiError && apiErrorCode(error) === "asset_name_conflict") {
+    const details = apiErrorDetails(error);
+    return new ApiError(error.message, error.status, {
+      error: {
+        code: "asset_name_conflict",
+        message: error.message,
+        details: { ...details, name: fallbackName },
+      },
+    });
+  }
+  if (conflict?.assetNames.length) return error;
+  return error;
+}
+
+function assetNameConflictFromError(error: unknown): AssetNameConflictDialog | null {
+  if (!(error instanceof ApiError) || apiErrorCode(error) !== "asset_name_conflict") return null;
+  const details = apiErrorDetails(error);
+  const assetName = textValue(details.name) || "未命名资产";
+  return {
+    assetNames: [assetName],
+    scopeLabel: assetScopeLabel(textValue(details.scope) || ""),
+  };
+}
+
+function apiErrorCode(error: ApiError): string {
+  return textValue(recordValue(recordValue(error.body)?.error)?.code) || "";
+}
+
+function apiErrorDetails(error: ApiError): Record<string, unknown> {
+  return recordValue(recordValue(recordValue(error.body)?.error)?.details) ?? {};
+}
+
+function assetScopeLabel(scope: string): string {
+  if (scope === "global") return "全局资产库";
+  if (scope === "project") return "项目资产库";
+  return "当前资产库";
+}
+
 function editedPromptResult(card: AssetImageCard, edit: CardEditState, match: AssetMatch | null): Record<string, unknown> {
   const group = tabKeyForAssetType(card.assetType);
   const prompt: Record<string, unknown> = {
@@ -1020,10 +1088,6 @@ function displayValue(value: unknown): string {
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   if (Array.isArray(value)) return value.map((item) => displayValue(item)).filter(Boolean).join("、");
   return "";
-}
-
-function assetSummary(asset: AssetRecord): string {
-  return asset.scope === "project" ? "项目资产" : "全局资产";
 }
 
 function imageRefFromAsset(asset: AssetRecord): ImageRef {

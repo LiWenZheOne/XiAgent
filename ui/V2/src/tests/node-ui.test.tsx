@@ -331,6 +331,8 @@ describe("node-ui controls", () => {
       }
       if (url.startsWith("/api/assets/search")) {
         const called = new URL(url, "http://localhost");
+        expect(called.searchParams.get("scope")).toBe("global");
+        expect(called.searchParams.has("project_id")).toBe(false);
         const tagNames = called.searchParams.get("tag_names") ?? "";
         const includeCharacters = tagNames.includes("角色");
         const includeLocations = tagNames.includes("地点");
@@ -554,6 +556,79 @@ describe("node-ui controls", () => {
     expect(String(libraryUploadForms[0].get("tag_ids"))).toContain("tag-character");
     expect(String(libraryUploadForms[0].get("tag_ids"))).toContain("tag-linchong");
     expect(fetchMock.mock.calls.some(([url]) => url === "/api/assets/text")).toBe(false);
+  });
+
+  it("shows a custom dialog with the duplicated asset name when library save conflicts", async () => {
+    const onSubmit = vi.fn();
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.startsWith("/api/assets/tags")) {
+        return jsonResponse({
+          items: [
+            { tag_id: "tag-character", name: "角色", scope: "global", project_id: null, asset_count: 1 },
+            { tag_id: "tag-linchong", name: "林冲", scope: "global", project_id: null, asset_count: 1 },
+            { tag_id: "tag-luzhishen", name: "鲁智深", scope: "global", project_id: null, asset_count: 1 },
+            { tag_id: "tag-default", name: "默认", scope: "global", project_id: null, asset_count: 1 },
+          ],
+        });
+      }
+      if (url.startsWith("/api/assets/search")) {
+        const called = new URL(url, "http://localhost");
+        expect(called.searchParams.get("names")).toBe("角色_林冲_默认,角色_鲁智深_默认");
+        return jsonResponse({
+          items: [
+            { asset_id: "asset-linchong", name: "角色_林冲_默认", asset_type: "file", scope: "global", metadata: {}, created_at: "2026-05-31T00:00:00Z" },
+            { asset_id: "asset-luzhishen", name: "角色_鲁智深_默认", asset_type: "file", scope: "global", metadata: {}, created_at: "2026-05-31T00:00:00Z" },
+          ],
+        });
+      }
+      return jsonResponse({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <AssetImageCardsControl
+        config={{ control_id: "ui.interaction.asset_image_cards.v1", variant: "grouped_cards", mode: "interactive" }}
+        node={{
+          node_execution_id: "exec-conflict",
+          node_id: "upload_images",
+          node_ref: "system.human_approval.v1",
+          status: "waiting",
+          input_snapshot: {
+            characters: [{ full_name: "林冲", matched: false }, { full_name: "鲁智深", matched: false }],
+            variant_results: [{ full_name: "林冲", matched_variant: "默认" }, { full_name: "鲁智深", matched_variant: "默认" }],
+            prompt_results: [{ full_name: "林冲_默认", prompt: "囚服" }, { full_name: "鲁智深_默认", prompt: "僧衣" }],
+            asset_images: [
+              {
+                asset_type: "character",
+                asset_key: "林冲",
+                full_name: "角色_林冲_默认",
+                image_url: "https://cdn.example.com/linchong-ready.png",
+              },
+              {
+                asset_type: "character",
+                asset_key: "鲁智深",
+                full_name: "角色_鲁智深_默认",
+                image_url: "https://cdn.example.com/luzhishen-ready.png",
+              },
+            ],
+          },
+        }}
+        onSubmit={onSubmit}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "一键入库" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "资产名称重复" });
+    expect(within(dialog).getByText("资产名称重复")).toBeInTheDocument();
+    expect(within(dialog).getByText("角色_林冲_默认")).toBeInTheDocument();
+    expect(within(dialog).getByText("角色_鲁智深_默认")).toBeInTheDocument();
+    expect(within(dialog).getByText(/以下资产名称已在全局资产库或本次入库列表中重复/)).toBeInTheDocument();
+    expect(screen.queryByText("同一资产库中已存在同名资产。")).not.toBeInTheDocument();
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.some(([url]) => url === "/api/assets/files")).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => url === "https://cdn.example.com/linchong-ready.png")).toBe(false);
   });
 
   it("uses asset-type-specific prompt prefixes and suffixes when generating asset images", async () => {
@@ -850,9 +925,10 @@ describe("node-ui controls", () => {
 
   it("renders the P5 asset task summary and exports image zip", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
-      if (String(input) === "https://cdn.example.com/linchong.png") {
+      if (String(input) === "/api/assets/asset-linchong/content") {
         return Promise.resolve({
           ok: true,
+          status: 200,
           blob: async () => ({
             type: "image/png",
             arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
@@ -912,7 +988,7 @@ describe("node-ui controls", () => {
     expect(screen.getByText("道具").closest("div")).toHaveTextContent("1");
     await userEvent.click(screen.getByRole("button", { name: "导出资产为压缩包" }));
     await waitFor(() => expect(clickMock).toHaveBeenCalled());
-    expect(fetchMock).toHaveBeenCalledWith("https://cdn.example.com/linchong.png");
+    expect(fetchMock).toHaveBeenCalledWith("/api/assets/asset-linchong/content", expect.any(Object));
   });
 
   it("renders completed P3 asset summary rows from approved_assets output", async () => {

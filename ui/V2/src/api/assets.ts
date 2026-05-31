@@ -7,9 +7,12 @@ export interface AssetSearchParams {
   project_id?: string;
   asset_type?: string;
   collection_id?: string;
+  names?: string[];
   tag_ids?: string[];
   tag_names?: string[];
   mime_type?: string;
+  limit?: number;
+  offset?: number;
 }
 
 function appendParam(params: URLSearchParams, key: string, value: string | string[] | undefined) {
@@ -28,9 +31,12 @@ export async function searchAssets(filters: AssetSearchParams = {}): Promise<Ass
   appendParam(params, "project_id", filters.project_id);
   appendParam(params, "asset_type", filters.asset_type);
   appendParam(params, "collection_id", filters.collection_id);
+  appendParam(params, "names", filters.names);
   appendParam(params, "tag_ids", filters.tag_ids);
   appendParam(params, "tag_names", filters.tag_names);
   appendParam(params, "mime_type", filters.mime_type);
+  if (typeof filters.limit === "number") params.set("limit", String(filters.limit));
+  if (typeof filters.offset === "number") params.set("offset", String(filters.offset));
 
   const query = params.toString();
   const result = await apiRequest<{ items: AssetRecord[] }>(`/api/assets/search${query ? `?${query}` : ""}`);
@@ -282,6 +288,13 @@ export async function updateAsset(input: {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name: input.name, metadata: input.metadata }),
   });
+}
+
+export async function getAsset(assetId: string, projectId?: string): Promise<AssetRecord> {
+  const params = new URLSearchParams();
+  if (projectId) params.set("project_id", projectId);
+  const query = params.toString();
+  return apiRequest<AssetRecord>(`/api/assets/${encodeURIComponent(assetId)}${query ? `?${query}` : ""}`);
 }
 
 export async function replaceAssetFile(input: {

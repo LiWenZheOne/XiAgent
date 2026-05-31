@@ -1,3 +1,8 @@
+import { useState } from "react";
+
+import { downloadAssetContent, getAsset } from "../../api/assets";
+import type { AssetRecord } from "../../api/types";
+import { assetNameFromTagNames, assetTagNamesForCatalogAsset, assetTagNamesFromName } from "../../utils/assetNaming";
 import type { NodeUiControlProps } from "../types";
 import { createStoredZip, extensionFromBlobOrUrl, safeAssetImageFileName } from "./assetZip";
 
@@ -5,40 +10,69 @@ interface SummaryImage {
   assetType: string;
   assetKey: string;
   fullName: string;
+  variantName?: string;
+  accessories?: string;
   imageUrl: string;
   source?: string;
   assetId?: string;
 }
 
-export function AssetTaskSummaryControl({ node }: NodeUiControlProps) {
+interface ExportImage {
+  assetType: string;
+  assetKey: string;
+  fullName: string;
+  variantName?: string;
+  accessories?: string;
+  imageUrl?: string;
+  assetId?: string;
+}
+
+export function AssetTaskSummaryControl({ node, projectId }: NodeUiControlProps) {
   const source = summarySource(node.output_snapshot) ?? summarySource(node.input_snapshot) ?? {};
   const images = summaryImages(source);
+  const assetIds = createdAssetIds(source);
   const catalogCounts = countCatalogAssets(source);
-  const ingestedCount = createdAssetIds(source).length || images.filter((image) => Boolean(image.assetId) || image.source === "library").length;
+  const ingestedCount = assetIds.length || images.filter((image) => Boolean(image.assetId) || image.source === "library").length;
   const counts = catalogCounts.total ? catalogCounts : countByType(images);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
 
   async function exportZip() {
-    const files = await Promise.all(images.map(async (image) => {
-      const response = await fetch(image.imageUrl);
-      if (!response.ok) throw new Error(`${image.fullName} 图像下载失败。`);
-      const blob = await response.blob();
-      const bytes = new Uint8Array(await blob.arrayBuffer());
-      const ext = extensionFromBlobOrUrl(blob, image.imageUrl);
-      return {
-        name: `${safeAssetImageFileName(image.fullName)}${ext}`,
-        bytes,
-      };
-    }));
-    const zipBytes = createStoredZip(files);
-    const zipBlob = new Blob([Uint8Array.from(zipBytes).buffer], { type: "application/zip" });
-    const url = URL.createObjectURL(zipBlob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "资产图像.zip";
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
+    if (exporting) return;
+    setExporting(true);
+    setExportError("");
+    try {
+      const exportImages = await resolveExportImages({ images, assetIds, projectId });
+      if (!exportImages.length) {
+        setExportError("暂无可导出的资产图像。");
+        return;
+      }
+      const files = await Promise.all(exportImages.map(async (image) => {
+        const blob = image.assetId
+          ? await downloadAssetContent(image.assetId, projectId && projectId !== "global" ? projectId : undefined)
+          : await fetchImageBlob(image);
+        const bytes = new Uint8Array(await blob.arrayBuffer());
+        const ext = extensionFromBlobOrUrl(blob, image.imageUrl ?? "");
+        return {
+          name: `${safeAssetImageFileName(exportFileBaseName(image))}${ext}`,
+          bytes,
+        };
+      }));
+      const zipBytes = createStoredZip(files);
+      const zipBlob = new Blob([Uint8Array.from(zipBytes).buffer], { type: "application/zip" });
+      const url = URL.createObjectURL(zipBlob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "资产图像.zip";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setExportError(error instanceof Error ? error.message : "资产压缩包导出失败。");
+    } finally {
+      setExporting(false);
+    }
   }
 
   return (
@@ -48,10 +82,11 @@ export function AssetTaskSummaryControl({ node }: NodeUiControlProps) {
           <p className="eyebrow">任务完成</p>
           <h3>资产编目已完成</h3>
         </div>
-        <button className="secondary-button" disabled={!images.length} type="button" onClick={() => void exportZip()}>
-          导出资产为压缩包
+        <button className="secondary-button" disabled={exporting || (!images.length && !assetIds.length)} type="button" onClick={() => void exportZip()}>
+          {exporting ? "导出中..." : "导出资产为压缩包"}
         </button>
       </header>
+      {exportError ? <p className="form-error">{exportError}</p> : null}
       <div className="asset-task-summary-grid">
         <SummaryMetric label="总资产" value={counts.total} />
         <SummaryMetric label="已入库" value={ingestedCount} />
@@ -61,6 +96,92 @@ export function AssetTaskSummaryControl({ node }: NodeUiControlProps) {
       </div>
     </section>
   );
+}
+
+async function resolveExportImages(options: {
+  images: SummaryImage[];
+  assetIds: string[];
+  projectId?: string;
+}): Promise<ExportImage[]> {
+  const exportImages: ExportImage[] = options.images.map((image, index) => ({
+    assetType: image.assetType,
+    assetKey: image.assetKey,
+    fullName: image.fullName,
+    variantName: image.variantName,
+    accessories: image.accessories,
+    imageUrl: image.imageUrl,
+    assetId: image.assetId || options.assetIds[index],
+  }));
+  const byAssetId = new Map(exportImages.filter((image) => image.assetId).map((image) => [image.assetId as string, image]));
+  const missingAssetIds = options.assetIds.filter((assetId) => !byAssetId.has(assetId));
+  if (!missingAssetIds.length) return exportImages;
+  const assets = await Promise.all(missingAssetIds.map((assetId) => getAsset(assetId, options.projectId && options.projectId !== "global" ? options.projectId : undefined)));
+  return [
+    ...exportImages,
+    ...assets.filter(isImageAsset).map((asset) => ({
+      assetType: textValue(asset.metadata?.asset_type) || textValue(asset.metadata?.type) || "asset",
+      assetKey: asset.name,
+      fullName: asset.name,
+      variantName: textValue(asset.metadata?.variant_name),
+      accessories: textValue(asset.metadata?.accessories),
+      imageUrl: publicUrlFromAsset(asset),
+      assetId: asset.asset_id,
+    })),
+  ];
+}
+
+async function fetchImageBlob(image: ExportImage): Promise<Blob> {
+  if (!image.imageUrl) throw new Error(`${image.fullName} 缺少可下载图像。`);
+  const response = await fetch(image.imageUrl);
+  if (!response.ok) throw new Error(`${image.fullName} 图像下载失败。`);
+  return response.blob();
+}
+
+function isImageAsset(asset: AssetRecord): boolean {
+  return asset.asset_type === "file" && (asset.mime_type?.startsWith("image/") || Boolean(publicUrlFromAsset(asset)));
+}
+
+function publicUrlFromAsset(asset: AssetRecord): string {
+  return textValue(recordValue(asset.metadata)?.public_url) || "";
+}
+
+function exportFileBaseName(image: ExportImage): string {
+  const parsedTags = assetTagNamesFromName(image.fullName);
+  if (parsedTags.length) return assetNameFromTagNames(parsedTags);
+  const group = image.assetType === "character"
+    ? "character"
+    : image.assetType === "prop"
+      ? "prop"
+      : image.assetType === "scene"
+        ? "scene"
+        : "asset";
+  const parts = splitAssetName(image.fullName);
+  if (group === "character") {
+    const name = image.assetKey && !assetTagNamesFromName(image.assetKey).length
+      ? image.assetKey
+      : parts[0] || image.fullName;
+    return assetNameFromTagNames(assetTagNamesForCatalogAsset({
+      group,
+      name,
+      variantName: image.variantName || parts[1] || "默认",
+      accessories: image.accessories || parts.slice(2).join("_"),
+    }));
+  }
+  if (group === "scene" || group === "prop") {
+    return assetNameFromTagNames(assetTagNamesForCatalogAsset({
+      group,
+      name: image.assetKey || parts[0] || image.fullName,
+      variantName: image.variantName || parts[1],
+      accessories: image.accessories || parts.slice(2).join("_"),
+    }));
+  }
+  return image.fullName;
+}
+
+function splitAssetName(value: string): string[] {
+  const parsedTags = assetTagNamesFromName(value);
+  const parts = parsedTags.length ? parsedTags.slice(1) : value.split(/[_＿]/).map((item) => item.trim()).filter(Boolean);
+  return parts;
 }
 
 function SummaryMetric({ label, value }: { label: string; value: number }) {
@@ -91,6 +212,8 @@ function summaryImages(source: Record<string, unknown>): SummaryImage[] {
         assetType,
         assetKey: textValue(item.asset_key) || fullName,
         fullName,
+        variantName: textValue(item.variant_name) || textValue(item.variant),
+        accessories: textValue(item.accessories),
         imageUrl: textValue(item.image_url) || "",
         source: textValue(item.source),
         assetId: textValue(item.asset_id),

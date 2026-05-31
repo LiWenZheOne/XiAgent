@@ -5,6 +5,7 @@ import { listProjects } from "../../api/projects";
 import type { AssetCollection, AssetRecord, AssetScope, AssetTag, JsonSchema, NodeUiControlConfig, ProjectRecord, WorkflowNodeSpec } from "../../api/types";
 import { buildSchemaFields, type SchemaField } from "../../utils/display";
 import type { NodeUiControlProps } from "../types";
+import { assetSearchScopeForProject } from "./assetPicker";
 
 interface ImageRef {
   kind: "asset" | "data_uri";
@@ -951,7 +952,7 @@ function assetScope(projectId: string | undefined, uploadScope: string): Exclude
 }
 
 function assetLibraryScope(projectId: string | undefined): AssetScope {
-  return !projectId || projectId === "global" ? "global" : "combined";
+  return assetSearchScopeForProject(projectId).scope;
 }
 
 function initialAssetLibraryProjectId(projectId: string | undefined): string {

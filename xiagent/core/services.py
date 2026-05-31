@@ -35,6 +35,7 @@ class AssetService(ABC):
         keyword: str | None = None,
         asset_type: str | None = None,
         mime_type: str | None = None,
+        names: list[str] | None = None,
         tag_ids: list[str] | None = None,
         tag_names: list[str] | None = None,
         collection_id: str | None = None,

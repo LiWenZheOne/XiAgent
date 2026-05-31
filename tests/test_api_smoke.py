@@ -653,11 +653,25 @@ def test_text_asset_create_and_search_endpoints(test_settings) -> None:
             },
             headers=headers,
         )
+        exact_name_response = client.get(
+            "/api/assets/search",
+            params={
+                "scope": "project",
+                "project_id": project["project_id"],
+                "names": "Character Brief,Missing Asset",
+                "limit": 2,
+            },
+            headers=headers,
+        )
 
     assert search_response.status_code == 200
     result = search_response.json()
     assert result["total"] == 1
     assert result["items"][0]["asset_id"] == asset["asset_id"]
+    assert exact_name_response.status_code == 200
+    exact_name_result = exact_name_response.json()
+    assert exact_name_result["total"] == 1
+    assert exact_name_result["items"][0]["asset_id"] == asset["asset_id"]
 
 
 def test_asset_collection_update_and_delete_endpoints(test_settings) -> None:

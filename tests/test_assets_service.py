@@ -981,6 +981,55 @@ async def test_search_assets_by_tag_names_matches_same_name_tags_across_scopes(t
     }
 
 
+async def test_search_assets_filters_by_exact_names(test_settings) -> None:
+    await migrate(test_settings.database_path)
+    users = SqliteUserService(test_settings.database_path)
+    assets = SqliteAssetService(
+        database_path=test_settings.database_path,
+        storage_dir=test_settings.asset_storage_dir,
+        user_service=users,
+    )
+    user = await users.create_user(username="asset-name-search", password="secret-123")
+    project = await users.create_project(
+        owner_user_id=user.user_id,
+        name="Name Search Project",
+        description="",
+    )
+    linchong = await assets.create_text_asset(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project.project_id,
+        name="角色_林冲_默认",
+        text="林冲",
+        metadata={},
+    )
+    luzhishen = await assets.create_text_asset(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project.project_id,
+        name="角色_鲁智深_默认",
+        text="鲁智深",
+        metadata={},
+    )
+    await assets.create_text_asset(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project.project_id,
+        name="角色_武松_默认",
+        text="武松",
+        metadata={},
+    )
+
+    result = await assets.search_assets(
+        user_id=user.user_id,
+        scope="project",
+        project_id=project.project_id,
+        names=["角色_林冲_默认", "角色_鲁智深_默认", "不存在"],
+    )
+
+    assert [item.asset_id for item in result.items] == [linchong.asset_id, luzhishen.asset_id]
+
+
 async def test_delete_tag_requires_empty_tag(test_settings) -> None:
     await migrate(test_settings.database_path)
     users = SqliteUserService(test_settings.database_path)

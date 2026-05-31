@@ -1053,6 +1053,7 @@ class SqliteAssetService(AssetService):
         keyword: str | None = None,
         asset_type: str | None = None,
         mime_type: str | None = None,
+        names: list[str] | None = None,
         tag_ids: list[str] | None = None,
         tag_names: list[str] | None = None,
         collection_id: str | None = None,
@@ -1066,6 +1067,7 @@ class SqliteAssetService(AssetService):
             keyword=keyword,
             asset_type=asset_type,
             mime_type=mime_type,
+            names=names,
             tag_ids=tag_ids,
             tag_names=tag_names,
             collection_id=collection_id,
@@ -1160,6 +1162,7 @@ def _search_filter(
     keyword: str | None,
     asset_type: str | None,
     mime_type: str | None,
+    names: list[str] | None,
     tag_ids: list[str] | None,
     tag_names: list[str] | None,
     collection_id: str | None,
@@ -1182,6 +1185,11 @@ def _search_filter(
         where.append("(name like ? or text_content like ? or metadata_json like ?)")
         pattern = f"%{clean_keyword}%"
         parameters.extend([pattern, pattern, pattern])
+    clean_names = _clean_string_list(names)
+    if clean_names:
+        placeholders = ", ".join("?" for _ in clean_names)
+        where.append(f"name in ({placeholders})")
+        parameters.extend(clean_names)
     clean_tag_ids = _clean_string_list(tag_ids)
     if clean_tag_ids:
         placeholders = ", ".join("?" for _ in clean_tag_ids)

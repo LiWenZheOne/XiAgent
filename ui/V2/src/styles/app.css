@@ -753,6 +753,21 @@ dd {
   color: var(--muted);
 }
 
+.asset-conflict-name-list {
+  display: grid;
+  max-height: 220px;
+  gap: 6px;
+  margin: 0;
+  padding: 10px 12px 10px 28px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #f8fafc;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .rerun-revision-field {
   display: grid;
   gap: 6px;
