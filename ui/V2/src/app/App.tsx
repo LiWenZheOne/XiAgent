@@ -1174,6 +1174,10 @@ function WorkflowStageCard({
             nodes={visibleNodes}
             snapshot={snapshot}
             stepOrdinalByNodeId={stepOrdinalByNodeId}
+            onSelectNode={(nodeId) => {
+              setExpanded(true);
+              setExpandedNodeId(nodeId);
+            }}
           />
           {showPreparingNextStage ? <PreparingNextStage compact /> : null}
         </>
@@ -1264,10 +1268,12 @@ function StageProgressRail({
   nodes,
   snapshot,
   stepOrdinalByNodeId,
+  onSelectNode,
 }: {
   nodes: TaskNodeExecution[];
   snapshot?: WorkflowSnapshot | null;
   stepOrdinalByNodeId: Map<string, number>;
+  onSelectNode?: (nodeId: string) => void;
 }) {
   if (!nodes.length) {
     return <p className="stage-progress-empty">执行到该阶段后会生成步骤记录。</p>;
@@ -1281,11 +1287,17 @@ function StageProgressRail({
         const ordinal = stepOrdinalByNodeId.get(node.node_id) ?? index + 1;
         const tone = statusTone(node.status);
         return (
-          <div className={`stage-progress-node ${tone}`} key={node.node_execution_id ?? `${node.node_id}-${index}`}>
+          <button
+            aria-label={`展开 S${ordinal} ${nodeDisplayTitle(node, snapshot)}`}
+            className={`stage-progress-node ${tone}`}
+            key={node.node_execution_id ?? `${node.node_id}-${index}`}
+            type="button"
+            onClick={() => onSelectNode?.(node.node_id)}
+          >
             <strong>{`S${ordinal}`}</strong>
             <span aria-hidden="true" />
             <small>{nodeDisplayTitle(node, snapshot)}</small>
-          </div>
+          </button>
         );
       })}
     </div>

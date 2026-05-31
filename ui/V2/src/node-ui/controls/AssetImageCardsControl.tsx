@@ -523,6 +523,8 @@ export function AssetImageCardsControl({
       {pickerCard ? (
         <AssetPickerDialog
           assetLabel={groupLabels[tabKeyForAssetType(pickerCard.assetType)] ?? "资产"}
+          initialAssetId={(matches[pickerCard.assetKey] ?? pickerCard.matchedAsset ?? null)?.asset_id}
+          initialAssetName={(matches[pickerCard.assetKey] ?? pickerCard.matchedAsset ?? null)?.name}
           projectId={projectId}
           tagName={tagNameForAssetType(pickerCard.assetType)}
           targetName={pickerCard.title}

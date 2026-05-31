@@ -830,6 +830,23 @@ describe("XiAgent V2 app", () => {
     });
   });
 
+  it("expands the matching step when clicking a collapsed stage progress dot", async () => {
+    render(<App />);
+    await login();
+
+    await userEvent.click(await screen.findByRole("button", { name: "打开 故事板生成" }));
+
+    const detail = await screen.findByLabelText("任务运行详情");
+    await userEvent.click(within(detail).getByRole("button", { name: /P2 生成与选择/ }));
+
+    expect(within(detail).queryByText("雨夜城市电影感")).not.toBeInTheDocument();
+    await userEvent.click(within(detail).getByRole("button", { name: /展开 S2 选择图片/ }));
+
+    expect(within(detail).getByRole("button", { name: "选择 第一张" })).toBeInTheDocument();
+    const chooseStep = within(detail).getAllByText("选择图片").find((item) => item.closest(".stage-step-row"));
+    expect(chooseStep?.closest(".stage-step-entry")?.querySelector(".node-detail-body")).toBeTruthy();
+  });
+
   it("renders unwrapped output controls directly in the node detail", async () => {
     const baseFetch = mockFetch();
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {

@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApprovalControl } from "../node-ui/controls/ApprovalControl";
 import { AssetImageCardsControl } from "../node-ui/controls/AssetImageCardsControl";
+import { AssetPickerDialog } from "../node-ui/controls/AssetPickerDialog";
 import { AssetSummaryTableControl } from "../node-ui/controls/AssetSummaryTableControl";
 import { AssetTaskSummaryControl } from "../node-ui/controls/AssetTaskSummaryControl";
 import { ControlLibraryPage } from "../node-ui/ControlLibraryPage";
@@ -305,9 +306,99 @@ describe("node-ui controls", () => {
     });
   });
 
+  it("preselects name and variant filters for an existing matched asset", async () => {
+    Object.defineProperty(URL, "createObjectURL", { value: vi.fn(() => "blob:luzhishen"), configurable: true });
+    Object.defineProperty(URL, "revokeObjectURL", { value: vi.fn(), configurable: true });
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.startsWith("/api/assets/search")) {
+        return jsonResponse({
+          items: [{
+            asset_id: "asset-luzhishen",
+            asset_type: "file",
+            name: "角色_鲁智深_僧衣_禅杖",
+            scope: "global",
+            mime_type: "image/png",
+            size_bytes: 128,
+            metadata: { public_url: "https://assets.local.invalid/assets/luzhishen.png" },
+            created_at: "2026-05-27T10:00:00Z",
+          }],
+        });
+      }
+      if (url === "/api/assets/asset-luzhishen/tags") {
+        return jsonResponse({ items: [] });
+      }
+      if (url === "/api/assets/asset-luzhishen/content") {
+        return Promise.resolve(new Response(new Blob(["fake"], { type: "image/png" }), {
+          status: 200,
+          headers: { "Content-Type": "image/png" },
+        }));
+      }
+      return jsonResponse({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <AssetPickerDialog
+        assetLabel="角色"
+        initialAssetId="asset-luzhishen"
+        initialAssetName="角色_错误_默认"
+        tagName="角色"
+        targetName="鲁智深"
+        onClose={vi.fn()}
+        onSelect={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByRole("dialog", { name: "选择匹配资产" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: "选择名称 鲁智深" })).toHaveClass("active"));
+    expect(screen.getByRole("button", { name: "选择变体 僧衣" })).toHaveClass("active");
+    expect(screen.getByRole("button", { name: "选择资产 角色_鲁智深_僧衣_禅杖" })).toBeInTheDocument();
+  });
+
+  it("preselects the target name when the matched asset name is unavailable", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.startsWith("/api/assets/search")) {
+        return jsonResponse({
+          items: [{
+            asset_id: "asset-chaogai",
+            asset_type: "file",
+            name: "角色_晁盖_庄主服",
+            scope: "global",
+            mime_type: "image/png",
+            size_bytes: 128,
+            metadata: { public_url: "https://cdn.example.com/chaogai.png" },
+            created_at: "2026-05-27T10:00:00Z",
+          }],
+        });
+      }
+      if (url === "/api/assets/asset-chaogai/tags") {
+        return jsonResponse({ items: [] });
+      }
+      return jsonResponse({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <AssetPickerDialog
+        assetLabel="角色"
+        tagName="角色"
+        targetName="晁盖"
+        onClose={vi.fn()}
+        onSelect={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByRole("dialog", { name: "选择匹配资产" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: "选择名称 晁盖" })).toHaveClass("active"));
+  });
+
   it("renders matched asset cards, generates images locally, and submits after confirmation", async () => {
     const onSubmit = vi.fn();
     const onDraft = vi.fn();
+    Object.defineProperty(URL, "createObjectURL", { value: vi.fn(() => "blob:luzhishen"), configurable: true });
+    Object.defineProperty(URL, "revokeObjectURL", { value: vi.fn(), configurable: true });
     let includeExistingNameTag = false;
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -340,12 +431,13 @@ describe("node-ui controls", () => {
           items: [
             includeCharacters ? {
               asset_id: "asset-luzhishen",
-              asset_type: "text",
-              name: "鲁智深_僧衣",
+              asset_type: "file",
+              name: "角色_鲁智深_僧衣",
               scope: "global",
-              mime_type: null,
-              size_bytes: null,
-              metadata: { public_url: "https://cdn.example.com/luzhishen-linked.png" },
+              mime_type: "image/png",
+              size_bytes: 128,
+              storage_uri: "assets/luzhishen.png",
+              metadata: { public_url: "https://assets.local.invalid/assets/luzhishen.png" },
               created_at: "2026-05-27T10:00:00Z",
             } : null,
             includeLocations ? {
@@ -360,6 +452,22 @@ describe("node-ui controls", () => {
             } : null,
           ].filter(Boolean),
         });
+      }
+      if (url === "/api/assets/asset-luzhishen/tags") {
+        return jsonResponse({
+          items: [
+            { tag_id: "tag-character", name: "角色", scope: "global", project_id: null, asset_count: 1 },
+            { tag_id: "tag-luzhishen", name: "鲁智深", scope: "global", project_id: null, asset_count: 1 },
+            { tag_id: "tag-monk-robe", name: "僧衣", scope: "global", project_id: null, asset_count: 1 },
+            { tag_id: "tag-staff", name: "禅杖", scope: "global", project_id: null, asset_count: 1 },
+          ],
+        });
+      }
+      if (url === "/api/assets/asset-luzhishen/content") {
+        return Promise.resolve(new Response(new Blob(["fake"], { type: "image/png" }), {
+          status: 200,
+          headers: { "Content-Type": "image/png" },
+        }));
       }
       if (url === "/api/assets/generate-image") {
         return jsonResponse({
@@ -460,10 +568,13 @@ describe("node-ui controls", () => {
     const missingMatchButtons = screen.getAllByRole("button", { name: "关联资产" });
     await userEvent.click(missingMatchButtons[1]);
     expect(await screen.findByRole("dialog", { name: "选择匹配资产" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /鲁智深_僧衣/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "选择名称 鲁智深" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "选择变体 僧衣" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "选择资产 角色_鲁智深_僧衣" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("img", { name: "角色_鲁智深_僧衣 图像" })).toHaveAttribute("src", "blob:luzhishen"));
     expect(screen.queryByRole("button", { name: /野猪林/ })).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: /鲁智深_僧衣/ }));
-    expect(screen.getAllByText("鲁智深_僧衣").length).toBeGreaterThan(0);
+    await userEvent.click(screen.getByRole("button", { name: "选择资产 角色_鲁智深_僧衣" }));
+    expect(screen.getAllByText("角色_鲁智深_僧衣").length).toBeGreaterThan(0);
 
     await userEvent.click(screen.getByRole("tab", { name: /道具/ }));
     expect(screen.queryByText("水火棍")).not.toBeInTheDocument();
@@ -871,9 +982,10 @@ describe("node-ui controls", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "林冲_默认" }));
     expect(await screen.findByRole("dialog", { name: "选择匹配资产" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /鲁智深/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "选择名称 鲁智深" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "选择资产 鲁智深" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /野猪林资产/ })).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: /鲁智深/ }));
+    await userEvent.click(screen.getByRole("button", { name: "选择资产 鲁智深" }));
 
     await userEvent.click(screen.getByRole("button", { name: "资产分析" }));
     expect(await screen.findByRole("dialog", { name: "资产分析" })).toBeInTheDocument();

@@ -442,6 +442,8 @@ export function AssetSummaryTableControl({
       {pickerRow ? (
         <AssetPickerDialog
           assetLabel={tabLabels[pickerRow.type]}
+          initialAssetId={(matches[pickerRow.key] ?? pickerRow.matchedAsset ?? null)?.asset_id}
+          initialAssetName={(matches[pickerRow.key] ?? pickerRow.matchedAsset ?? null)?.name}
           projectId={projectId}
           tagName={tagNameForRowType(pickerRow.type)}
           targetName={pickerRow.name}
