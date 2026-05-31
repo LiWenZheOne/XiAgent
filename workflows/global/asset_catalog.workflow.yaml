@@ -29,6 +29,7 @@
           - match_scenes_by_name
           - enrich_scenes
           - match_variants
+          - resolve_character_variant_refs
           - check_accessories
           - extract_props
           - lookup_prop_assets
@@ -48,8 +49,9 @@
           - upload_images
       - id: p5_final_confirm
         name: P5 任务完成
-        description: 汇总任务概况，支持导出生成图像压缩包。
+        description: 汇总集剧情概括、原剧本内容和完整资产目录，并保存为集元数据资产。
         nodes:
+          - summarize_episode
           - finish_summary
     defaults:
       ai:
@@ -109,6 +111,12 @@ nodes:
         schema:
           type: string
           minLength: 1
+      episode_name:
+        from_user: true
+        schema:
+          type: string
+          minLength: 1
+          title: 集名称
       background:
         from_user: true
         schema:
@@ -117,11 +125,15 @@ nodes:
           default: 水浒传
     outputs:
       type: object
-      required: ["script", "background"]
+      required: ["script", "episode_name", "background"]
       properties:
         script:
           type: string
           minLength: 1
+        episode_name:
+          type: string
+          minLength: 1
+          title: 集名称
         background:
           type: string
           minLength: 1
@@ -165,10 +177,10 @@ nodes:
           5. 这些角色的全名是什么？代称、绰号、非全名称呼需要结合原作推断全名；多人合称要拆成具体角色，没有名称的龙套可保留为合称。
           6. 每个角色的生平背景是什么？summary 只写长期身份、原作背景和人物定位，不写当前动作、被绑、受伤、押送、服装或临时处境。
           7. 每个角色当前剧情状态是什么？character_status 只写此刻/本段剧情中的身份、处境或状态，不写生平背景。
-          8. 每个角色在当前情景下应该是什么稳定造型？必须结合世界背景、身份、职业/阶层、地点、时代和剧情阶段推导一个具体服装或稳定外观造型。
-          9. 这个稳定造型应该叫什么 variant_name？variant_name 必须是可复用的服装或造型名称，如"官兵装束"、"渔民短打"、"道士服"、"僧衣"、"旅人布衣"、"水军装束"、"囚服"、"夜行衣"；禁止填"默认"、"基础"、"普通"、"无特殊造型"，禁止包含角色名，禁止使用"角色名_服装名"格式，禁止用被绑、受伤、押送、奔跑等临时状态命名。
+          8. 每个角色的长相是什么样的？有什么面部特征（不写包括脸型）？在当前情景下应该是什么造型？必须结合世界背景、身份、职业/阶层、地点、时代和剧情阶段推导一个具体服装或稳定外观造型。不写脸型、面部轮廓、体型、体貌、身材、腿部、脚部、脚踝、鞋、靴、鞋履、脚穿物或任何下肢细节。
+          9. 这个稳定造型应该叫什么 variant_name？variant_name 必须是可复用的服装或造型名称，如"官兵装束"、"渔民短打"、"道士服"、"僧衣"、"旅人布衣"、"水军装束"、"囚服"、"夜行衣"；禁止用被绑、受伤、押送、奔跑等临时状态命名。
           10. 哪些内容不是变体依据？被绑起来、被押送、受伤、疲惫、奔跑、打斗、表情、姿态、镜头动作、所在地点、天气、光照、剧情处境都不是 variant_name 的命名依据，也不得写入 variant_description 或 accessories。
-          11. 这个变体的稳定视觉设定是什么？variant_description 至少 40 字，按头部/发型、上身、下装、鞋履、颜色材质、身份识别特征、稳定配件描述，只写可复用视觉设定，禁止输出"默认装束，无特殊造型描述"这类空泛描述。
+          11. 这个变体的稳定视觉设定是什么？variant_description 至少 40 字，以这是一位xx开头，按性别年龄，身份，气质，五官，面部特征，头部/发型、上身、下装、鞋履、颜色搭配、身份识别特征、稳定配件描述；不要描述任何材质、布料质感、纹理或面料工艺；
           12. 当前情景下有哪些稳定可穿戴/携带配件？例如面巾、披风、围巾、斗笠、斗篷、包袱、随身兵器挂件。只有叙述段显示正在佩戴、携带、遮挡、披挂，或此情景下极可能稳定附着于角色时才写入 accessories。束缚用绳索、临时镣铐、被绑状态造成的限制物不是角色配件。
         vars:
           background:
@@ -191,7 +203,7 @@ nodes:
           - summary：角色生平背景/身份定位梗概（≤100字）；只写角色在原作或世界背景中的长期身份、经历和人物背景，不写当前剧情状态、动作、伤势、被绑、押送、服装或临时处境
           - character_status：当前剧情阶段该角色的上下文状态；只写此刻/本段剧情中的身份、处境、状态或正在经历的情况，不写生平背景、长期履历或原作人物介绍；该字段仅供理解上下文，不作为变体依据
           - variant_name：回答"这个稳定造型应该叫什么？"后得到的服装/造型名称；必须是"官兵装束"、"渔民短打"、"道士服"、"囚服"、"夜行衣"、"僧衣"这类可复用造型名；禁止输出"默认"、"基础"、"普通"、"无特殊造型"，禁止包含角色名或临时状态
-          - variant_description：回答"这个变体的稳定视觉设定是什么？"后得到的详细描述，至少 40 字；按头部/发型、上身、下装、鞋履、颜色材质、身份识别特征、稳定配件描述；不得写被绑、受伤、动作、姿态、表情、场景、天气或剧情处境；不得输出"默认装束，无特殊造型描述"这类空泛描述
+          - variant_description：回答"这个变体的稳定视觉设定是什么？"后得到的详细描述，至少 40 字；以这是一位xx开头，按性别年龄，身份，气质，面部特征，发型、头饰，上身、下装、鞋履、颜色搭配、身份识别特征、稳定配件描述；不得描述任何材质、布料质感、纹理或面料工艺；不得写被绑、受伤、动作、姿态、表情、场景、天气或剧情处境；
           - accessories：当前变体包含的稳定可穿戴/携带配件列表（如["面巾", "披风"]，无配件时为空数组；不要把身份、身体特征、普通服装整体、束缚状态或剧情道具写成配件）
 
           根层级除 reasoning、characters 和 character_names 外不得包含其他键。
@@ -476,7 +488,7 @@ nodes:
           1. 先判断这段剧本中有哪些地点需要固化为可复用地点资产。重点关注会多次出现、承载剧情行动、具备明确空间结构/功能、或后续可能反复用于分镜和图像生成的地点；临时路过、泛泛提及、纯对话中一笔带过且没有空间特征的地点不要固化。
           2. 判断当前剧本对应原作的哪一回、剧情发展到什么阶段。
           3. 逐段分析剧本，识别剧本中出现或隐含的地点资产，合并同一地点的多次出现。
-          4. 为每个地点命名、描述、判定时间特征和地点类型；描述必须结合世界背景/原作说明这个地点在哪里、是干什么的、通常承载什么功能。
+          4. 为每个地点命名、描述、判定时间特征和地点类型；description 必须是可用于后续图像生成的地点设计描述，结合世界背景/原作说明地点在哪里、用途是什么，并根据时代背景设计空间结构、场景物件、陈设、布局和装饰风格。
           将你的完整分析过程写入 reasoning 字段。
         vars:
           background:
@@ -495,7 +507,7 @@ nodes:
 
           每个地点对象必须包含：
           - name：地点名称
-          - description：地点描述（≤100字，结合世界背景/原作说明地点在哪里、用途是什么）
+          - description：地点设计描述（≤100字，结合世界背景/原作说明地点在哪里、用途是什么，并根据时代背景描述空间结构、场景物件、陈设、布局和装饰风格）
           - time_of_day：时间特征（如"白天"、"夜晚"、"黄昏"等）
           - location_type：地点类型（如"室内"、"户外"、"宫殿"、"山林"等）
 
@@ -704,15 +716,50 @@ nodes:
           - matched_variant_id：匹配到的变体资产ID（无匹配时为null）
           - is_new_variant：上游已提取变体是否未匹配到已有变体资产
           - new_variant_name：is_new_variant=true时必填，格式：角色名_上游variant_name；不得使用被绑、受伤、动作、场景等临时状态命名
-          - default_variant_status：角色默认变体的状态描述；existing_variants 为空时返回空字符串
-          - default_variant_storage_uri：角色默认变体的参考图URL；existing_variants 为空或无参考图时返回空字符串
-          - default_variant_appearance_description：角色默认变体参考图的外貌描述；必须来自 matched variant 或 existing_variants.appearance_description，existing_variants 为空时返回空字符串，不能自行编造
-          - matched_variant_appearance_description：匹配到的变体参考图外貌描述；无匹配时为空字符串
           - reason：≤50字判断理由
       items:
         from: "$nodes.enrich_characters.output.characters"
       max_attempts:
         value: 2
+    outputs:
+      type: object
+      required: ["results"]
+      properties:
+        results:
+          type: array
+          items:
+            type: object
+            required: ["full_name", "accessories", "matched_variant", "is_new_variant", "reason"]
+            properties:
+              full_name:
+                type: string
+                minLength: 1
+              accessories:
+                type: array
+                items:
+                  type: string
+              matched_variant:
+                type: string
+              matched_variant_id:
+                type: ["string", "null"]
+              is_new_variant:
+                type: boolean
+              new_variant_name:
+                type: string
+              reason:
+                type: string
+                minLength: 1
+            additionalProperties: false
+      additionalProperties: false
+
+  - id: resolve_character_variant_refs
+    ref: tool.resolve_character_variant_refs.v1
+    name: 继承角色变体参考字段
+    inputs:
+      characters:
+        from: "$nodes.enrich_characters.output.characters"
+      variant_results:
+        from: "$nodes.match_variants.output.results"
     outputs:
       type: object
       required: ["results"]
@@ -835,6 +882,7 @@ nodes:
           这类穿戴类外观元素属于角色变体或角色配件，不进入道具资产列表。
           只有可从角色身上独立拿取、使用、赠予、争夺或作为剧情实体流转的物件才可作为道具；普通穿着状态不能作为道具。
           如果道具与某个角色有明确持有、使用、携带、赠予或争夺关系，请记录关联角色；没有明确关联时留空或省略。
+          每个道具的 description 必须是可用于后续图像生成的道具设计描述，结合世界背景和时代质感设计材质、造型、颜色、装饰、磨损痕迹、用途和可见特征。
           将你的分析过程写入 reasoning 字段。
         vars:
           background:
@@ -853,7 +901,7 @@ nodes:
 
           每个道具对象必须包含：
           - full_name：道具名称（如"青龙偃月刀"）
-          - description：道具描述（≤100字）
+          - description：道具设计描述（≤100字，结合世界背景和时代质感描述材质、造型、颜色、装饰、磨损痕迹、用途和可见特征）
           - category：道具类别（如"武器"、"工具"、"容器"、"书籍/信件"等；不要使用"服装"作为道具类别，普通穿戴类外观元素不进入 props）
           - related_character：关联角色（可选；仅当剧本明确说明某角色持有、使用、携带、赠予或争夺该道具时填写角色名，否则可省略或为空字符串）
 
@@ -1096,7 +1144,7 @@ nodes:
           prop_matches:
             from: "$nodes.match_props_by_name.output.assets"
           variant_result:
-            from: "$nodes.match_variants.output.results"
+            from: "$nodes.resolve_character_variant_refs.output.results"
           accessory_result:
             from: "$nodes.check_accessories.output.results"
       characters:
@@ -1124,7 +1172,7 @@ nodes:
       prop_matches:
         from: "$nodes.match_props_by_name.output.assets"
       variant_results:
-        from: "$nodes.match_variants.output.results"
+        from: "$nodes.resolve_character_variant_refs.output.results"
       accessory_results:
         from: "$nodes.check_accessories.output.results"
       decision:
@@ -1212,10 +1260,10 @@ nodes:
           - 如果 additional_asset_request 为空、无明确新增意图或无法从原文/世界背景支持，原样返回 approved_assets，added_assets 为空。
           - 如果用户描述要求新增角色、地点或道具，必须从 script 和 background 中找依据，并补入 approved_assets 对应数组。
           - 角色新增资产必须遵守资产提取分工：变体只由稳定服装、稳定外观造型和可穿戴/携带配件决定；先根据身份、职业/阶层、地点和剧情阶段推断具体稳定造型名；variant_name 禁止填"默认"、"基础"、"普通"、"无特殊造型"等空泛标签；被绑、受伤、动作、表情、姿态、剧情处境、镜头状态不是变体。
-          - 角色 variant_description 至少 40 字，按头部/发型、上身、下装、鞋履、颜色材质、身份识别特征、稳定配件描述；禁止输出"默认装束，无特殊造型描述"这类空泛描述。
+          - 角色 variant_description 至少 40 字，按头部/发型、上身、下装、鞋履、颜色搭配、身份识别特征、稳定配件描述；不得描述任何材质、布料质感、纹理或面料工艺；禁止输出"默认装束，无特殊造型描述"这类空泛描述。
           - 角色 summary 只描述角色生平背景、身份定位或原作人物背景，不描述当前剧情状态；character_status 只描述当前剧情阶段的身份、处境或状态，不描述生平背景。
-          - 地点新增资产描述地点本身：它是什么地方、位于哪里、在原作/世界背景中用来做什么；不要把剧情场次当地点。
-          - 道具新增资产描述实体道具本身，可填写 category 和 related_character；related_character 没有明确关联时留空。
+          - 地点新增资产描述地点本身：它是什么地方、位于哪里、在原作/世界背景中用来做什么，并根据时代背景补足空间结构、场景物件、陈设、布局和装饰风格；不要把剧情场次当地点。
+          - 道具新增资产描述实体道具本身，根据世界背景和时代质感补足材质、造型、颜色、装饰、磨损痕迹、用途和可见特征；可填写 category 和 related_character；related_character 没有明确关联时留空。
           - 衣服、服装、鞋帽、披风、围巾、面巾、斗笠、斗篷等穿戴类外观元素不得作为道具新增；
           - 不要删除 approved_assets 中已有资产，除非用户描述明确要求删除且表格中尚未删除。
           - 不要改写已经匹配到的资产库字段；新增资产默认 matched=false，matched_asset_id=null，matched_asset_name=""。
@@ -1337,11 +1385,11 @@ nodes:
     inputs:
       system:
         value: |
-          你是一位视觉资产设定提示词专家。请根据给定资产信息，生成图生图使用的目标描述片段。
-          角色资产只生成稳定设定，不生成具体剧情镜头。
-          角色描述只写画面可见的外貌特征与气质：发型/胡须、上身服装层次、颜色、材质和必要随身配件。
-          不写身份、职业、阶层、官职、称号、人物关系、阵营、剧情身份、长期履历或其他不可直接从画面看出的概念。
-          不写脸型、面部轮廓、五官、体型、体貌、身材、腿部、脚部、脚踝、鞋、靴、鞋履、脚穿物或任何下肢细节。
+          你是一位视觉资产设定提示词专家。请根据给定资产信息，分析参考设定和目标设计的差异，生成图生图使用的修改提示词。
+          提示词只写画面可见的外形特征与气质。
+          如果是角色，必须保持大圆头、圆鼓身体、无腿，下半身是个类似不倒翁的半球、简化五官、粗黑描边、平涂色块和圆润卡通比例；不得改成写实人体、长身比例或其他体型结构。
+          角色描述不得包含任何材质、布料质感、纹理、面料工艺或类似词汇，只包括发型、眉毛、胡子、眼睛、鼻子、上身服装层次、颜色搭配和必要随身配件。
+          不写脸型、面部轮廓、体型、体貌、身材、腿部、脚部、脚踝、鞋、靴、鞋履、脚穿物或任何下肢细节。
           不写动作、姿态、表情、镜头调度、场景气氛、正在发生的剧情、受伤、疲惫、奔跑、打斗、被绑等临时状态。
           只保留稳定造型差异；临时情景信息只用于判断应排除哪些内容。
           地点描述空间结构、建筑/地貌、时代质感、用途和关键视觉元素。
@@ -1351,23 +1399,34 @@ nodes:
           当前资产：
           {item}
 
-          可用参考：
-          - reference_image_ref：直接复制 item.reference_image_ref。
-          - 参考图外貌描述已在资产字段中提供，不要重新生成或改写。
-
           请按以下问题思考：
           1. 这个资产属于角色、地点还是道具？
-          2. 如果是角色：哪些信息是稳定可见造型？哪些身份、剧情、动作、状态、腿脚和鞋履信息必须排除？
-          3. 如果是地点：它的空间、建筑/地貌、时代质感、用途和关键视觉元素是什么？
-          4. 如果是道具：它的形制、材质、颜色、装饰、磨损、用途和可见特征是什么？
-          5. 最终 prompt 应该只保留资产可见目标设定，不包含固定开头、固定结尾或质量词。
+          2. 如果是角色：当前资产字段中的 name/full_name 只用于理解目标对象，最终外貌描述和 prompt 不得输出人名；当前资产的 variant_description 描述了哪些目标外貌？参考图的 reference_variant_description 描述了哪些原始外貌？
+          3. 如果是角色：目标外貌和参考图外貌之间的差异是什么？如何把参考图像修改为目标的外观？
+          4. 如果是角色：哪些剧情、动作、状态、腿脚和鞋履信息必须排除？
+          5. 如果是地点：它的空间、建筑/地貌、时代质感、用途和关键视觉元素是什么，在当前时代背景下，这个场景中应该有什么物件摆设，布局是什么样的，用什么角度可以更好的展现地点的全貌？
+          6. 如果是道具：它的形制、材质、颜色、装饰、磨损、用途和可见特征是什么？
+          7. 最终 prompt 应该只保留资产可见目标设定，不包含固定开头、固定结尾或质量词。
 
           返回 JSON 对象：
           - full_name：资产显示名称。角色优先组合 name、variant_name、accessories；地点/道具使用 name。
-          - target_appearance_description：目标资产外貌描述，角色写稳定发型/胡须、气质、可见外貌特征、上身服装层次、颜色、材质和必要随身配件，但不得包含身份、职业、阶层、官职、称号、人物关系、阵营、剧情身份、长期履历、脸型、面部轮廓、五官、体型、体貌、身材、腿部、脚部、脚踝、鞋、靴、鞋履、脚穿物或任何下肢细节；地点/道具写目标视觉设定。
-          - think：思考过程，说明如何从当前 item 得出稳定可见目标设定，以及排除了哪些身份、职业、剧情、临时状态或腿脚细节。
-          - prompt：最终目标描述片段。只描述资产在画面中可见的外貌特征和气质，不包含固定开头、固定结尾或质量词。角色只写发型/胡须、气质、可见外貌特征、上身服装层次、颜色、材质和必要随身配件；不得写身份、职业、阶层、官职、称号、人物关系、阵营、剧情身份、长期履历、脸型、面部轮廓、五官、体型、体貌、身材、腿部、脚部、脚踝、鞋、靴、鞋履、脚穿物或任何下肢细节；不得写动作、姿态、表情、场景、剧情、受伤或其他临时状态；不得输出图片、图片链接、Markdown 或 HTML。
-          - reference_image_ref：参考图引用对象，必须原样复制 item.reference_image_ref。
+          - target_appearance_description：目标资产外貌描述，角色写稳定发型、眉毛、胡子、眼睛、气质、可见外貌特征、上身服装层次、颜色搭配和必要随身配件，并明确保持大圆头、圆鼓身体、短小四肢、简化五官、粗黑描边、平涂色块和圆润卡通比例不变；但不得包含人名、角色名、身份、职业、阶层、官职、称号、人物关系、阵营、剧情身份、长期履历、脸型、面部轮廓、体型、体貌、身材、腿部、脚部、脚踝、鞋、靴、鞋履、脚穿物、任何下肢细节、材质、布料质感、纹理或面料工艺；地点/道具写目标视觉设定。
+          - think：思考过程，说明如何比较当前资产 variant_description 和参考图 reference_variant_description，并排除了哪些身份、职业、剧情、临时状态或腿脚细节。
+          - prompt：最终修改用的提示词。，以请将图中（角色/场景/道具）改成一位xx性格，气质的（身份），外貌xx，穿着xx的格式书写
+      prompt_fields:
+        value:
+          - type
+          - name
+          - full_name
+          - variant_name
+          - variant_description
+          - accessories
+          - description
+          - reference_variant_description
+      passthrough_fields:
+        value:
+          - reference_image_ref
+          - reference_source
       items:
         from: "$nodes.filter_assets_for_generation.output.approved_assets"
       max_attempts:
@@ -1408,6 +1467,8 @@ nodes:
                   role:
                     type: string
                 additionalProperties: false
+              reference_source:
+                type: string
             additionalProperties: false
       additionalProperties: false
 
@@ -1440,7 +1501,7 @@ nodes:
           characters:
             from: "$nodes.extract_characters.output.characters"
           variant_result:
-            from: "$nodes.match_variants.output.results"
+            from: "$nodes.resolve_character_variant_refs.output.results"
           accessory_result:
             from: "$nodes.check_accessories.output.results"
       characters:
@@ -1448,7 +1509,7 @@ nodes:
       enriched_characters:
         from: "$nodes.enrich_characters.output.characters"
       variant_results:
-        from: "$nodes.match_variants.output.results"
+        from: "$nodes.resolve_character_variant_refs.output.results"
       accessory_results:
         from: "$nodes.check_accessories.output.results"
       prompt_results:
@@ -1540,29 +1601,119 @@ nodes:
           control_id: ui.interaction.asset_image_cards.v1
           variant: grouped_cards
           mode: interactive
+          options:
+            prompt_text_by_type:
+              character:
+                prefix:
+                suffix: 保持角色长相，比例、画风、和其它未提及特征不变
+              character_default_reference:
+                prefix:
+                suffix: 保持画风和角色体型不变，改变原图中的所有角色特征，根据描述设计全新的形象。
+              scene:
+                prefix:
+                suffix: 保持画风不变，根据描述选择合适的构图，视角，空间关系，生成全新的场景。
+              prop:
+                prefix:
+                suffix: 保持画风不变，改变原图中的所有造型和颜色设计，并根据描述设计新的造型和颜色。
+              other:
+                prefix: 将图中资产改成
+                suffix: 保持画风和其它未提及特征不变
+
+  - id: summarize_episode
+    ref: ai.deepseek_structured_json.v1
+    name: 生成集剧情概括
+    inputs:
+      system:
+        value: |
+          仅返回合法 JSON。你是剧本编目助手，请根据原剧本内容生成一段稳定、简洁的集剧情概括。
+          概括用于后续分镜生成检索和确认，不要包含资产目录、图片生成过程或编目操作说明。
+      prompt:
+        template: |
+          请为以下剧本生成集剧情概括。
+
+          集名称：
+          {episode_name}
+
+          世界背景：
+          {background}
+
+          原剧本内容：
+          {script}
+
+          返回一个仅包含以下键的 JSON 对象：
+          - episode_summary：80 到 200 字的剧情概括，说明本集主要事件、关键人物和场景推进。
+        vars:
+          episode_name:
+            from: "$nodes.collect_asset_catalog_input.output.episode_name"
+          background:
+            from: "$nodes.collect_asset_catalog_input.output.background"
+          script:
+            from: "$nodes.collect_asset_catalog_input.output.script"
+      max_attempts:
+        value: 2
+    outputs:
+      type: object
+      required: ["episode_summary"]
+      properties:
+        episode_summary:
+          type: string
+          minLength: 1
+      additionalProperties: false
 
   - id: finish_summary
-    ref: tool.echo.v1
+    ref: tool.episode_metadata_finalize.v1
     name: 任务完成
     inputs:
+      episode_name:
+        from: "$nodes.collect_asset_catalog_input.output.episode_name"
+      episode_summary:
+        from: "$nodes.summarize_episode.output.episode_summary"
+      source_script:
+        from: "$nodes.collect_asset_catalog_input.output.script"
+      background:
+        from: "$nodes.collect_asset_catalog_input.output.background"
+      asset_catalog:
+        from: "$nodes.resolve_approved_assets.output.approved_assets"
       asset_images:
         from: "$nodes.upload_images.output.asset_images"
       prompt_results:
         from: "$nodes.upload_images.output.prompt_results"
       decision:
         from: "$nodes.upload_images.output.decision"
+      scope:
+        value: "project"
     outputs:
       type: object
-      required: ["echo"]
+      required: ["episode_name", "episode_summary", "source_script", "asset_catalog", "episode_asset_id"]
       properties:
-        echo:
+        episode_name:
+          type: string
+          minLength: 1
+        episode_summary:
+          type: string
+        source_script:
+          type: string
+          minLength: 1
+        background:
+          type: string
+        asset_catalog:
           type: object
           additionalProperties: true
+        asset_images:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        episode_asset_id:
+          type: string
+          minLength: 1
       additionalProperties: false
     ui:
       sections:
         input:
           visible: false
+        output:
+          wrapped: false
         events:
           visible: false
       controls:
@@ -1597,7 +1748,11 @@ edges:
   - from: enrich_characters
     to: match_variants
   - from: match_variants
+    to: resolve_character_variant_refs
+  - from: enrich_characters
     to: check_accessories
+  - from: resolve_character_variant_refs
+    to: review_assets
   - from: check_accessories
     to: review_assets
   - from: collect_asset_catalog_input
@@ -1619,6 +1774,8 @@ edges:
   - from: generate_prompt
     to: upload_images
   - from: upload_images
+    to: summarize_episode
+  - from: summarize_episode
     to: finish_summary
   - from: finish_summary
     to: END
