@@ -31,6 +31,7 @@
           - match_variants
           - resolve_character_variant_refs
           - check_accessories
+          - resolve_accessory_asset_refs
           - extract_props
           - lookup_prop_assets
           - match_props_by_name
@@ -856,6 +857,70 @@ nodes:
             additionalProperties: false
       additionalProperties: false
 
+  - id: resolve_accessory_asset_refs
+    ref: tool.resolve_accessory_asset_refs.v1
+    name: 解析配件资产引用
+    inputs:
+      characters:
+        from: "$nodes.enrich_characters.output.characters"
+      variant_results:
+        from: "$nodes.resolve_character_variant_refs.output.results"
+      accessory_results:
+        from: "$nodes.check_accessories.output.results"
+    outputs:
+      type: object
+      required: ["results"]
+      properties:
+        results:
+          type: array
+          items:
+            type: object
+            required: ["full_name", "has_new_accessories", "new_accessories", "existing_accessories", "selected_accessory_assets", "reason"]
+            properties:
+              full_name:
+                type: string
+                minLength: 1
+              has_new_accessories:
+                type: boolean
+              new_accessories:
+                type: array
+                items:
+                  type: string
+              existing_accessories:
+                type: array
+                items:
+                  type: string
+              selected_accessory_assets:
+                type: array
+                items:
+                  type: object
+                  required: ["accessory", "matched", "asset_id", "asset_name", "source"]
+                  properties:
+                    accessory:
+                      type: string
+                      minLength: 1
+                    matched:
+                      type: boolean
+                    asset_id:
+                      type: string
+                    asset_name:
+                      type: string
+                    asset_ref:
+                      type: ["object", "null"]
+                    storage_uri:
+                      type: string
+                    appearance_description:
+                      type: string
+                    source:
+                      type: string
+                      enum: ["matched_accessory", "first_variant_asset"]
+                  additionalProperties: false
+              reason:
+                type: string
+                minLength: 1
+            additionalProperties: false
+      additionalProperties: false
+
   # ===== 道具提取与匹配 =====
 
   - id: extract_props
@@ -1134,7 +1199,7 @@ nodes:
           variant_result:
             from: "$nodes.resolve_character_variant_refs.output.results"
           accessory_result:
-            from: "$nodes.check_accessories.output.results"
+            from: "$nodes.resolve_accessory_asset_refs.output.results"
       characters:
         from: "$nodes.extract_characters.output.characters"
       background:
@@ -1162,7 +1227,7 @@ nodes:
       variant_results:
         from: "$nodes.resolve_character_variant_refs.output.results"
       accessory_results:
-        from: "$nodes.check_accessories.output.results"
+        from: "$nodes.resolve_accessory_asset_refs.output.results"
       decision:
         from_user: true
         schema:
@@ -1413,8 +1478,7 @@ nodes:
           - reference_variant_description
       passthrough_fields:
         value:
-          - reference_image_ref
-          - reference_source
+          - full_name
       items:
         from: "$nodes.filter_assets_for_generation.output.approved_assets"
       max_attempts:
@@ -1427,7 +1491,7 @@ nodes:
           type: array
           items:
             type: object
-            required: ["full_name", "target_appearance_description", "think", "prompt", "reference_image_ref"]
+            required: ["full_name", "target_appearance_description", "think", "prompt"]
             properties:
               full_name:
                 type: string
@@ -1491,7 +1555,7 @@ nodes:
           variant_result:
             from: "$nodes.resolve_character_variant_refs.output.results"
           accessory_result:
-            from: "$nodes.check_accessories.output.results"
+            from: "$nodes.resolve_accessory_asset_refs.output.results"
       characters:
         from: "$nodes.extract_characters.output.characters"
       enriched_characters:
@@ -1499,7 +1563,7 @@ nodes:
       variant_results:
         from: "$nodes.resolve_character_variant_refs.output.results"
       accessory_results:
-        from: "$nodes.check_accessories.output.results"
+        from: "$nodes.resolve_accessory_asset_refs.output.results"
       prompt_results:
         from: "$nodes.generate_prompt.output.results"
       approved_assets:
@@ -1590,6 +1654,10 @@ nodes:
           variant: grouped_cards
           mode: interactive
           options:
+            default_reference_templates:
+              character: 塞雷2d角色模板
+              scene: 塞雷2d地点模板
+              prop: 塞雷2d道具模板
             prompt_text_by_type:
               character:
                 prefix:
@@ -1740,8 +1808,10 @@ edges:
   - from: enrich_characters
     to: check_accessories
   - from: resolve_character_variant_refs
-    to: review_assets
+    to: resolve_accessory_asset_refs
   - from: check_accessories
+    to: resolve_accessory_asset_refs
+  - from: resolve_accessory_asset_refs
     to: review_assets
   - from: collect_asset_catalog_input
     to: extract_scenes

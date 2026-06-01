@@ -24,6 +24,10 @@ def _select_episode_outputs(contract: dict[str, Any]) -> dict[str, Any]:
     return _nodes_by_id(contract)["select_episode_metadata"]["outputs"]
 
 
+def _select_episode_inputs(contract: dict[str, Any]) -> dict[str, Any]:
+    return _nodes_by_id(contract)["select_episode_metadata"]["inputs"]
+
+
 def test_orchestration_workflow_contract_structure(test_settings) -> None:
     contract = load_workflow_file(ORCHESTRATION_WORKFLOW_PATH)
 
@@ -33,8 +37,15 @@ def test_orchestration_workflow_contract_structure(test_settings) -> None:
     assert contract["workflow"]["name"] == "分镜生成"
 
     select_outputs = _select_episode_outputs(contract)
-    assert select_outputs["required"] == ["episode_asset_id"]
+    assert select_outputs["required"] == [
+        "episode_name",
+        "episode_summary",
+        "source_script",
+        "asset_catalog",
+        "episode_asset_id",
+    ]
     assert "storyboard_target" not in select_outputs["required"]
+    assert "storyboard_target" not in select_outputs["properties"]
 
     validate_workflow_contract(contract, build_node_registry(test_settings))
 
@@ -45,12 +56,12 @@ def test_orchestration_workflow_node_list(test_settings) -> None:
     nodes_by_id = _nodes_by_id(contract)
     assert list(nodes_by_id) == [
         "select_episode_metadata",
-        "load_episode_metadata",
-        "confirm_episode_context",
         "split_script",
         "assign_assets_to_segments",
-        "assemble_storyboard_context",
+        "resolve_segment_image_refs",
+        "prepare_segment_storyboard_inputs",
         "describe_panels",
+        "merge_segment_descriptions",
         "review_storyboard_prompt",
         "extract_panel_image_urls",
         "assemble_prompt_v2",
@@ -58,13 +69,13 @@ def test_orchestration_workflow_node_list(test_settings) -> None:
         "review_storyboard_image",
     ]
     assert {node_id: node["ref"] for node_id, node in nodes_by_id.items()} == {
-        "select_episode_metadata": "system.user_input.v1",
-        "load_episode_metadata": "tool.episode_metadata_from_asset.v1",
-        "confirm_episode_context": "system.human_approval.v1",
+        "select_episode_metadata": "tool.episode_metadata_from_asset.v1",
         "split_script": "tool.script_split.v1",
         "assign_assets_to_segments": "ai.deepseek_structured_json.v1",
-        "assemble_storyboard_context": "tool.assemble_storyboard_context.v1",
-        "describe_panels": "ai.deepseek_structured_json.v1",
+        "resolve_segment_image_refs": "tool.resolve_segment_image_refs.v1",
+        "prepare_segment_storyboard_inputs": "tool.prepare_segment_storyboard_inputs.v1",
+        "describe_panels": "ai.parallel_deepseek_structured_json.v1",
+        "merge_segment_descriptions": "tool.merge_segment_storyboard_descriptions.v1",
         "review_storyboard_prompt": "system.human_approval.v1",
         "extract_panel_image_urls": "ai.deepseek_structured_json.v1",
         "assemble_prompt_v2": "tool.storyboard_prompt_assembler.v1",
@@ -81,13 +92,13 @@ def test_orchestration_workflow_edges_are_linear_dag(test_settings) -> None:
     assert [edge for edge in contract["edges"] if "when" in edge] == []
     assert contract["edges"] == [
         {"from": "START", "to": "select_episode_metadata"},
-        {"from": "select_episode_metadata", "to": "load_episode_metadata"},
-        {"from": "load_episode_metadata", "to": "confirm_episode_context"},
-        {"from": "confirm_episode_context", "to": "split_script"},
+        {"from": "select_episode_metadata", "to": "split_script"},
         {"from": "split_script", "to": "assign_assets_to_segments"},
-        {"from": "assign_assets_to_segments", "to": "assemble_storyboard_context"},
-        {"from": "assemble_storyboard_context", "to": "describe_panels"},
-        {"from": "describe_panels", "to": "review_storyboard_prompt"},
+        {"from": "assign_assets_to_segments", "to": "resolve_segment_image_refs"},
+        {"from": "resolve_segment_image_refs", "to": "prepare_segment_storyboard_inputs"},
+        {"from": "prepare_segment_storyboard_inputs", "to": "describe_panels"},
+        {"from": "describe_panels", "to": "merge_segment_descriptions"},
+        {"from": "merge_segment_descriptions", "to": "review_storyboard_prompt"},
         {"from": "review_storyboard_prompt", "to": "extract_panel_image_urls"},
         {"from": "extract_panel_image_urls", "to": "assemble_prompt_v2"},
         {"from": "assemble_prompt_v2", "to": "generate_image_v2"},
@@ -98,54 +109,29 @@ def test_orchestration_workflow_edges_are_linear_dag(test_settings) -> None:
     validate_workflow_contract(contract, build_node_registry(test_settings))
 
 
-def test_episode_confirmation_collects_editable_episode_context(test_settings) -> None:
+def test_select_episode_node_loads_and_displays_episode_context(test_settings) -> None:
     contract = load_workflow_file(ORCHESTRATION_WORKFLOW_PATH)
     nodes_by_id = _nodes_by_id(contract)
 
-    load_node = nodes_by_id["load_episode_metadata"]
-    assert load_node["inputs"]["episode_asset_id"] == {
-        "from": "$nodes.select_episode_metadata.output.episode_asset_id",
-    }
+    select_node = nodes_by_id["select_episode_metadata"]
+    assert select_node["inputs"]["episode_asset_id"]["from_user"] is True
     select_ui = nodes_by_id["select_episode_metadata"]["ui"]["controls"]["input"]
     assert select_ui["options"]["fields"]["episode_asset_id"] == {
         "control_id": "ui.input.asset_picker.v1",
-        "variant": "list",
+        "variant": "dropdown",
         "mode": "input",
         "asset_type": "text",
         "filter_tag_names": ["集元数据"],
-        "button_label": "选择集",
-        "dialog_title": "选择集信息资产",
+        "placeholder": "请选择集信息资产",
+        "preview_control_id": "ui.display.episode_context.v1",
     }
-    assert "source_script" in load_node["outputs"]["required"]
-    assert "asset_catalog" in load_node["outputs"]["required"]
-
-    confirm_node = nodes_by_id["confirm_episode_context"]
-    assert set(confirm_node["inputs"]) >= {
-        "question",
-        "episode_name",
-        "episode_summary",
-        "source_script",
-        "background",
-        "asset_catalog",
-        "storyboard_target",
-    }
-    for input_name in [
-        "episode_name",
-        "episode_summary",
-        "source_script",
-        "background",
-        "asset_catalog",
-        "storyboard_target",
-    ]:
-        assert confirm_node["inputs"][input_name]["from_user"] is True
-
-    assert confirm_node["outputs"]["required"] == [
-        "episode_name",
-        "source_script",
-        "background",
-        "asset_catalog",
-        "storyboard_target",
-    ]
+    select_sections = nodes_by_id["select_episode_metadata"]["ui"]["sections"]
+    assert select_sections["input"]["wrapper"] is False
+    assert select_sections["output"]["remove"] is True
+    assert select_sections["events"]["visible"] is False
+    assert "source_script" in select_node["outputs"]["required"]
+    assert "asset_catalog" in select_node["outputs"]["required"]
+    assert "output" not in select_node["ui"]["controls"]
 
     validate_workflow_contract(contract, build_node_registry(test_settings))
 
@@ -156,7 +142,7 @@ def test_episode_context_drives_segment_asset_assignment(test_settings) -> None:
 
     split_node = nodes_by_id["split_script"]
     assert split_node["inputs"]["script"] == {
-        "from": "$nodes.confirm_episode_context.output.source_script",
+        "from": "$nodes.select_episode_metadata.output.source_script",
     }
     assert "background" not in split_node["inputs"]
 
@@ -164,36 +150,49 @@ def test_episode_context_drives_segment_asset_assignment(test_settings) -> None:
     prompt_vars = assign_node["inputs"]["prompt"]["vars"]
     assert prompt_vars["segments"] == {"from": "$nodes.split_script.output.segments"}
     assert prompt_vars["asset_catalog"] == {
-        "from": "$nodes.confirm_episode_context.output.asset_catalog",
+        "from": "$nodes.select_episode_metadata.output.asset_catalog",
     }
     assert prompt_vars["background"] == {
-        "from": "$nodes.confirm_episode_context.output.background",
+        "from": "$nodes.select_episode_metadata.output.background",
+    }
+    assert "不要拼接 image_ref" in assign_node["inputs"]["prompt"]["template"]
+
+    resolve_node = nodes_by_id["resolve_segment_image_refs"]
+    assert resolve_node["inputs"] == {
+        "segment_assignments": {
+            "from": "$nodes.assign_assets_to_segments.output.segment_assignments",
+        },
+        "asset_catalog": {
+            "from": "$nodes.select_episode_metadata.output.asset_catalog",
+        },
+    }
+
+    prepare_node = nodes_by_id["prepare_segment_storyboard_inputs"]
+    assert prepare_node["inputs"]["source_script"] == {
+        "from": "$nodes.select_episode_metadata.output.source_script",
+    }
+    assert prepare_node["inputs"]["segments"] == {
+        "from": "$nodes.split_script.output.segments",
+    }
+    assert prepare_node["inputs"]["segment_assignments"] == {
+        "from": "$nodes.resolve_segment_image_refs.output.segment_assignments",
     }
 
     validate_workflow_contract(contract, build_node_registry(test_settings))
 
 
-def test_select_episode_metadata_schema_storyboard_target_default(
+def test_select_episode_metadata_schema_only_requires_episode_asset(
     test_settings,
 ) -> None:
     contract = load_workflow_file(ORCHESTRATION_WORKFLOW_PATH)
-    input_schema = _select_episode_outputs(contract)
+    input_specs = _select_episode_inputs(contract)
+    input_schema = input_specs["episode_asset_id"]["schema"]
 
-    validate_json_value(input_schema, {"episode_asset_id": "asset_episode_001"})
-    validate_json_value(
-        input_schema,
-        {
-            "episode_asset_id": "asset_episode_001",
-            "storyboard_target": {"segment_index": 2, "panel_index": 1},
-        },
-    )
-
-    storyboard_target = input_schema["properties"]["storyboard_target"]
-    assert storyboard_target["properties"]["segment_index"]["default"] == 0
-    assert storyboard_target["properties"]["panel_index"]["default"] == 0
+    validate_json_value(input_schema, "asset_episode_001")
+    assert "storyboard_target" not in _select_episode_outputs(contract)["properties"]
 
     with pytest.raises(ValidationError):
-        validate_json_value(input_schema, {"storyboard_target": {}})
+        validate_json_value(input_schema, "")
 
     validate_workflow_contract(contract, build_node_registry(test_settings))
 
@@ -213,12 +212,8 @@ def test_assign_assets_to_segments_output_schema(test_settings) -> None:
                     "characters": [
                         {
                             "full_name": "林冲",
-                            "image_ref": {
-                                "kind": "data_uri",
-                                "data": "data:image/png;base64,bGluY2hvbmc=",
-                                "role": "reference",
-                            },
                             "variant": "囚服雪地",
+                            "asset_id": "asset-linchong",
                         }
                     ],
                     "key_props": ["花枪", "旧毡笠"],
@@ -240,16 +235,150 @@ def test_assign_assets_to_segments_output_schema(test_settings) -> None:
     validate_workflow_contract(contract, build_node_registry(test_settings))
 
 
-def test_assemble_storyboard_context_output_schema(test_settings) -> None:
+def test_resolve_segment_image_refs_output_schema(test_settings) -> None:
     contract = load_workflow_file(ORCHESTRATION_WORKFLOW_PATH)
-    schema = _nodes_by_id(contract)["assemble_storyboard_context"]["outputs"]
+    schema = _nodes_by_id(contract)["resolve_segment_image_refs"]["outputs"]
 
     assert schema["type"] == "object"
-    assert "context_string" in schema["required"]
-    validate_json_value(schema, {"context_string": "段落0：林冲踏雪而来..."})
+    assert "segment_assignments" in schema["required"]
+    validate_json_value(
+        schema,
+        {
+            "segment_assignments": [
+                {
+                    "segment_index": 0,
+                    "characters": [
+                        {
+                            "full_name": "林冲",
+                            "image_ref": {
+                                "kind": "asset",
+                                "asset_id": "asset-linchong",
+                                "role": "reference",
+                            },
+                            "variant": "囚服雪地",
+                        }
+                    ],
+                    "key_props": ["花枪"],
+                }
+            ]
+        },
+    )
+    validate_json_value(
+        schema,
+        {
+            "segment_assignments": [
+                {"segment_index": 0, "characters": [{"full_name": "未知角色"}], "key_props": []}
+            ]
+        },
+    )
+
+    validate_workflow_contract(contract, build_node_registry(test_settings))
+
+
+def test_prepare_segment_storyboard_inputs_output_schema(test_settings) -> None:
+    contract = load_workflow_file(ORCHESTRATION_WORKFLOW_PATH)
+    schema = _nodes_by_id(contract)["prepare_segment_storyboard_inputs"]["outputs"]
+
+    assert schema["type"] == "object"
+    assert "items" in schema["required"]
+    validate_json_value(
+        schema,
+        {
+            "items": [
+                {
+                    "index": 0,
+                    "current_segment": {"index": 0, "text": "林冲踏雪而来。"},
+                    "neighbor_segments": [],
+                    "segment_assignment": {
+                        "segment_index": 0,
+                        "characters": [{"full_name": "林冲"}],
+                        "key_props": [],
+                    },
+                }
+            ],
+            "shared_context": {
+                "full_script": "完整剧本",
+                "all_segments": [{"index": 0, "text": "林冲踏雪而来。"}],
+            },
+        },
+    )
 
     with pytest.raises(ValidationError):
         validate_json_value(schema, {})
+
+    validate_workflow_contract(contract, build_node_registry(test_settings))
+
+
+def test_describe_panels_uses_parallel_segment_items(test_settings) -> None:
+    contract = load_workflow_file(ORCHESTRATION_WORKFLOW_PATH)
+    nodes_by_id = _nodes_by_id(contract)
+    describe_node = nodes_by_id["describe_panels"]
+
+    assert describe_node["ref"] == "ai.parallel_deepseek_structured_json.v1"
+    assert describe_node["inputs"]["items"] == {
+        "from": "$nodes.prepare_segment_storyboard_inputs.output.items",
+    }
+    assert describe_node["inputs"]["shared_context"] == {
+        "from": "$nodes.prepare_segment_storyboard_inputs.output.shared_context",
+    }
+    assert "{item}" in describe_node["inputs"]["prompt_template"]["value"]
+    assert "每次只为当前 item" in describe_node["inputs"]["system"]["value"]
+    assert describe_node["inputs"]["prompt_fields"]["value"] == [
+        "index",
+        "current_segment",
+        "neighbor_segments",
+        "segment_assignment",
+    ]
+    assert describe_node["outputs"]["required"] == ["results"]
+
+    validate_json_value(
+        describe_node["outputs"],
+        {
+            "results": [
+                {
+                    "index": 0,
+                    "segment_title": "雪夜",
+                    "thinking": "承接风雪氛围。",
+                    "panels": [
+                        {
+                            "description": "林冲在雪中行走。",
+                            "style": "国风动画",
+                            "constraints": "保持角色服饰一致。",
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+
+    validate_workflow_contract(contract, build_node_registry(test_settings))
+
+
+def test_merge_segment_descriptions_output_schema(test_settings) -> None:
+    contract = load_workflow_file(ORCHESTRATION_WORKFLOW_PATH)
+    schema = _nodes_by_id(contract)["merge_segment_descriptions"]["outputs"]
+
+    assert schema["type"] == "object"
+    assert "segment_descriptions" in schema["required"]
+    validate_json_value(
+        schema,
+        {
+            "segment_descriptions": [
+                {
+                    "index": 0,
+                    "segment_title": "雪夜",
+                    "thinking": "承接风雪氛围。",
+                    "panels": [
+                        {
+                            "description": "林冲在雪中行走。",
+                            "style": "国风动画",
+                            "constraints": "保持角色服饰一致。",
+                        }
+                    ],
+                }
+            ]
+        },
+    )
 
     validate_workflow_contract(contract, build_node_registry(test_settings))
 

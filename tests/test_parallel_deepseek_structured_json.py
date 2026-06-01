@@ -173,8 +173,38 @@ async def test_parallel_node_template_interpolation() -> None:
 
 
 @pytest.mark.asyncio
+async def test_parallel_node_merges_shared_context_into_prompt_item() -> None:
+    responses = ['{"name": "test"}']
+    router = FakeParallelRouter(responses)
+    node = ParallelDeepSeekStructuredJsonNode(
+        model_router=router,
+        provider="deepseek",
+        model="test-model",
+    )
+
+    await node.run(
+        None,
+        {
+            "items": [{"index": 1, "current_segment": {"text": "当前段"}}],
+            "shared_context": {
+                "full_script": "完整剧本",
+                "all_segments": [{"index": 0, "text": "前一段"}],
+            },
+            "prompt_template": "Process: {item}",
+            "prompt_fields": ["index", "current_segment"],
+            "max_attempts": 1,
+        },
+    )
+
+    user_prompt = router.requests[0].messages[-1].content
+    assert "完整剧本" in user_prompt
+    assert "前一段" in user_prompt
+    assert "当前段" in user_prompt
+
+
+@pytest.mark.asyncio
 async def test_parallel_node_filters_prompt_fields_and_passthroughs_program_fields() -> None:
-    responses = ['{"full_name": "林冲_囚服", "prompt": "黑灰短发，眉眼锋利"}']
+    responses = ['{"full_name": "乡民布衣", "prompt": "黑灰短发，眉眼锋利"}']
     router = FakeParallelRouter(responses)
     node = ParallelDeepSeekStructuredJsonNode(
         model_router=router,
@@ -226,27 +256,28 @@ async def test_parallel_node_filters_prompt_fields_and_passthroughs_program_fiel
         {
             "items": [
                 {
-                    "name": "林冲",
+                    "name": "村民",
                     "variant_description": "黑灰短发，眉眼锋利。",
                     "reference_image_ref": {"kind": "asset", "asset_id": "template-character"},
                 }
             ],
             "prompt_template": "Process: {item}",
             "prompt_fields": ["name", "variant_description"],
-            "passthrough_fields": ["reference_image_ref"],
+            "passthrough_fields": ["full_name", "reference_image_ref"],
             "max_attempts": 1,
         },
     )
 
     assert result.output["results"] == [
         {
-            "full_name": "林冲_囚服",
+            "full_name": "村民",
             "prompt": "黑灰短发，眉眼锋利",
             "reference_image_ref": {"kind": "asset", "asset_id": "template-character"},
         }
     ]
     user_prompt = router.requests[0].messages[-1].content
     schema_prompt = router.requests[0].messages[0].content
+    assert "full_name" not in schema_prompt
     assert "reference_image_ref" not in user_prompt
     assert "reference_image_ref" not in schema_prompt
     assert "variant_description" in user_prompt

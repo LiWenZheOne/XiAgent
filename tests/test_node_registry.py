@@ -17,7 +17,15 @@ from xiagent.nodes.tools.episode_metadata import (
     EpisodeMetadataFromAssetNode,
 )
 from xiagent.nodes.tools.filter_assets_for_generation import FilterAssetsForGenerationNode
+from xiagent.nodes.tools.merge_segment_storyboard_descriptions import (
+    MergeSegmentStoryboardDescriptionsNode,
+)
+from xiagent.nodes.tools.prepare_segment_storyboard_inputs import (
+    PrepareSegmentStoryboardInputsNode,
+)
+from xiagent.nodes.tools.resolve_accessory_asset_refs import ResolveAccessoryAssetRefsNode
 from xiagent.nodes.tools.resolve_character_variant_refs import ResolveCharacterVariantRefsNode
+from xiagent.nodes.tools.resolve_segment_image_refs import ResolveSegmentImageRefsNode
 
 
 def test_register_and_get_node() -> None:
@@ -71,11 +79,15 @@ def test_build_node_registry_registers_builtin_nodes(test_settings) -> None:
         "tool.episode_metadata_from_asset.v1",
         "tool.enrich_characters.v1",
         "tool.filter_assets_for_generation.v1",
+        "tool.resolve_accessory_asset_refs.v1",
         "tool.resolve_character_variant_refs.v1",
+        "tool.resolve_segment_image_refs.v1",
         "tool.extract_panel_image_urls.v1",
         "tool.runninghub_workflow_images.v1",
         "tool.storyboard_prompt_assembler.v1",
         "tool.storyboard_prompt_assembler.v2",
+        "tool.merge_segment_storyboard_descriptions.v1",
+        "tool.prepare_segment_storyboard_inputs.v1",
         "ai.assign_assets_to_segments.v1",
         "ai.deepseek_chat.v1",
         "ai.deepseek_structured_json.v1",
@@ -132,23 +144,7 @@ async def test_filter_assets_for_generation_removes_existing_assets() -> None:
     assert [item["name"] for item in result.output["approved_assets"]["props"]] == ["水火棍"]
 
 
-async def test_filter_assets_for_generation_uses_type_specific_templates() -> None:
-    class FakeAssetService:
-        async def search_assets(self, **kwargs: Any) -> list[dict[str, str]]:
-            keyword = kwargs["keyword"]
-            asset_ids = {
-                "塞雷2d角色模板": "template-character",
-                "塞雷2d地点模板": "template-location",
-                "塞雷2d道具模板": "template-prop",
-            }
-            return [
-                {
-                    "asset_id": asset_ids[keyword],
-                    "name": keyword,
-                    "metadata": {"variant_description": f"{keyword}外貌描述"},
-                }
-            ]
-
+async def test_filter_assets_for_generation_keeps_explicit_reference_context() -> None:
     node = FilterAssetsForGenerationNode()
     ctx = NodeContext(
         user_id="user-1",
@@ -158,7 +154,7 @@ async def test_filter_assets_for_generation_uses_type_specific_templates() -> No
         node_execution_id="exec-1",
         config={},
         output_schema={},
-        asset_service=FakeAssetService(),
+        asset_service=None,
         event_sink=None,
         logger=None,
     )
@@ -167,24 +163,31 @@ async def test_filter_assets_for_generation_uses_type_specific_templates() -> No
         ctx,
         {
             "approved_assets": {
-                "characters": [{"type": "character", "name": "鲁智深"}],
+                "characters": [
+                    {
+                        "type": "character",
+                        "name": "鲁智深",
+                        "reference_image_ref": {"kind": "asset", "asset_id": "variant-ref", "role": "reference"},
+                        "reference_appearance_description": "僧衣参考图外貌。",
+                    }
+                ],
                 "assets": [{"type": "location", "name": "野猪林"}],
                 "props": [{"type": "prop", "name": "禅杖"}],
-            }
+            },
         },
     )
 
     output = result.output["approved_assets"]
-    assert output["characters"][0]["reference_image_ref"]["asset_id"] == "template-character"
-    assert output["characters"][0]["reference_source"] == "default_template"
-    assert output["characters"][0]["reference_variant_description"] == "塞雷2d角色模板外貌描述"
-    assert "variant_description" not in output["characters"][0]["reference_image_ref"]
-    assert output["assets"][0]["reference_image_ref"]["asset_id"] == "template-location"
-    assert output["assets"][0]["reference_source"] == "default_template"
-    assert output["assets"][0]["reference_variant_description"] == "塞雷2d地点模板外貌描述"
-    assert output["props"][0]["reference_image_ref"]["asset_id"] == "template-prop"
-    assert output["props"][0]["reference_source"] == "default_template"
-    assert output["props"][0]["reference_variant_description"] == "塞雷2d道具模板外貌描述"
+    assert output["characters"][0]["reference_image_ref"] == {
+        "kind": "asset",
+        "asset_id": "variant-ref",
+        "role": "reference",
+    }
+    assert output["characters"][0]["reference_variant_description"] == "僧衣参考图外貌。"
+    assert "reference_image_ref" not in output["assets"][0]
+    assert "reference_source" not in output["assets"][0]
+    assert "reference_image_ref" not in output["props"][0]
+    assert "reference_source" not in output["props"][0]
 
 
 async def test_resolve_character_variant_refs_inherits_variant_facts_programmatically() -> None:
@@ -263,6 +266,104 @@ async def test_resolve_character_variant_refs_inherits_variant_facts_programmati
     assert no_default["default_variant_storage_uri"] == ""
     assert no_default["default_variant_appearance_description"] == ""
     assert no_default["matched_variant_appearance_description"] == "僧衣参考图外貌。"
+
+
+def test_resolve_segment_image_refs_descriptor() -> None:
+    descriptor = ResolveSegmentImageRefsNode().describe()
+
+    assert descriptor.ref == "tool.resolve_segment_image_refs.v1"
+    assert descriptor.kind == "tool"
+    assert descriptor.input_schema["required"] == ["segment_assignments", "asset_catalog"]
+    assert descriptor.output_schema["required"] == ["segment_assignments"]
+
+
+def test_segment_storyboard_tool_descriptors() -> None:
+    prepare_descriptor = PrepareSegmentStoryboardInputsNode().describe()
+    merge_descriptor = MergeSegmentStoryboardDescriptionsNode().describe()
+
+    assert prepare_descriptor.ref == "tool.prepare_segment_storyboard_inputs.v1"
+    assert prepare_descriptor.kind == "tool"
+    assert prepare_descriptor.input_schema["required"] == [
+        "source_script",
+        "segments",
+        "segment_assignments",
+    ]
+    assert merge_descriptor.ref == "tool.merge_segment_storyboard_descriptions.v1"
+    assert merge_descriptor.kind == "tool"
+    assert merge_descriptor.output_schema["required"] == ["segment_descriptions"]
+
+
+async def test_resolve_accessory_asset_refs_uses_match_or_first_variant_asset() -> None:
+    node = ResolveAccessoryAssetRefsNode()
+
+    result = await node.run(
+        None,
+        {
+            "characters": [
+                {
+                    "full_name": "林冲",
+                    "existing_variants": [
+                        {
+                            "asset_id": "variant-prisoner-base",
+                            "name": "林冲_囚服",
+                            "variant": "囚服",
+                            "storage_uri": "https://cdn.test/prisoner-base.png",
+                            "appearance_description": "囚服基础参考图。",
+                            "tags": ["角色", "林冲", "囚服"],
+                        },
+                        {
+                            "asset_id": "variant-prisoner-hat",
+                            "name": "林冲_囚服_毡笠",
+                            "variant": "囚服",
+                            "storage_uri": "https://cdn.test/prisoner-hat.png",
+                            "appearance_description": "囚服加毡笠参考图。",
+                            "tags": ["角色", "林冲", "囚服", "毡笠"],
+                        },
+                    ],
+                },
+            ],
+            "variant_results": [
+                {
+                    "full_name": "林冲",
+                    "matched_variant": "囚服",
+                    "matched_variant_id": "variant-prisoner-base",
+                }
+            ],
+            "accessory_results": [
+                {
+                    "full_name": "林冲",
+                    "existing_accessories": ["毡笠"],
+                    "new_accessories": ["披风"],
+                    "has_new_accessories": True,
+                    "reason": "毡笠已存在，披风未命中。",
+                }
+            ],
+        },
+    )
+
+    selected = result.output["results"][0]["selected_accessory_assets"]
+    assert selected == [
+        {
+            "accessory": "毡笠",
+            "matched": True,
+            "asset_id": "variant-prisoner-hat",
+            "asset_name": "林冲_囚服_毡笠",
+            "asset_ref": {"kind": "asset", "asset_id": "variant-prisoner-hat", "role": "reference"},
+            "storage_uri": "https://cdn.test/prisoner-hat.png",
+            "appearance_description": "囚服加毡笠参考图。",
+            "source": "matched_accessory",
+        },
+        {
+            "accessory": "披风",
+            "matched": False,
+            "asset_id": "variant-prisoner-base",
+            "asset_name": "林冲_囚服",
+            "asset_ref": {"kind": "asset", "asset_id": "variant-prisoner-base", "role": "reference"},
+            "storage_uri": "https://cdn.test/prisoner-base.png",
+            "appearance_description": "囚服基础参考图。",
+            "source": "first_variant_asset",
+        },
+    ]
 
 
 async def test_episode_metadata_nodes_roundtrip_payload() -> None:

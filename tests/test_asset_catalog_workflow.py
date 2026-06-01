@@ -28,6 +28,7 @@ from xiagent.nodes.tools.echo_tool import EchoToolNode
 from xiagent.nodes.tools.enrich_characters import EnrichCharactersNode
 from xiagent.nodes.tools.episode_metadata import EpisodeMetadataFinalizeNode
 from xiagent.nodes.tools.filter_assets_for_generation import FilterAssetsForGenerationNode
+from xiagent.nodes.tools.resolve_accessory_asset_refs import ResolveAccessoryAssetRefsNode
 from xiagent.nodes.tools.resolve_character_variant_refs import ResolveCharacterVariantRefsNode
 from xiagent.workflows.loader import load_workflow_file
 from xiagent.workflows.testing import WorkflowTestBuilder
@@ -142,6 +143,7 @@ def test_asset_catalog_workflow_contract_structure(test_settings) -> None:
         "match_variants",
         "resolve_character_variant_refs",
         "check_accessories",
+        "resolve_accessory_asset_refs",
         "extract_props",
         "lookup_prop_assets",
         "match_props_by_name",
@@ -168,6 +170,7 @@ def test_asset_catalog_workflow_contract_structure(test_settings) -> None:
         "match_variants": "ai.parallel_deepseek_structured_json.v1",
         "resolve_character_variant_refs": "tool.resolve_character_variant_refs.v1",
         "check_accessories": "ai.parallel_deepseek_structured_json.v1",
+        "resolve_accessory_asset_refs": "tool.resolve_accessory_asset_refs.v1",
         "extract_props": "ai.deepseek_structured_json.v1",
         "lookup_prop_assets": "tool.asset_lookup.v1",
         "match_props_by_name": "tool.asset_lookup.v1",
@@ -208,8 +211,9 @@ def test_asset_catalog_workflow_has_conditional_edges(test_settings) -> None:
         {"from": "enrich_characters", "to": "match_variants"},
         {"from": "match_variants", "to": "resolve_character_variant_refs"},
         {"from": "enrich_characters", "to": "check_accessories"},
-        {"from": "resolve_character_variant_refs", "to": "review_assets"},
-        {"from": "check_accessories", "to": "review_assets"},
+        {"from": "resolve_character_variant_refs", "to": "resolve_accessory_asset_refs"},
+        {"from": "check_accessories", "to": "resolve_accessory_asset_refs"},
+        {"from": "resolve_accessory_asset_refs", "to": "review_assets"},
         {"from": "collect_asset_catalog_input", "to": "extract_scenes"},
         {"from": "extract_scenes", "to": "lookup_scene_assets"},
         {"from": "lookup_scene_assets", "to": "match_scenes_by_name"},
@@ -408,6 +412,43 @@ def test_asset_catalog_check_accessories_output_schema(test_settings) -> None:
             ]
         },
     )
+    resolved_accessory_schema = nodes_by_id["resolve_accessory_asset_refs"]["outputs"]
+    validate_json_value(
+        resolved_accessory_schema,
+        {
+            "results": [
+                {
+                    "full_name": "林冲",
+                    "has_new_accessories": True,
+                    "new_accessories": ["披风"],
+                    "existing_accessories": ["毡笠"],
+                    "selected_accessory_assets": [
+                        {
+                            "accessory": "毡笠",
+                            "matched": True,
+                            "asset_id": "asset-hat",
+                            "asset_name": "林冲_囚服_毡笠",
+                            "asset_ref": {"kind": "asset", "asset_id": "asset-hat", "role": "reference"},
+                            "storage_uri": "https://cdn.test/hat.png",
+                            "appearance_description": "囚服加毡笠参考图。",
+                            "source": "matched_accessory",
+                        },
+                        {
+                            "accessory": "披风",
+                            "matched": False,
+                            "asset_id": "asset-base",
+                            "asset_name": "林冲_囚服",
+                            "asset_ref": {"kind": "asset", "asset_id": "asset-base", "role": "reference"},
+                            "storage_uri": "https://cdn.test/base.png",
+                            "appearance_description": "囚服基础参考图。",
+                            "source": "first_variant_asset",
+                        },
+                    ],
+                    "reason": "毡笠已存在，披风未命中。",
+                }
+            ]
+        },
+    )
     validate_workflow_contract(contract, build_node_registry(test_settings))
 
 
@@ -462,7 +503,10 @@ def test_asset_catalog_generate_prompt_is_character_design_text() -> None:
         "description",
         "reference_variant_description",
     ]
-    assert generate_prompt["inputs"]["passthrough_fields"]["value"] == ["reference_image_ref", "reference_source"]
+    assert generate_prompt["inputs"]["passthrough_fields"]["value"] == [
+        "full_name",
+    ]
+    assert "reference_image_ref" not in nodes_by_id["generate_prompt"]["outputs"]["properties"]["results"]["items"]["required"]
     assert "视觉资产设定提示词专家" in system_prompt
     assert "图生图使用的修改提示词" in system_prompt
     assert "只写画面可见的外形特征与气质" in system_prompt
@@ -565,6 +609,7 @@ def test_asset_catalog_variant_matching_only_matches_extracted_variants() -> Non
     match_prompt = nodes_by_id["match_variants"]["inputs"]["prompt_template"]["value"]
     match_schema = nodes_by_id["match_variants"]["outputs"]
     accessory_inputs = nodes_by_id["check_accessories"]["inputs"]
+    accessory_ref_inputs = nodes_by_id["resolve_accessory_asset_refs"]["inputs"]
     accessory_system = nodes_by_id["check_accessories"]["inputs"]["system"]["value"]
     accessory_prompt = nodes_by_id["check_accessories"]["inputs"]["prompt_template"]["value"]
     review_prompt = nodes_by_id["review_assets"]["inputs"]["question"]["template"]
@@ -594,6 +639,13 @@ def test_asset_catalog_variant_matching_only_matches_extracted_variants() -> Non
     assert accessory_inputs["items"] == {
         "from": "$nodes.enrich_characters.output.characters",
     }
+    assert accessory_ref_inputs["variant_results"] == {
+        "from": "$nodes.resolve_character_variant_refs.output.results",
+    }
+    assert accessory_ref_inputs["accessory_results"] == {
+        "from": "$nodes.check_accessories.output.results",
+    }
+    assert "selected_accessory_assets" in nodes_by_id["resolve_accessory_asset_refs"]["outputs"]["properties"]["results"]["items"]["properties"]
     assert "## A. 提取到的角色配件" in accessory_prompt
     assert "## B. 资产库候选变体/配件" in accessory_prompt
     assert "不得把被绑" in accessory_system
@@ -641,6 +693,11 @@ def test_asset_catalog_image_completion_references_prompt_results() -> None:
     }
     upload_ui = nodes_by_id["upload_images"]["ui"]
     assert upload_ui["controls"]["interaction"]["control_id"] == "ui.interaction.asset_image_cards.v1"
+    assert upload_ui["controls"]["interaction"]["options"]["default_reference_templates"] == {
+        "character": "塞雷2d角色模板",
+        "scene": "塞雷2d地点模板",
+        "prop": "塞雷2d道具模板",
+    }
     assert upload_ui["sections"]["input"]["visible"] is False
     assert upload_ui["sections"]["output"]["visible"] is False
     assert upload_ui["sections"]["events"]["visible"] is False
@@ -713,6 +770,7 @@ async def test_asset_catalog_auto_generate_path(
     assert "match_variants" in executed_node_ids
     assert "resolve_character_variant_refs" in executed_node_ids
     assert "check_accessories" in executed_node_ids
+    assert "resolve_accessory_asset_refs" in executed_node_ids
     assert "extract_props" in executed_node_ids
     assert "lookup_prop_assets" in executed_node_ids
     assert "match_props_by_name" in executed_node_ids
@@ -781,6 +839,7 @@ async def test_asset_catalog_manual_upload_path(
     assert "match_variants" in executed_node_ids
     assert "resolve_character_variant_refs" in executed_node_ids
     assert "check_accessories" in executed_node_ids
+    assert "resolve_accessory_asset_refs" in executed_node_ids
     assert "extract_props" in executed_node_ids
     assert "lookup_prop_assets" in executed_node_ids
     assert "match_props_by_name" in executed_node_ids
@@ -899,6 +958,7 @@ def _asset_catalog_registry(router: FakeAssetCatalogRouter) -> NodeRegistry:
     registry.register(CreateTextAssetNode())
     registry.register(EnrichCharactersNode())
     registry.register(ResolveCharacterVariantRefsNode())
+    registry.register(ResolveAccessoryAssetRefsNode())
     registry.register(FilterAssetsForGenerationNode())
     registry.register(CompleteAssetImagesNode())
     registry.register(EpisodeMetadataFinalizeNode())

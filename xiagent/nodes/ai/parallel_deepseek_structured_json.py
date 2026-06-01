@@ -60,6 +60,10 @@ class ParallelDeepSeekStructuredJsonNode(BaseNode):
                         "type": "array",
                         "items": {"type": "string", "minLength": 1},
                     },
+                    "shared_context": {
+                        "type": "object",
+                        "additionalProperties": True,
+                    },
                     "passthrough_fields": {
                         "type": "array",
                         "items": {"type": "string", "minLength": 1},
@@ -109,6 +113,15 @@ class ParallelDeepSeekStructuredJsonNode(BaseNode):
         if not isinstance(system, str) or not system.strip():
             system = None
 
+        shared_context = inputs.get("shared_context")
+        if shared_context is None:
+            shared_context = {}
+        if not isinstance(shared_context, Mapping):
+            raise ValidationError(
+                code="parallel_llm_shared_context_invalid",
+                message="shared_context must be an object",
+            )
+
         prompt_fields = _string_list(inputs.get("prompt_fields"))
         passthrough_fields = _string_list(inputs.get("passthrough_fields"))
         schema = ctx.output_schema if ctx is not None else self.describe().output_schema
@@ -117,6 +130,8 @@ class ParallelDeepSeekStructuredJsonNode(BaseNode):
 
         async def process_one(item: dict[str, Any]) -> dict[str, Any]:
             prompt_item = _project_item(item, prompt_fields)
+            if shared_context:
+                prompt_item = {"shared_context": dict(shared_context), **prompt_item}
             item_json = json.dumps(prompt_item, ensure_ascii=False)
             prompt = prompt_template.replace("{item}", item_json)
 
@@ -152,6 +167,7 @@ class ParallelDeepSeekStructuredJsonNode(BaseNode):
                             details={"attempt": attempt + 1, "error": str(exc)},
                         )
                 else:
+                    parsed = _without_passthrough_fields(parsed, passthrough_fields)
                     try:
                         validate_json_value(llm_item_schema, parsed)
                     except ValidationError as exc:
@@ -248,6 +264,24 @@ def _with_passthrough_fields(
         return parsed
     result = dict(parsed)
     for field in passthrough_fields:
-        if field in source:
-            result[field] = source[field]
+        inherited = _inherited_field_value(source, field)
+        if inherited is not None:
+            result[field] = inherited
     return result
+
+
+def _without_passthrough_fields(
+    parsed: dict[str, Any],
+    passthrough_fields: list[str],
+) -> dict[str, Any]:
+    if not passthrough_fields:
+        return parsed
+    return {key: value for key, value in parsed.items() if key not in passthrough_fields}
+
+
+def _inherited_field_value(source: dict[str, Any], field: str) -> Any:
+    if field in source:
+        return source[field]
+    if field == "full_name" and "name" in source:
+        return source["name"]
+    return None

@@ -42,6 +42,12 @@ from xiagent.nodes.tools.asset_lookup import AssetLookupNode
 from xiagent.nodes.tools.create_text_asset import CreateTextAssetNode
 from xiagent.nodes.tools.echo_tool import EchoToolNode
 from xiagent.nodes.tools.merge_asset_images import MergeAssetImagesNode
+from xiagent.nodes.tools.merge_segment_storyboard_descriptions import (
+    MergeSegmentStoryboardDescriptionsNode,
+)
+from xiagent.nodes.tools.prepare_segment_storyboard_inputs import (
+    PrepareSegmentStoryboardInputsNode,
+)
 from xiagent.nodes.tools.complete_asset_images import CompleteAssetImagesNode
 from xiagent.nodes.tools.enrich_characters import EnrichCharactersNode
 from xiagent.nodes.tools.episode_metadata import (
@@ -49,7 +55,9 @@ from xiagent.nodes.tools.episode_metadata import (
     EpisodeMetadataFromAssetNode,
 )
 from xiagent.nodes.tools.filter_assets_for_generation import FilterAssetsForGenerationNode
+from xiagent.nodes.tools.resolve_accessory_asset_refs import ResolveAccessoryAssetRefsNode
 from xiagent.nodes.tools.resolve_character_variant_refs import ResolveCharacterVariantRefsNode
+from xiagent.nodes.tools.resolve_segment_image_refs import ResolveSegmentImageRefsNode
 from xiagent.nodes.tools.runninghub_workflow_images import RunningHubWorkflowImagesNode
 from xiagent.nodes.tools.script_split import ScriptSplitNode
 from xiagent.nodes.tools.extract_panel_image_urls import ExtractPanelImageUrlsNode
@@ -130,6 +138,8 @@ def build_node_registry(settings: Settings) -> NodeRegistry:
     registry.register(SystemUserInputNode())
     registry.register(EchoToolNode())
     registry.register(MergeAssetImagesNode())
+    registry.register(MergeSegmentStoryboardDescriptionsNode())
+    registry.register(PrepareSegmentStoryboardInputsNode())
     registry.register(CompleteAssetImagesNode())
     registry.register(ScriptSplitNode())
     registry.register(AssembleSegmentContextNode())
@@ -140,7 +150,9 @@ def build_node_registry(settings: Settings) -> NodeRegistry:
     registry.register(EpisodeMetadataFromAssetNode())
     registry.register(EnrichCharactersNode())
     registry.register(FilterAssetsForGenerationNode())
+    registry.register(ResolveAccessoryAssetRefsNode())
     registry.register(ResolveCharacterVariantRefsNode())
+    registry.register(ResolveSegmentImageRefsNode())
     registry.register(RunningHubWorkflowImagesNode())
     registry.register(StoryboardPromptAssemblerNode())
     registry.register(StoryboardPromptAssemblerNodeV2())

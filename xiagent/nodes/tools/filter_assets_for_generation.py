@@ -54,11 +54,6 @@ class FilterAssetsForGenerationNode(BaseNode):
                 message="approved_assets must be an object",
             )
 
-        default_references = {
-            "characters": await _default_template_ref(ctx, template_name="塞雷2d角色模板"),
-            "assets": await _default_template_ref(ctx, template_name="塞雷2d地点模板"),
-            "props": await _default_template_ref(ctx, template_name="塞雷2d道具模板"),
-        }
         filtered: dict[str, list[dict[str, Any]]] = {}
         for key in ("characters", "assets", "props"):
             value = approved_assets.get(key)
@@ -68,7 +63,7 @@ class FilterAssetsForGenerationNode(BaseNode):
                 if not isinstance(item, Mapping) or _is_existing_asset(item):
                     continue
                 filtered_items.append(
-                    await _with_reference_context(ctx, dict(item), default_references[key])
+                    await _with_reference_context(ctx, dict(item))
                 )
             filtered[key] = filtered_items
 
@@ -94,11 +89,10 @@ def _is_existing_asset(item: Mapping[str, Any]) -> bool:
 async def _with_reference_context(
     ctx: NodeContext | None,
     item: dict[str, Any],
-    default_reference: dict[str, str] | None,
 ) -> dict[str, Any]:
-    item = _with_reference_image_ref(item, default_reference)
+    item = _with_reference_image_ref(item)
     if not _optional_text(item.get("reference_variant_description")):
-        description = _reference_variant_description(item, default_reference)
+        description = _reference_variant_description(item)
         if not description:
             description = await _reference_variant_description_from_ref(ctx, item.get("reference_image_ref"))
         if description:
@@ -106,7 +100,7 @@ async def _with_reference_context(
     return item
 
 
-def _with_reference_image_ref(item: dict[str, Any], default_reference: dict[str, Any] | None) -> dict[str, Any]:
+def _with_reference_image_ref(item: dict[str, Any]) -> dict[str, Any]:
     if _valid_image_ref(item.get("reference_image_ref")):
         item["reference_image_ref"] = _clean_image_ref(item["reference_image_ref"])
         return item
@@ -120,9 +114,6 @@ def _with_reference_image_ref(item: dict[str, Any], default_reference: dict[str,
         if isinstance(value, str) and value.strip():
             item["reference_image_ref"] = {"kind": "asset", "asset_id": value.strip(), "role": "reference"}
             return item
-    if default_reference:
-        item["reference_image_ref"] = _clean_image_ref(default_reference)
-        item["reference_source"] = "default_template"
     return item
 
 
@@ -150,57 +141,7 @@ def _clean_image_ref(value: Any) -> dict[str, str]:
     return result
 
 
-async def _default_template_ref(ctx: NodeContext | None, *, template_name: str) -> dict[str, str] | None:
-    if ctx is None or ctx.asset_service is None:
-        return None
-    for scope, project_id in (("combined", ctx.project_id), ("global", None)):
-        try:
-            assets = await ctx.asset_service.search_assets(
-                user_id=ctx.user_id,
-                scope=scope,
-                project_id=project_id if scope == "combined" else None,
-                keyword=template_name,
-                mime_type="image/*",
-                limit=10,
-            )
-        except Exception:
-            continue
-        for asset in _asset_items(assets):
-            asset_id = _asset_id(asset)
-            name = _asset_name(asset)
-            if asset_id and name == template_name:
-                reference: dict[str, str] = {"kind": "asset", "asset_id": asset_id, "role": "reference"}
-                description = _asset_variant_description(asset)
-                if description:
-                    reference["variant_description"] = description
-                return reference
-    return None
-
-
-def _asset_items(value: Any) -> list[Any]:
-    if isinstance(value, list):
-        return value
-    items = getattr(value, "items", None)
-    return items if isinstance(items, list) else []
-
-
-def _asset_id(asset: Any) -> str | None:
-    if isinstance(asset, Mapping):
-        value = asset.get("asset_id")
-    else:
-        value = getattr(asset, "asset_id", None)
-    return value.strip() if isinstance(value, str) and value.strip() else None
-
-
-def _asset_name(asset: Any) -> str | None:
-    if isinstance(asset, Mapping):
-        value = asset.get("name")
-    else:
-        value = getattr(asset, "name", None)
-    return value.strip() if isinstance(value, str) and value.strip() else None
-
-
-def _reference_variant_description(item: Mapping[str, Any], default_reference: Mapping[str, Any] | None) -> str | None:
+def _reference_variant_description(item: Mapping[str, Any]) -> str | None:
     for key in (
         "matched_asset_appearance_description",
         "reference_appearance_description",
@@ -213,10 +154,6 @@ def _reference_variant_description(item: Mapping[str, Any], default_reference: M
     reference = item.get("reference_image_ref")
     if isinstance(reference, Mapping):
         value = _optional_text(reference.get("variant_description"))
-        if value:
-            return value
-    if isinstance(default_reference, Mapping):
-        value = _optional_text(default_reference.get("variant_description"))
         if value:
             return value
     return None

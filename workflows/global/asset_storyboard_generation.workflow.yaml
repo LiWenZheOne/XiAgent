@@ -24,23 +24,23 @@ workflow:
     stages:
       - id: p1_episode
         name: P1 集信息确认
-        description: 选择集元数据资产，确认集名称、资产目录和原剧本内容。
+        description: 选择集元数据资产后，直接展示集名称、剧情概括、原剧本和完整资产目录。
         nodes:
           - select_episode_metadata
-          - load_episode_metadata
-          - confirm_episode_context
       - id: p2_segments
         name: P2 分段资产分配
         description: 拆分剧本，并按每个分段分配在场资产。
         nodes:
           - split_script
           - assign_assets_to_segments
-          - assemble_storyboard_context
+          - resolve_segment_image_refs
+          - prepare_segment_storyboard_inputs
       - id: p3_storyboard
         name: P3 分镜生成
         description: 生成分镜描述、审核提示词并生成目标分镜图像。
         nodes:
           - describe_panels
+          - merge_segment_descriptions
           - review_storyboard_prompt
           - extract_panel_image_urls
           - assemble_prompt_v2
@@ -90,7 +90,7 @@ workflow:
 
 nodes:
   - id: select_episode_metadata
-    ref: system.user_input.v1
+    ref: tool.episode_metadata_from_asset.v1
     name: 选择集
     inputs:
       episode_asset_id:
@@ -98,67 +98,7 @@ nodes:
         schema:
           type: string
           minLength: 1
-          title: 集信息资产ID
-      storyboard_target:
-        from_user: true
-        schema:
-          type: object
-          properties:
-            segment_index:
-              type: integer
-              minimum: 0
-              default: 0
-            panel_index:
-              type: integer
-              minimum: 0
-              default: 0
-          additionalProperties: false
-    outputs:
-      type: object
-      required: ["episode_asset_id"]
-      properties:
-        episode_asset_id:
-          type: string
-          minLength: 1
-        storyboard_target:
-          type: object
-          properties:
-            segment_index:
-              type: integer
-              minimum: 0
-              default: 0
-            panel_index:
-              type: integer
-              minimum: 0
-              default: 0
-          additionalProperties: false
-      additionalProperties: false
-    config:
-      title: 选择集信息资产
-      description: 选择资产库中带“集元数据”标签的集信息资产。
-    ui:
-      controls:
-        input:
-          control_id: ui.input.schema_form.v1
-          variant: default
-          mode: input
-          options:
-            fields:
-              episode_asset_id:
-                control_id: ui.input.asset_picker.v1
-                variant: list
-                mode: input
-                asset_type: text
-                filter_tag_names: ["集元数据"]
-                button_label: 选择集
-                dialog_title: 选择集信息资产
-
-  - id: load_episode_metadata
-    ref: tool.episode_metadata_from_asset.v1
-    name: 读取集信息
-    inputs:
-      episode_asset_id:
-        from: "$nodes.select_episode_metadata.output.episode_asset_id"
+          title: 集信息资产
     outputs:
       type: object
       required: ["episode_name", "episode_summary", "source_script", "asset_catalog", "episode_asset_id"]
@@ -176,116 +116,47 @@ nodes:
         asset_catalog:
           type: object
           additionalProperties: true
+        asset_images:
+          type: array
+          items:
+            type: object
         episode_asset_id:
           type: string
           minLength: 1
       additionalProperties: false
-
-  - id: confirm_episode_context
-    ref: system.human_approval.v1
-    name: 确认集信息
-    inputs:
-      question:
-        template: |
-          请确认本次分镜生成使用的集信息。可以直接确认，也可以修改集名称、剧情概括、资产目录或原剧本内容后提交。
-
-          集名称：
-          {episode_name}
-
-          集剧情概括：
-          {episode_summary}
-
-          资产目录：
-          {asset_catalog}
-
-          原剧本内容：
-          {source_script}
-        vars:
-          episode_name:
-            from: "$nodes.load_episode_metadata.output.episode_name"
-          episode_summary:
-            from: "$nodes.load_episode_metadata.output.episode_summary"
-          asset_catalog:
-            from: "$nodes.load_episode_metadata.output.asset_catalog"
-          source_script:
-            from: "$nodes.load_episode_metadata.output.source_script"
-      episode_name:
-        from_user: true
-        schema:
-          type: string
-          minLength: 1
-      episode_summary:
-        from_user: true
-        schema:
-          type: string
-      source_script:
-        from_user: true
-        schema:
-          type: string
-          minLength: 1
-      background:
-        from_user: true
-        schema:
-          type: string
-          default: 水浒传
-      asset_catalog:
-        from_user: true
-        schema:
-          type: object
-          additionalProperties: true
-      storyboard_target:
-        from_user: true
-        required: false
-        schema:
-          type: object
-          properties:
-            segment_index:
-              type: integer
-              minimum: 0
-              default: 0
-            panel_index:
-              type: integer
-              minimum: 0
-              default: 0
-          additionalProperties: false
-    outputs:
-      type: object
-      required: ["episode_name", "source_script", "background", "asset_catalog", "storyboard_target"]
-      properties:
-        episode_name:
-          type: string
-          minLength: 1
-        episode_summary:
-          type: string
-        source_script:
-          type: string
-          minLength: 1
-        background:
-          type: string
-          default: 水浒传
-        asset_catalog:
-          type: object
-          additionalProperties: true
-        storyboard_target:
-          type: object
-          properties:
-            segment_index:
-              type: integer
-              minimum: 0
-              default: 0
-            panel_index:
-              type: integer
-              minimum: 0
-              default: 0
-          additionalProperties: false
-      additionalProperties: false
+    config:
+      title: 选择集信息资产
+      description: 选择资产库中带“集元数据”标签的集信息资产。
+    ui:
+      controls:
+        input:
+          control_id: ui.input.schema_form.v1
+          variant: default
+          mode: input
+          options:
+            fields:
+              episode_asset_id:
+                control_id: ui.input.asset_picker.v1
+                variant: dropdown
+                mode: input
+                asset_type: text
+                filter_tag_names: ["集元数据"]
+                placeholder: 请选择集信息资产
+                preview_control_id: ui.display.episode_context.v1
+      sections:
+        input:
+          wrapper: false
+        output:
+          remove: true
+        events:
+          visible: false
 
   - id: split_script
     ref: tool.script_split.v1
     name: 拆分剧本
     inputs:
       script:
-        from: "$nodes.confirm_episode_context.output.source_script"
+        from: "$nodes.select_episode_metadata.output.source_script"
     outputs:
       type: object
       required: ["count", "segments"]
@@ -345,17 +216,17 @@ nodes:
           - segment_index：段落索引
           - location：本段主要地点，没有则空字符串
           - time：本段时间，没有则空字符串
-          - characters：本段实际出现角色数组，每个包含 full_name、image_ref、variant、image_url
+          - characters：本段实际出现角色数组，每个包含 full_name、variant，可选 asset_id、image_url
           - key_props：关键道具数组
 
-          image_ref 优先使用资产目录中已有的结构化图像引用；如果只有 asset_id，返回 {"kind":"asset","asset_id":"...","role":"reference"}。
+          只判断哪些资产实际出现在本段，不要拼接 image_ref；后续工具节点会根据资产目录补全结构化图像引用。
         vars:
           segments:
             from: "$nodes.split_script.output.segments"
           asset_catalog:
-            from: "$nodes.confirm_episode_context.output.asset_catalog"
+            from: "$nodes.select_episode_metadata.output.asset_catalog"
           background:
-            from: "$nodes.confirm_episode_context.output.background"
+            from: "$nodes.select_episode_metadata.output.background"
       max_attempts:
         value: 2
     outputs:
@@ -379,7 +250,61 @@ nodes:
                 type: array
                 items:
                   type: object
-                  required: ["full_name", "image_ref"]
+                  required: ["full_name"]
+                  properties:
+                    full_name:
+                      type: string
+                      minLength: 1
+                    asset_id:
+                      type: string
+                      minLength: 1
+                    variant:
+                      type: string
+                    image_url:
+                      type: string
+                    accessories:
+                      type: array
+                      items:
+                        type: string
+                  additionalProperties: false
+              key_props:
+                type: array
+                items:
+                  type: string
+                  minLength: 1
+            additionalProperties: false
+      additionalProperties: false
+
+  - id: resolve_segment_image_refs
+    ref: tool.resolve_segment_image_refs.v1
+    name: 补全段落参考图
+    inputs:
+      segment_assignments:
+        from: "$nodes.assign_assets_to_segments.output.segment_assignments"
+      asset_catalog:
+        from: "$nodes.select_episode_metadata.output.asset_catalog"
+    outputs:
+      type: object
+      required: ["segment_assignments"]
+      properties:
+        segment_assignments:
+          type: array
+          items:
+            type: object
+            required: ["segment_index", "characters", "key_props"]
+            properties:
+              segment_index:
+                type: integer
+                minimum: 0
+              location:
+                type: string
+              time:
+                type: string
+              characters:
+                type: array
+                items:
+                  type: object
+                  required: ["full_name"]
                   properties:
                     full_name:
                       type: string
@@ -417,46 +342,151 @@ nodes:
             additionalProperties: false
       additionalProperties: false
 
-  - id: assemble_storyboard_context
-    ref: tool.assemble_storyboard_context.v1
-    name: 组装分镜上下文
+  - id: prepare_segment_storyboard_inputs
+    ref: tool.prepare_segment_storyboard_inputs.v1
+    name: 准备分段分镜输入
     inputs:
+      source_script:
+        from: "$nodes.select_episode_metadata.output.source_script"
       segments:
         from: "$nodes.split_script.output.segments"
       segment_assignments:
-        from: "$nodes.assign_assets_to_segments.output.segment_assignments"
+        from: "$nodes.resolve_segment_image_refs.output.segment_assignments"
     outputs:
       type: object
-      required: ["context_string"]
+      required: ["items", "shared_context"]
       properties:
-        context_string:
-          type: string
-          minLength: 1
+        items:
+          type: array
+          items:
+            type: object
+            required: ["index", "current_segment", "neighbor_segments", "segment_assignment"]
+            properties:
+              index:
+                type: integer
+                minimum: 0
+              current_segment:
+                type: object
+                additionalProperties: true
+              neighbor_segments:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
+              segment_assignment:
+                type: object
+                additionalProperties: true
+            additionalProperties: false
+        shared_context:
+          type: object
+          required: ["full_script", "all_segments"]
+          properties:
+            full_script:
+              type: string
+              minLength: 1
+            all_segments:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+          additionalProperties: false
       additionalProperties: false
 
   - id: describe_panels
-    ref: ai.deepseek_structured_json.v1
+    ref: ai.parallel_deepseek_structured_json.v1
     name: 描述分镜画面
     inputs:
       system:
         value: |
-          仅返回合法 JSON。你是漫画分镜导演，请根据每个段落文本和资产分配，为每个段落设计分格画面。
-          输出必须能直接用于后续图像提示词组装。
-      prompt:
-        template: |
-          请根据上下文描述分镜画面。
+          仅返回合法 JSON。你是漫画分镜导演。每次只为当前 item 中的 current_segment 设计分镜画面。
+          必须参考 full_script 理解完整剧情连续性，参考 all_segments 和 neighbor_segments 理解前后承接，参考 segment_assignment 保持角色、地点、道具和参考图一致。
+          不要输出其他段落，不要返回数组，不要包含 Markdown 或解释文字。
+      items:
+        from: "$nodes.prepare_segment_storyboard_inputs.output.items"
+      shared_context:
+        from: "$nodes.prepare_segment_storyboard_inputs.output.shared_context"
+      prompt_template:
+        value: |
+          请只为以下 item.current_segment 设计分镜画面。
 
-          上下文：
-          {segments_context}
+          输入 item JSON：
+          {item}
 
-          返回一个仅包含 segment_descriptions 的 JSON 对象。
-          segment_descriptions 每项包含 index、segment_title、thinking、panels。
+          输出一个 JSON 对象，必须包含：
+          - index：当前段落索引，必须等于 item.index
+          - segment_title：当前段落标题
+          - thinking：一句话说明分镜设计依据
+          - panels：当前段落的分格数组
+
           每个 panel 必须包含 description、style、constraints，可选 character_focus、environment_details、shot_type、camera_angle、composition、lighting、mood、action、key_props、continuity_notes。
-        vars:
-          segments_context:
-            from: "$nodes.assemble_storyboard_context.output.context_string"
+      prompt_fields:
+        value: ["index", "current_segment", "neighbor_segments", "segment_assignment"]
       max_attempts:
         value: 2
+    outputs:
+      type: object
+      required: ["results"]
+      properties:
+        results:
+          type: array
+          items:
+            type: object
+            required: ["index", "segment_title", "thinking", "panels"]
+            properties:
+              index:
+                type: integer
+                minimum: 0
+              segment_title:
+                type: string
+                minLength: 1
+              thinking:
+                type: string
+                minLength: 1
+              panels:
+                type: array
+                items:
+                  type: object
+                  required: ["description", "style", "constraints"]
+                  properties:
+                    description:
+                      type: string
+                      minLength: 1
+                    style:
+                      type: string
+                      minLength: 1
+                    constraints:
+                      type: string
+                      minLength: 1
+                    character_focus:
+                      type: string
+                    environment_details:
+                      type: string
+                    shot_type:
+                      type: string
+                    camera_angle:
+                      type: string
+                    composition:
+                      type: string
+                    lighting:
+                      type: string
+                    mood:
+                      type: string
+                    action:
+                      type: string
+                    key_props:
+                      type: string
+                    continuity_notes:
+                      type: string
+                  additionalProperties: false
+            additionalProperties: false
+      additionalProperties: false
+
+  - id: merge_segment_descriptions
+    ref: tool.merge_segment_storyboard_descriptions.v1
+    name: 合并分镜描述
+    inputs:
+      results:
+        from: "$nodes.describe_panels.output.results"
     outputs:
       type: object
       required: ["segment_descriptions"]
@@ -525,14 +555,9 @@ nodes:
 
           段落分镜描述：
           {segment_descriptions}
-
-          上下文：
-          {context}
         vars:
           segment_descriptions:
-            from: "$nodes.describe_panels.output.segment_descriptions"
-          context:
-            from: "$nodes.assemble_storyboard_context.output.context_string"
+            from: "$nodes.merge_segment_descriptions.output.segment_descriptions"
       decision:
         from_user: true
         schema:
@@ -577,13 +602,13 @@ nodes:
           返回一个仅包含 panel_image_refs、image_refs、description、style、constraints 的 JSON 对象。
         vars:
           segment_assignments:
-            from: "$nodes.assign_assets_to_segments.output.segment_assignments"
+            from: "$nodes.resolve_segment_image_refs.output.segment_assignments"
           segment_descriptions:
-            from: "$nodes.describe_panels.output.segment_descriptions"
+            from: "$nodes.merge_segment_descriptions.output.segment_descriptions"
           segment_index:
-            from: "$nodes.confirm_episode_context.output.storyboard_target.segment_index"
+            value: 0
           panel_index:
-            from: "$nodes.confirm_episode_context.output.storyboard_target.panel_index"
+            value: 0
       max_attempts:
         value: 1
     outputs:
@@ -805,18 +830,18 @@ edges:
   - from: START
     to: select_episode_metadata
   - from: select_episode_metadata
-    to: load_episode_metadata
-  - from: load_episode_metadata
-    to: confirm_episode_context
-  - from: confirm_episode_context
     to: split_script
   - from: split_script
     to: assign_assets_to_segments
   - from: assign_assets_to_segments
-    to: assemble_storyboard_context
-  - from: assemble_storyboard_context
+    to: resolve_segment_image_refs
+  - from: resolve_segment_image_refs
+    to: prepare_segment_storyboard_inputs
+  - from: prepare_segment_storyboard_inputs
     to: describe_panels
   - from: describe_panels
+    to: merge_segment_descriptions
+  - from: merge_segment_descriptions
     to: review_storyboard_prompt
   - from: review_storyboard_prompt
     to: extract_panel_image_urls

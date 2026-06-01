@@ -49,6 +49,16 @@ class AssembleStoryboardContextNode(BaseNode):
                                         "properties": {
                                             "full_name": {"type": "string", "minLength": 1},
                                             "variant": {"type": "string"},
+                                            "image_ref": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "kind": {"type": "string"},
+                                                    "asset_id": {"type": "string"},
+                                                    "data": {"type": "string"},
+                                                    "role": {"type": "string"},
+                                                },
+                                                "additionalProperties": False,
+                                            },
                                             "image_url": {"type": "string"},
                                             "accessories": {"type": ["string", "array"]},
                                         },
@@ -124,10 +134,11 @@ class AssembleStoryboardContextNode(BaseNode):
                             continue
                         variant = str(asset_item.get("variant", "")).strip()
                         image_url = str(asset_item.get("image_url", "")).strip()
+                        image_ref = _format_image_ref(asset_item.get("image_ref"))
                         accessories = asset_item.get("accessories", "")
                         accessories_str = _format_accessories(accessories)
                         parts.append(
-                            f"  - {full_name}（变体：{variant}）（参考图：{image_url}）（配件：{accessories_str}）"
+                            f"  - {full_name}（变体：{variant}）（参考图：{image_ref or image_url}）（配件：{accessories_str}）"
                         )
             parts.append("")
 
@@ -149,6 +160,18 @@ def _format_accessories(accessories: Any) -> str:
     if isinstance(accessories, list):
         return "、".join(str(a) for a in accessories if a)
     return str(accessories).strip() if accessories else ""
+
+
+def _format_image_ref(image_ref: Any) -> str:
+    if not isinstance(image_ref, Mapping):
+        return ""
+    kind = str(image_ref.get("kind", "")).strip()
+    if kind == "asset":
+        asset_id = str(image_ref.get("asset_id", "")).strip()
+        return f"asset:{asset_id}" if asset_id else ""
+    if kind == "data_uri":
+        return "data_uri:image"
+    return ""
 
 
 def _required_list(inputs: Mapping[str, Any], key: str) -> list[Any]:
