@@ -15,6 +15,8 @@ def test_builtin_ui_controls_have_unique_ids() -> None:
     assert "ui.choice.image_three.v1" in {control.control_id for control in controls}
     assert "ui.display.image_viewer.v1" in {control.control_id for control in controls}
     assert "ui.display.asset_task_summary.v1" in {control.control_id for control in controls}
+    assert "ui.display.episode_context.v1" in {control.control_id for control in controls}
+    assert "ui.interaction.storyboard_panel_cards.v1" in {control.control_id for control in controls}
     assert "ui.input.schema_form.v1" in {control.control_id for control in controls}
     assert "ui.input.asset_image_picker.v1" in {control.control_id for control in controls}
     assert "ui.input.asset_picker.v1" in {control.control_id for control in controls}
@@ -94,6 +96,7 @@ def test_schema_form_and_asset_image_picker_controls_are_registered() -> None:
     text_asset_picker = catalog.get("ui.input.asset_picker.v1")
     assert text_asset_picker.kind == "input"
     assert text_asset_picker.variants[0].name == "list"
+    assert text_asset_picker.variants[1].name == "dropdown"
     assert "input" in text_asset_picker.variants[0].modes
     assert text_asset_picker.variants[0].submit_schema == {
         "type": "object",
@@ -101,6 +104,25 @@ def test_schema_form_and_asset_image_picker_controls_are_registered() -> None:
         "properties": {"value": {"type": "string", "minLength": 1}},
         "additionalProperties": False,
     }
+    assert text_asset_picker.variants[1].submit_schema == text_asset_picker.variants[0].submit_schema
+
+    episode_context = catalog.get("ui.display.episode_context.v1")
+    assert episode_context.kind == "output"
+    assert episode_context.variants[0].name == "summary_catalog"
+    assert "readonly" in episode_context.variants[0].modes
+
+
+def test_storyboard_panel_cards_control_declares_submit_schema() -> None:
+    catalog = build_builtin_ui_control_catalog()
+    control = catalog.get("ui.interaction.storyboard_panel_cards.v1")
+    variant = control.variants[0]
+
+    assert control.kind == "interaction"
+    assert variant.name == "panel_review"
+    assert "interactive" in variant.modes
+    assert "readonly" in variant.modes
+    assert variant.submit_schema["required"] == ["decision", "panel_results"]
+    assert variant.submit_schema["properties"]["decision"]["enum"] == ["finish"]
 
 
 def test_ui_control_descriptor_is_api_serializable() -> None:

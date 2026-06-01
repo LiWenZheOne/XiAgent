@@ -88,6 +88,31 @@ class GenerateAssetImageRequest(BaseModel):
     resolution: str = "2k"
 
 
+class GenerateStoryboardPanelImageRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_id: str | None = None
+    card_id: str
+    prompt: str
+    image_refs: list[dict[str, Any]] = Field(default_factory=list)
+    negative_prompt: str | None = None
+    aspect_ratio: str = "16:9"
+    resolution: str = "2K"
+
+
+class RegenerateStoryboardPanelPromptRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_id: str | None = None
+    card: dict[str, Any]
+    item: dict[str, Any]
+    shared_context: dict[str, Any] = Field(default_factory=dict)
+    generation_rules: str | None = None
+    negative_prompt: str | None = None
+    aspect_ratio: str = "16:9"
+    resolution: str = "2K"
+
+
 @router.post("/text")
 async def create_text_asset(
     request: CreateTextAssetRequest,
@@ -174,6 +199,140 @@ async def generate_asset_image(
     return job.to_dict()
 
 
+@router.post("/storyboard-panel-image")
+async def generate_storyboard_panel_image(
+    request: GenerateStoryboardPanelImageRequest,
+    background_tasks: BackgroundTasks,
+    services: Annotated[ApiServices, Depends(get_services)],
+    current_user: Annotated[UserRecord, Depends(get_current_user)],
+) -> dict:
+    if not request.prompt.strip():
+        raise ValidationError(
+            code="storyboard_panel_prompt_required",
+            message="分镜图像生成需要提示词。",
+        )
+    if not request.image_refs:
+        raise ValidationError(
+            code="storyboard_panel_image_refs_required",
+            message="分镜图像生成至少需要一张参考图。",
+        )
+
+    project_id = request.project_id or "global"
+    job = services.image_generations.create(
+        user_id=current_user.user_id,
+        project_id=project_id,
+        input_payload=request.model_dump(mode="json"),
+    )
+    background_tasks.add_task(
+        _run_storyboard_panel_image_generation,
+        generation_id=job.generation_id,
+        request_payload=request.model_dump(mode="json"),
+        services=services,
+        user_id=current_user.user_id,
+        project_id=project_id,
+    )
+    return job.to_dict()
+
+
+@router.post("/storyboard-panel-prompt")
+async def regenerate_storyboard_panel_prompt(
+    request: RegenerateStoryboardPanelPromptRequest,
+    services: Annotated[ApiServices, Depends(get_services)],
+    current_user: Annotated[UserRecord, Depends(get_current_user)],
+) -> dict:
+    item = request.item
+    if not item:
+        raise ValidationError(
+            code="storyboard_panel_item_required",
+            message="重新生成分镜提示词需要当前段落上下文。",
+        )
+
+    project_id = request.project_id or "global"
+    describe_node = services.node_registry.get("ai.parallel_deepseek_structured_json.v1")
+    describe_result = await describe_node.run(
+        NodeContext(
+            user_id=current_user.user_id,
+            project_id=project_id,
+            task_id="storyboard_panel_prompt_preview",
+            node_id="regenerate_storyboard_panel_prompt",
+            node_execution_id=f"storyboard_panel_prompt_{request.card.get('card_id', 'preview')}",
+            config={},
+            output_schema=_segment_storyboard_output_schema(),
+            asset_service=services.assets,
+            event_sink=None,
+            logger=None,
+        ),
+        {
+            "system": (
+                "仅返回合法 JSON。你是漫画分镜导演。每次只为当前 item 中的 current_segment 设计分镜画面。"
+                "必须参考 full_script 理解完整剧情连续性，参考 all_segments 和 neighbor_segments 理解前后承接，"
+                "参考 segment_assignment 保持角色、地点、道具和参考图一致。不要输出其他段落。"
+            ),
+            "items": [item],
+            "shared_context": request.shared_context,
+            "prompt_template": (
+                "请只为以下 item.current_segment 设计分镜画面。\n\n"
+                "输入 item JSON：\n{item}\n\n"
+                "输出一个 JSON 对象，必须包含 index、segment_title、thinking、panels。"
+            ),
+            "prompt_fields": ["index", "current_segment", "neighbor_segments", "segment_assignment"],
+            "max_attempts": 2,
+        },
+    )
+    results = describe_result.output.get("results")
+    if not isinstance(results, list) or not results:
+        raise ValidationError(
+            code="storyboard_panel_prompt_empty",
+            message="重新生成分镜提示词没有返回段落结果。",
+        )
+
+    panel_node = services.node_registry.get("tool.prepare_storyboard_panel_cards.v1")
+    panel_result = await panel_node.run(
+        NodeContext(
+            user_id=current_user.user_id,
+            project_id=project_id,
+            task_id="storyboard_panel_prompt_preview",
+            node_id="prepare_storyboard_panel_prompt_preview",
+            node_execution_id=f"storyboard_panel_card_{request.card.get('card_id', 'preview')}",
+            config={},
+            output_schema=panel_node.describe().output_schema,
+            asset_service=services.assets,
+            event_sink=None,
+            logger=None,
+        ),
+        {
+            "segment_descriptions": results,
+            "segment_assignments": [item.get("segment_assignment") or {}],
+            "storyboard_items": [item],
+            "shared_context": request.shared_context,
+            "generation_rules": request.generation_rules or "",
+            "negative_prompt": request.negative_prompt or "",
+            "aspect_ratio": request.aspect_ratio,
+            "resolution": request.resolution,
+        },
+    )
+    cards = panel_result.output.get("panel_cards")
+    panel_index = request.card.get("panel_index")
+    if not isinstance(cards, list):
+        cards = []
+    matched = next(
+        (
+            card
+            for card in cards
+            if isinstance(card, dict)
+            and card.get("panel_index") == panel_index
+            and card.get("segment_index") == request.card.get("segment_index")
+        ),
+        cards[0] if cards else None,
+    )
+    if not isinstance(matched, dict):
+        raise ValidationError(
+            code="storyboard_panel_prompt_card_missing",
+            message="重新生成分镜提示词没有找到目标分格。",
+        )
+    return {"card": matched, "segment_description": results[0]}
+
+
 @router.get("/generate-image/{generation_id}")
 async def get_asset_image_generation(
     generation_id: str,
@@ -246,6 +405,72 @@ async def _run_asset_image_generation(
             {
                 "code": "asset_image_generation_failed",
                 "message": str(exc) or "资产图像生成失败。",
+                "details": {},
+            },
+        )
+
+
+async def _run_storyboard_panel_image_generation(
+    *,
+    generation_id: str,
+    request_payload: dict[str, Any],
+    services: ApiServices,
+    user_id: str,
+    project_id: str,
+) -> None:
+    services.image_generations.mark_running(generation_id)
+    node = services.node_registry.get("ai.runninghub_image_to_image.v1")
+    try:
+        result = await node.run(
+            NodeContext(
+                user_id=user_id,
+                project_id=project_id,
+                task_id="storyboard_panel_image_preview",
+                node_id="generate_storyboard_panel_image_preview",
+                node_execution_id=generation_id,
+                config={},
+                output_schema=node.describe().output_schema,
+                asset_service=services.assets,
+                event_sink=None,
+                logger=None,
+            ),
+            {
+                "prompt": request_payload["prompt"],
+                "image_refs": request_payload.get("image_refs") or [],
+                "aspect_ratio": request_payload.get("aspect_ratio", "16:9"),
+                "resolution": request_payload.get("resolution", "2K"),
+                "poll_interval_seconds": 2,
+                "poll_timeout_seconds": 720,
+            },
+        )
+        image_url = result.output.get("image_url")
+        if not isinstance(image_url, str) or not image_url:
+            raise ValidationError(
+                code="storyboard_panel_image_generation_empty",
+                message="分镜图像生成没有返回图像。",
+            )
+        image = {
+            "card_id": request_payload.get("card_id", ""),
+            "image_url": image_url,
+            "source": "ai_generated",
+            "runninghub_task_id": result.output.get("task_id", ""),
+        }
+        services.image_generations.mark_succeeded(generation_id, image)
+    except XiAgentError as exc:
+        services.image_generations.mark_failed(
+            generation_id,
+            {
+                "code": exc.code,
+                "message": exc.message,
+                "details": exc.details,
+            },
+        )
+    except Exception as exc:  # pragma: no cover - defensive background task guard
+        services.image_generations.mark_failed(
+            generation_id,
+            {
+                "code": "storyboard_panel_image_generation_failed",
+                "message": str(exc) or "分镜图像生成失败。",
                 "details": {},
             },
         )
@@ -705,3 +930,49 @@ def _split_ids(value: str | None) -> list[str]:
     if value is None:
         return []
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _segment_storyboard_output_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "required": ["results"],
+        "properties": {
+            "results": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["index", "segment_title", "thinking", "panels"],
+                    "properties": {
+                        "index": {"type": "integer", "minimum": 0},
+                        "segment_title": {"type": "string", "minLength": 1},
+                        "thinking": {"type": "string", "minLength": 1},
+                        "panels": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "required": ["description", "style", "constraints"],
+                                "properties": {
+                                    "description": {"type": "string", "minLength": 1},
+                                    "style": {"type": "string", "minLength": 1},
+                                    "constraints": {"type": "string", "minLength": 1},
+                                    "character_focus": {"type": "string"},
+                                    "environment_details": {"type": "string"},
+                                    "shot_type": {"type": "string"},
+                                    "camera_angle": {"type": "string"},
+                                    "composition": {"type": "string"},
+                                    "lighting": {"type": "string"},
+                                    "mood": {"type": "string"},
+                                    "action": {"type": "string"},
+                                    "key_props": {"type": "string"},
+                                    "continuity_notes": {"type": "string"},
+                                },
+                                "additionalProperties": False,
+                            },
+                        },
+                    },
+                    "additionalProperties": False,
+                },
+            }
+        },
+        "additionalProperties": False,
+    }

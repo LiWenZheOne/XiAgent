@@ -23,6 +23,9 @@ from xiagent.nodes.tools.merge_segment_storyboard_descriptions import (
 from xiagent.nodes.tools.prepare_segment_storyboard_inputs import (
     PrepareSegmentStoryboardInputsNode,
 )
+from xiagent.nodes.tools.prepare_storyboard_panel_cards import (
+    PrepareStoryboardPanelCardsNode,
+)
 from xiagent.nodes.tools.resolve_accessory_asset_refs import ResolveAccessoryAssetRefsNode
 from xiagent.nodes.tools.resolve_character_variant_refs import ResolveCharacterVariantRefsNode
 from xiagent.nodes.tools.resolve_segment_image_refs import ResolveSegmentImageRefsNode
@@ -88,6 +91,7 @@ def test_build_node_registry_registers_builtin_nodes(test_settings) -> None:
         "tool.storyboard_prompt_assembler.v2",
         "tool.merge_segment_storyboard_descriptions.v1",
         "tool.prepare_segment_storyboard_inputs.v1",
+        "tool.prepare_storyboard_panel_cards.v1",
         "ai.assign_assets_to_segments.v1",
         "ai.deepseek_chat.v1",
         "ai.deepseek_structured_json.v1",
@@ -280,6 +284,7 @@ def test_resolve_segment_image_refs_descriptor() -> None:
 def test_segment_storyboard_tool_descriptors() -> None:
     prepare_descriptor = PrepareSegmentStoryboardInputsNode().describe()
     merge_descriptor = MergeSegmentStoryboardDescriptionsNode().describe()
+    panel_cards_descriptor = PrepareStoryboardPanelCardsNode().describe()
 
     assert prepare_descriptor.ref == "tool.prepare_segment_storyboard_inputs.v1"
     assert prepare_descriptor.kind == "tool"
@@ -291,6 +296,56 @@ def test_segment_storyboard_tool_descriptors() -> None:
     assert merge_descriptor.ref == "tool.merge_segment_storyboard_descriptions.v1"
     assert merge_descriptor.kind == "tool"
     assert merge_descriptor.output_schema["required"] == ["segment_descriptions"]
+    assert panel_cards_descriptor.ref == "tool.prepare_storyboard_panel_cards.v1"
+    assert panel_cards_descriptor.kind == "tool"
+    assert panel_cards_descriptor.output_schema["required"] == ["panel_cards"]
+
+
+async def test_prepare_storyboard_panel_cards_builds_cards() -> None:
+    node = PrepareStoryboardPanelCardsNode()
+
+    result = await node.run(
+        None,
+        {
+            "segment_descriptions": [
+                {
+                    "index": 0,
+                    "segment_title": "雪夜",
+                    "thinking": "风雪推进。",
+                    "panels": [
+                        {
+                            "description": "林冲踏雪前行。",
+                            "style": "国风漫画",
+                            "constraints": "保持囚服和毡笠。",
+                        }
+                    ],
+                }
+            ],
+            "segment_assignments": [
+                {
+                    "segment_index": 0,
+                    "location": "野猪林",
+                    "characters": [
+                        {
+                            "full_name": "林冲",
+                            "variant": "囚服",
+                            "image_ref": {"kind": "asset", "asset_id": "asset-linchong", "role": "reference"},
+                        }
+                    ],
+                    "key_props": ["花枪"],
+                }
+            ],
+            "storyboard_items": [{"index": 0, "current_segment": {"text": "林冲踏雪。"}}],
+            "shared_context": {"full_script": "完整剧本", "all_segments": []},
+        },
+    )
+
+    card = result.output["panel_cards"][0]
+    assert card["card_id"] == "segment-0-panel-0"
+    assert card["reference_assets"][0]["full_name"] == "林冲"
+    assert card["image_refs"] == [{"kind": "asset", "asset_id": "asset-linchong", "role": "reference"}]
+    assert "林冲踏雪前行" in card["prompt"]
+    assert "出场角色：林冲（囚服）" in card["prompt"]
 
 
 async def test_resolve_accessory_asset_refs_uses_match_or_first_variant_asset() -> None:

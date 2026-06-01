@@ -6,13 +6,16 @@ workflow:
   description: 从集元数据资产读取集名称、资产目录和原剧本内容，确认后拆分剧本、为分段分配资产并生成分镜图像。
   output_schema:
     type: object
-    required: ["decision"]
+    required: ["decision", "panel_results"]
     properties:
       decision:
         type: string
-        minLength: 1
-      selected_image_url:
-        type: string
+        enum: ["finish"]
+      panel_results:
+        type: array
+        items:
+          type: object
+          additionalProperties: true
       revision_notes:
         type: string
     additionalProperties: false
@@ -42,9 +45,7 @@ workflow:
           - describe_panels
           - merge_segment_descriptions
           - review_storyboard_prompt
-          - extract_panel_image_urls
-          - assemble_prompt_v2
-          - generate_image_v2
+          - prepare_storyboard_panel_cards
           - review_storyboard_image
     defaults:
       ai:
@@ -581,107 +582,18 @@ nodes:
           additionalProperties: true
       additionalProperties: false
 
-  - id: extract_panel_image_urls
-    ref: ai.deepseek_structured_json.v1
-    name: 提取分镜参考图
+  - id: prepare_storyboard_panel_cards
+    ref: tool.prepare_storyboard_panel_cards.v1
+    name: 准备分镜汇总卡片
     inputs:
-      system:
-        value: |
-          仅返回合法 JSON。你是分镜数据提取助手，请从分镜描述和资产分配中提取目标分格的参考图和描述信息。
-      prompt:
-        template: |
-          所有段落资产分配：
-          {segment_assignments}
-
-          所有段落分镜描述：
-          {segment_descriptions}
-
-          目标段落索引：{segment_index}
-          目标分格索引：{panel_index}
-
-          返回一个仅包含 panel_image_refs、image_refs、description、style、constraints 的 JSON 对象。
-        vars:
-          segment_assignments:
-            from: "$nodes.resolve_segment_image_refs.output.segment_assignments"
-          segment_descriptions:
-            from: "$nodes.merge_segment_descriptions.output.segment_descriptions"
-          segment_index:
-            value: 0
-          panel_index:
-            value: 0
-      max_attempts:
-        value: 1
-    outputs:
-      type: object
-      required: ["panel_image_refs", "image_refs", "description", "style", "constraints"]
-      properties:
-        panel_image_refs:
-          type: array
-          items:
-            type: object
-            required: ["full_name", "image_ref"]
-            properties:
-              full_name:
-                type: string
-                minLength: 1
-              image_ref:
-                type: object
-                required: ["kind"]
-                properties:
-                  kind:
-                    type: string
-                    enum: ["asset", "data_uri"]
-                  asset_id:
-                    type: string
-                    minLength: 1
-                  data:
-                    type: string
-                    minLength: 1
-                  role:
-                    type: string
-                additionalProperties: false
-              variant:
-                type: string
-            additionalProperties: false
-        image_refs:
-          type: array
-          items:
-            type: object
-            required: ["kind"]
-            properties:
-              kind:
-                type: string
-                enum: ["asset", "data_uri"]
-              asset_id:
-                type: string
-                minLength: 1
-              data:
-                type: string
-                minLength: 1
-              role:
-                type: string
-            additionalProperties: false
-        description:
-          type: string
-          minLength: 1
-        style:
-          type: string
-          minLength: 1
-        constraints:
-          type: string
-          minLength: 1
-      additionalProperties: false
-
-  - id: assemble_prompt_v2
-    ref: tool.storyboard_prompt_assembler.v1
-    name: 组装生图提示词
-    inputs:
-      description:
-        from: "$nodes.extract_panel_image_urls.output.description"
-      style:
-        from: "$nodes.extract_panel_image_urls.output.style"
-      constraints:
-        from: "$nodes.extract_panel_image_urls.output.constraints"
+      segment_descriptions:
+        from: "$nodes.merge_segment_descriptions.output.segment_descriptions"
+      segment_assignments:
+        from: "$nodes.resolve_segment_image_refs.output.segment_assignments"
+      storyboard_items:
+        from: "$nodes.prepare_segment_storyboard_inputs.output.items"
+      shared_context:
+        from: "$nodes.prepare_segment_storyboard_inputs.output.shared_context"
       generation_rules:
         value: |
           风格指令：参考《罗小黑战记》的线条、色彩逻辑和视觉质感生成高质量漫画。
@@ -690,124 +602,60 @@ nodes:
           透视与构图：强纵深、前中后景分层、漫画分格画面。
       negative_prompt:
         value: low quality, bad anatomy, worst quality, text, watermark, signature, realistic, legs, feet, shoes
-      image_refs:
-        from: "$nodes.extract_panel_image_urls.output.image_refs"
-    outputs:
-      type: object
-      required: ["prompt", "negative_prompt", "image_refs", "aspect_ratio", "resolution"]
-      properties:
-        prompt:
-          type: string
-          minLength: 1
-        negative_prompt:
-          type: string
-          minLength: 1
-        image_refs:
-          type: array
-          items:
-            type: object
-            required: ["kind"]
-            properties:
-              kind:
-                type: string
-                enum: ["asset", "data_uri"]
-              asset_id:
-                type: string
-              data:
-                type: string
-              role:
-                type: string
-            additionalProperties: false
-        aspect_ratio:
-          type: string
-          minLength: 1
-        resolution:
-          type: string
-          minLength: 1
-      additionalProperties: false
-
-  - id: generate_image_v2
-    ref: ai.runninghub_image_to_image.v1
-    name: 生成分镜图像
-    inputs:
-      prompt:
-        from: "$nodes.assemble_prompt_v2.output.prompt"
-      image_refs:
-        from: "$nodes.assemble_prompt_v2.output.image_refs"
       aspect_ratio:
-        from: "$nodes.assemble_prompt_v2.output.aspect_ratio"
+        value: "16:9"
       resolution:
-        from: "$nodes.assemble_prompt_v2.output.resolution"
-      negative_prompt:
-        from: "$nodes.assemble_prompt_v2.output.negative_prompt"
-      poll_interval_seconds:
-        value: 2
-      poll_timeout_seconds:
-        value: 720
+        value: 2K
     outputs:
       type: object
-      required: ["image_url", "model", "usage", "results"]
+      required: ["panel_cards"]
       properties:
-        image_url:
-          type: string
-        model:
-          type: string
-        usage:
-          type: object
-        results:
+        panel_cards:
           type: array
           items:
             type: object
-            properties:
-              url:
-                type: string
-                minLength: 1
-              text:
-                type: string
-                minLength: 1
-              output_type:
-                type: string
-                minLength: 1
-            additionalProperties: false
-        task_id:
-          type: string
-        status:
-          type: string
+            additionalProperties: true
+        storyboard_items:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        shared_context:
+          type: object
+          additionalProperties: true
       additionalProperties: false
 
   - id: review_storyboard_image
     ref: system.human_approval.v1
-    name: 审核分镜图像
+    name: 分镜汇总
     inputs:
       question:
         template: |
-          请审核生成的分镜图像。
+          请在分镜汇总中检查每张分格卡片，必要时调整提示词、参考图并生成分镜图像。
 
-          图像 URL：
-          {image_url}
-
-          使用提示词：
-          {prompt}
-
-          分格描述：
-          {description}
+          分镜卡片：
+          {panel_cards}
         vars:
-          image_url:
-            from: "$nodes.generate_image_v2.output.image_url"
-          prompt:
-            from: "$nodes.assemble_prompt_v2.output.prompt"
-          description:
-            from: "$nodes.extract_panel_image_urls.output.description"
+          panel_cards:
+            from: "$nodes.prepare_storyboard_panel_cards.output.panel_cards"
+      panel_cards:
+        from: "$nodes.prepare_storyboard_panel_cards.output.panel_cards"
+      storyboard_items:
+        from: "$nodes.prepare_storyboard_panel_cards.output.storyboard_items"
+      shared_context:
+        from: "$nodes.prepare_storyboard_panel_cards.output.shared_context"
       decision:
         from_user: true
         schema:
           type: string
-          minLength: 1
-      selected_image_url:
+          enum: ["finish"]
+      panel_results:
         from_user: true
-        required: false
         schema:
-          type: string
+          type: array
+          items:
+            type: object
+            additionalProperties: true
       revision_notes:
         from_user: true
         required: false
@@ -815,16 +663,32 @@ nodes:
           type: string
     outputs:
       type: object
-      required: ["decision"]
+      required: ["decision", "panel_results"]
       properties:
         decision:
           type: string
-          minLength: 1
-        selected_image_url:
-          type: string
+          enum: ["finish"]
+        panel_results:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
         revision_notes:
           type: string
       additionalProperties: false
+    ui:
+      sections:
+        input:
+          visible: false
+        output:
+          visible: false
+        events:
+          visible: false
+      controls:
+        interaction:
+          control_id: ui.interaction.storyboard_panel_cards.v1
+          variant: panel_review
+          mode: interactive
 
 edges:
   - from: START
@@ -844,12 +708,8 @@ edges:
   - from: merge_segment_descriptions
     to: review_storyboard_prompt
   - from: review_storyboard_prompt
-    to: extract_panel_image_urls
-  - from: extract_panel_image_urls
-    to: assemble_prompt_v2
-  - from: assemble_prompt_v2
-    to: generate_image_v2
-  - from: generate_image_v2
+    to: prepare_storyboard_panel_cards
+  - from: prepare_storyboard_panel_cards
     to: review_storyboard_image
   - from: review_storyboard_image
     to: END

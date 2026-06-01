@@ -64,6 +64,8 @@ interface AssetUploadPlan {
   imageUrl: string;
 }
 
+type DefaultReferenceTemplates = Partial<Record<TabKey, string>>;
+
 const groupLabels: Record<string, string> = {
   character: "角色",
   scene: "地点",
@@ -97,11 +99,40 @@ export function AssetImageCardsControl({
   const [assetNameConflictDialog, setAssetNameConflictDialog] = useState<AssetNameConflictDialog | null>(null);
   const tabs = useMemo(() => buildTabs(cards), [cards]);
   const selectedTab = tabs.some((tab) => tab.key === activeTab) ? activeTab : tabs[0]?.key ?? "character";
+  const defaultReferenceTemplates = useMemo(
+    () => defaultReferenceTemplatesFromOptions(config.options),
+    [config.options],
+  );
 
   useEffect(() => {
     setMatches((current) => ({ ...initialMatches(cards), ...current }));
     setEdits((current) => ({ ...initialCardEdits(cards), ...current }));
   }, [cards]);
+
+  useEffect(() => {
+    if (readonly || !cards.length || !Object.keys(defaultReferenceTemplates).length) return;
+    let active = true;
+    void loadDefaultReferenceMatches(cards, defaultReferenceTemplates, projectId)
+      .then((defaultMatches) => {
+        if (!active || !Object.keys(defaultMatches).length) return;
+        setMatches((current) => {
+          const next = { ...current };
+          let changed = false;
+          for (const card of cards) {
+            if (Object.prototype.hasOwnProperty.call(next, card.assetKey) || card.matchedAsset || card.referenceImageRef) continue;
+            const defaultMatch = defaultMatches[card.assetKey];
+            if (!defaultMatch) continue;
+            next[card.assetKey] = defaultMatch;
+            changed = true;
+          }
+          return changed ? next : current;
+        });
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [cards, defaultReferenceTemplates, projectId, readonly]);
 
   useEffect(() => {
     let active = true;
@@ -139,7 +170,7 @@ export function AssetImageCardsControl({
       decision,
       asset_images: cards
         .map((card) => {
-          const match = matchState[card.assetKey] ?? card.matchedAsset ?? null;
+          const match = activeMatchForCard(matchState, card);
           const edit = editState[card.assetKey] ?? cardEditFromCard(card);
           const imageUrl = (imageState[card.assetKey] || "").trim();
           if (!imageUrl) return null;
@@ -288,7 +319,7 @@ export function AssetImageCardsControl({
     try {
       const results = await Promise.all(targetCards.map(async (card) => {
         const edit = edits[card.assetKey] ?? cardEditFromCard(card);
-        const activeMatch = matches[card.assetKey] ?? card.matchedAsset ?? null;
+        const activeMatch = activeMatchForCard(matches, card);
         const promptResult = editedPromptResult(card, edit, activeMatch);
         const promptText = assetPromptText(card, config.options, activeMatch);
         const generated = await generateAssetImage({
@@ -523,8 +554,8 @@ export function AssetImageCardsControl({
       {pickerCard ? (
         <AssetPickerDialog
           assetLabel={groupLabels[tabKeyForAssetType(pickerCard.assetType)] ?? "资产"}
-          initialAssetId={(matches[pickerCard.assetKey] ?? pickerCard.matchedAsset ?? null)?.asset_id}
-          initialAssetName={(matches[pickerCard.assetKey] ?? pickerCard.matchedAsset ?? null)?.name}
+          initialAssetId={activeMatchForCard(matches, pickerCard)?.asset_id}
+          initialAssetName={activeMatchForCard(matches, pickerCard)?.name}
           projectId={projectId}
           tagName={tagNameForAssetType(pickerCard.assetType)}
           targetName={pickerCard.title}
@@ -591,7 +622,7 @@ function AssetCardGroup({
     <section className="asset-card-group">
       <div className={`asset-image-card-grid ${group === "scene" ? "scene-grid" : "square-grid"}`}>
         {cards.map((card) => {
-          const match = matches[card.assetKey] ?? card.matchedAsset ?? null;
+          const match = activeMatchForCard(matches, card);
           const edit = edits[card.assetKey] ?? cardEditFromCard(card);
           const finalImageUrl = images[card.assetKey] ?? "";
           const imageUrl = finalImageUrl || match?.imageUrl || "";
@@ -900,8 +931,76 @@ function initialMatches(cards: AssetImageCard[]): MatchState {
   const matches: MatchState = {};
   for (const card of cards) {
     if (card.matchedAsset) matches[card.assetKey] = card.matchedAsset;
+    else {
+      const referenceMatch = matchFromReferenceImage(card);
+      if (referenceMatch) matches[card.assetKey] = referenceMatch;
+    }
   }
   return matches;
+}
+
+async function loadDefaultReferenceMatches(
+  cards: AssetImageCard[],
+  templates: DefaultReferenceTemplates,
+  projectId?: string,
+): Promise<MatchState> {
+  const templatesByGroup = new Map<TabKey, string>();
+  for (const card of cards) {
+    if (card.matchedAsset || card.referenceImageRef) continue;
+    const group = tabKeyForAssetType(card.assetType);
+    const templateName = templates[group];
+    if (templateName) templatesByGroup.set(group, templateName);
+  }
+  if (!templatesByGroup.size) return {};
+
+  const assetsByGroup = new Map<TabKey, AssetRecord>();
+  await Promise.all(Array.from(templatesByGroup.entries()).map(async ([group, templateName]) => {
+    const searchScope = assetSearchScopeForProject(projectId);
+    const items = await searchAssets({
+      ...searchScope,
+      names: [templateName],
+      mime_type: "image/*",
+      limit: 10,
+    });
+    const asset = items.find((item) => item.name === templateName) ?? items[0];
+    if (asset) assetsByGroup.set(group, asset);
+  }));
+
+  const matches: MatchState = {};
+  for (const card of cards) {
+    if (card.matchedAsset || card.referenceImageRef) continue;
+    const asset = assetsByGroup.get(tabKeyForAssetType(card.assetType));
+    if (!asset) continue;
+    matches[card.assetKey] = {
+      asset_id: asset.asset_id,
+      name: asset.name,
+      imageRef: imageRefFromAsset(asset),
+      imageUrl: assetImageUrl(asset),
+      appearanceDescription: assetAppearanceDescription(asset),
+    };
+  }
+  return matches;
+}
+
+function matchFromReferenceImage(card: AssetImageCard): AssetMatch | undefined {
+  const imageRef = card.referenceImageRef;
+  if (!imageRef || imageRef.kind !== "asset" || !imageRef.asset_id) return undefined;
+  return {
+    asset_id: imageRef.asset_id,
+    name: card.referenceSource === "default_template" ? "默认参考资产" : imageRef.asset_id,
+    imageRef,
+    appearanceDescription: card.referenceAppearanceDescription,
+  };
+}
+
+function defaultReferenceTemplatesFromOptions(options: Record<string, unknown> | undefined): DefaultReferenceTemplates {
+  const raw = recordValue(options?.default_reference_templates);
+  if (!raw) return {};
+  return {
+    character: textValue(raw.character) || textValue(raw.characters),
+    scene: textValue(raw.scene) || textValue(raw.scenes) || textValue(raw.asset) || textValue(raw.assets),
+    prop: textValue(raw.prop) || textValue(raw.props),
+  };
 }
 
 function initialCardEdits(cards: AssetImageCard[]): CardEditsState {
@@ -939,8 +1038,15 @@ function editedPromptResults(cards: AssetImageCard[], edits: CardEditsState, mat
   return cards.map((card) => editedPromptResult(
     card,
     edits[card.assetKey] ?? cardEditFromCard(card),
-    matches[card.assetKey] ?? card.matchedAsset ?? null,
+    activeMatchForCard(matches, card),
   ));
+}
+
+function activeMatchForCard(matchState: MatchState, card: AssetImageCard): AssetMatch | null {
+  if (Object.prototype.hasOwnProperty.call(matchState, card.assetKey)) {
+    return matchState[card.assetKey] ?? null;
+  }
+  return card.matchedAsset ?? null;
 }
 
 async function findAssetNameConflicts(plans: AssetUploadPlan[], projectId?: string): Promise<AssetNameConflictDialog | null> {

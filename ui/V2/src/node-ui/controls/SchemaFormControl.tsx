@@ -1,11 +1,12 @@
 import { type ChangeEvent, useEffect, useMemo, useState } from "react";
 
-import { listAssetCollections, listAssetTags, searchAssets, uploadAsset } from "../../api/assets";
+import { downloadAssetContent, listAssetCollections, listAssetTags, searchAssets, uploadAsset } from "../../api/assets";
 import { listProjects } from "../../api/projects";
 import type { AssetCollection, AssetRecord, AssetScope, AssetTag, JsonSchema, NodeUiControlConfig, ProjectRecord, WorkflowNodeSpec } from "../../api/types";
 import { buildSchemaFields, type SchemaField } from "../../utils/display";
 import type { NodeUiControlProps } from "../types";
 import { assetSearchScopeForProject } from "./assetPicker";
+import { EpisodeContextControl } from "./EpisodeContextControl";
 
 interface ImageRef {
   kind: "asset" | "data_uri";
@@ -33,6 +34,7 @@ export function SchemaFormControl({ busy, config, node, nodeSpec, projectId, sna
   const nodeConfig = recordValue(nodeSpec?.config);
   const title = readText(node.metadata?.title) || readText(nodeConfig?.title) || "填写运行输入";
   const description = readText(node.metadata?.description) || readText(nodeConfig?.description);
+  const hasDropdownAssetPicker = fields.some((field) => fieldConfigs[field.key]?.control_id === "ui.input.asset_picker.v1" && fieldConfigs[field.key]?.variant === "dropdown");
 
   useEffect(() => {
     setValues(initialValues(fields));
@@ -51,7 +53,7 @@ export function SchemaFormControl({ busy, config, node, nodeSpec, projectId, sna
   }
 
   return (
-    <section className="interaction-panel schema-form-control">
+    <section className={hasDropdownAssetPicker ? "interaction-panel schema-form-control asset-dropdown-form" : "interaction-panel schema-form-control"}>
       <div>
         <p className="eyebrow">{readonly ? "参数快照" : "等待输入"}</p>
         <h3>{title}</h3>
@@ -556,6 +558,49 @@ function AssetPickerField({
   onChange: (value: FormValue) => void;
 }) {
   const option = controlOptionReader(config);
+  if (config?.variant === "dropdown") {
+    return (
+      <AssetPickerDropdownField
+        assetType={stringOption(option("asset_type"))}
+        field={field}
+        filterTagNames={stringArrayOption(option("filter_tag_names"))}
+        placeholder={readText(option("placeholder")) || "请选择资产"}
+        previewControlId={readText(option("preview_control_id"))}
+        projectId={projectId}
+        readonly={readonly}
+        value={value}
+        onChange={onChange}
+      />
+    );
+  }
+  return (
+    <AssetPickerListField
+      config={config}
+      field={field}
+      projectId={projectId}
+      readonly={readonly}
+      value={value}
+      onChange={onChange}
+    />
+  );
+}
+
+function AssetPickerListField({
+  config,
+  field,
+  projectId,
+  readonly,
+  value,
+  onChange,
+}: {
+  config?: NodeUiControlConfig;
+  field: SchemaField;
+  projectId?: string;
+  readonly: boolean;
+  value: FormValue | undefined;
+  onChange: (value: FormValue) => void;
+}) {
+  const option = controlOptionReader(config);
   const [open, setOpen] = useState(false);
   const [preview, setPreview] = useState<AssetRefPreview | undefined>(undefined);
   const selectedAssetId = typeof value === "string" ? value : "";
@@ -595,6 +640,139 @@ function AssetPickerField({
   );
 }
 
+function AssetPickerDropdownField({
+  assetType,
+  field,
+  filterTagNames,
+  placeholder,
+  previewControlId,
+  projectId,
+  readonly,
+  value,
+  onChange,
+}: {
+  assetType?: string;
+  field: SchemaField;
+  filterTagNames: string[];
+  placeholder: string;
+  previewControlId?: string;
+  projectId?: string;
+  readonly: boolean;
+  value: FormValue | undefined;
+  onChange: (value: FormValue) => void;
+}) {
+  const [assets, setAssets] = useState<AssetRecord[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState("");
+  const [preview, setPreview] = useState<Record<string, unknown> | null>(null);
+  const [previewMessage, setPreviewMessage] = useState("");
+  const selectedAssetId = typeof value === "string" ? value : "";
+  const searchScope = assetSearchScopeForProject(projectId);
+  const configuredTagNamesKey = stringArrayKey(filterTagNames);
+  const configuredTagNames = useMemo(() => stringArrayFromKey(configuredTagNamesKey), [configuredTagNamesKey]);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setMessage("");
+    searchAssets({
+      ...searchScope,
+      asset_type: assetType,
+      tag_names: configuredTagNames.length ? configuredTagNames : undefined,
+      limit: 200,
+    }).then((items) => {
+      if (active) setAssets(items);
+    }).catch((error) => {
+      if (active) setMessage(readableError(error, "资产列表暂不可用。"));
+    }).finally(() => {
+      if (active) setLoading(false);
+    });
+    return () => {
+      active = false;
+    };
+  }, [assetType, configuredTagNames, searchScope.project_id, searchScope.scope]);
+
+  useEffect(() => {
+    let active = true;
+    setPreview(null);
+    setPreviewMessage("");
+    if (previewControlId !== "ui.display.episode_context.v1" || !selectedAssetId) return () => {
+      active = false;
+    };
+    const selectedAsset = assets.find((asset) => asset.asset_id === selectedAssetId);
+    if (!selectedAsset) return () => {
+      active = false;
+    };
+    const loadPreview = async () => {
+      try {
+        const text = selectedAsset.text_content && selectedAsset.text_content.trim()
+          ? selectedAsset.text_content
+          : await assetContentText(selectedAsset, projectId);
+        const parsed = JSON.parse(text) as unknown;
+        if (!active) return;
+        if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+          setPreview(parsed as Record<string, unknown>);
+        } else {
+          setPreviewMessage("集信息资产内容不是可预览的 JSON。");
+        }
+      } catch {
+        if (active) setPreviewMessage("暂时无法预览该集信息。");
+      }
+    };
+    void loadPreview();
+    return () => {
+      active = false;
+    };
+  }, [assets, previewControlId, projectId, selectedAssetId]);
+
+  return (
+    <fieldset className="form-field asset-picker-dropdown-field" title={field.helpText}>
+      <legend>{field.label}{field.required ? " *" : ""}</legend>
+      <select
+        aria-label={field.label}
+        disabled={readonly || loading}
+        value={selectedAssetId}
+        onChange={(event) => onChange(event.target.value)}
+      >
+        <option value="">{loading ? "正在加载集信息资产..." : placeholder}</option>
+        {assets.map((asset) => (
+          <option key={asset.asset_id} value={asset.asset_id}>
+            {asset.name}
+          </option>
+        ))}
+      </select>
+      {message ? <small className="form-error">{message}</small> : null}
+      {!message && !loading && assets.length === 0 ? <small>没有找到符合条件的资产。</small> : null}
+      {!message && !loading && assets.length > 0 ? <small>已加载 {assets.length} 个可用集信息资产</small> : null}
+      {preview ? (
+        <div className="asset-picker-episode-preview">
+          <EpisodeContextControl
+            config={{ control_id: "ui.display.episode_context.v1", variant: "summary_catalog", mode: "readonly" }}
+            node={{
+              node_id: `${field.key}_preview`,
+              status: "succeeded",
+              output_snapshot: preview,
+              metadata: {},
+            }}
+            slot="output"
+            value={preview}
+          />
+        </div>
+      ) : null}
+      {previewMessage ? <small>{previewMessage}</small> : null}
+    </fieldset>
+  );
+}
+
+function contentProjectId(asset: AssetRecord, fallbackProjectId?: string): string | undefined {
+  return asset.scope === "project" ? asset.project_id ?? fallbackProjectId : undefined;
+}
+
+async function assetContentText(asset: AssetRecord, projectId?: string): Promise<string> {
+  const blob = await downloadAssetContent(asset.asset_id, contentProjectId(asset, projectId));
+  return blob.text();
+}
+
 interface AssetRefPreview {
   label: string;
   subtitle?: string;
@@ -632,10 +810,9 @@ function AssetPickerDialog({
   const selectedProjectName = selectedProject?.name?.trim() || (selectedProjectId === "global" ? "全局项目" : "项目资产");
   const libraryScope = assetLibraryScope(selectedProjectId);
   const libraryProjectId = libraryScope === "combined" ? selectedProjectId : undefined;
-  const configuredTagNames = useMemo(
-    () => Array.from(new Set(filterTagNames.map((name) => name.trim()).filter(Boolean))),
-    [filterTagNames],
-  );
+  const configuredTagNamesKey = stringArrayKey(filterTagNames);
+  const configuredTagNames = useMemo(() => stringArrayFromKey(configuredTagNamesKey), [configuredTagNamesKey]);
+  const tagIdsKey = stringArrayKey(tagIds);
 
   useEffect(() => {
     const nextProjectId = initialAssetLibraryProjectId(projectId);
@@ -701,7 +878,7 @@ function AssetPickerDialog({
     return () => {
       active = false;
     };
-  }, [assetType, configuredTagNames, keyword, libraryProjectId, libraryScope, tagIds]);
+  }, [assetType, configuredTagNames, keyword, libraryProjectId, libraryScope, tagIdsKey]);
 
   function openProjectDialog() {
     setDraftProjectId(selectedProjectId);
@@ -977,6 +1154,16 @@ function stringArrayOption(value: unknown): string[] {
   if (Array.isArray(value)) return value.map((item) => String(item).trim()).filter(Boolean);
   if (typeof value === "string" && value.trim()) return [value.trim()];
   return [];
+}
+
+const STRING_ARRAY_KEY_SEPARATOR = "\u001f";
+
+function stringArrayKey(values: string[]): string {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean))).join(STRING_ARRAY_KEY_SEPARATOR);
+}
+
+function stringArrayFromKey(key: string): string[] {
+  return key ? key.split(STRING_ARRAY_KEY_SEPARATOR) : [];
 }
 
 function isJsonSchema(value: unknown): value is JsonSchema {

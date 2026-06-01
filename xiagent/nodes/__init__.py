@@ -48,6 +48,9 @@ from xiagent.nodes.tools.merge_segment_storyboard_descriptions import (
 from xiagent.nodes.tools.prepare_segment_storyboard_inputs import (
     PrepareSegmentStoryboardInputsNode,
 )
+from xiagent.nodes.tools.prepare_storyboard_panel_cards import (
+    PrepareStoryboardPanelCardsNode,
+)
 from xiagent.nodes.tools.complete_asset_images import CompleteAssetImagesNode
 from xiagent.nodes.tools.enrich_characters import EnrichCharactersNode
 from xiagent.nodes.tools.episode_metadata import (
@@ -140,6 +143,7 @@ def build_node_registry(settings: Settings) -> NodeRegistry:
     registry.register(MergeAssetImagesNode())
     registry.register(MergeSegmentStoryboardDescriptionsNode())
     registry.register(PrepareSegmentStoryboardInputsNode())
+    registry.register(PrepareStoryboardPanelCardsNode())
     registry.register(CompleteAssetImagesNode())
     registry.register(ScriptSplitNode())
     registry.register(AssembleSegmentContextNode())

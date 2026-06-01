@@ -27,14 +27,16 @@
 | `ui.display.value.v1` | 通用值展示 | `ValueDisplayControl` |
 | `ui.display.image_candidates.v1` | 图片候选列表展示 | `ImageCandidatesControl` |
 | `ui.display.image_viewer.v1` | 图片输出缩略图与原图弹窗查看 | `ImageViewerControl` |
+| `ui.display.episode_context.v1` | 集信息与资产目录只读展示 | `EpisodeContextControl` |
 | `ui.choice.image_three.v1` | 图片三选一交互 | `ImageChoiceThreeControl` |
 | `ui.interaction.approval.v1` | 人工审批交互 | `ApprovalControl` |
+| `ui.interaction.storyboard_panel_cards.v1` | 分镜汇总卡片、提示词与参考图维护 | `StoryboardPanelCardsControl` |
 | `ui.input.schema_form.v1` | 起始输入和等待输入的 schema 表单 | `SchemaFormControl` |
 | `ui.input.asset_image_picker.v1` | schema 表单内的资产图片字段选择与上传 | `SchemaFormControl` 字段控件 |
 | `ui.input.asset_picker.v1` | schema 表单内的单资产选择字段 | `SchemaFormControl` 字段控件 |
 | `ui.fallback.schema_form.v1` | schema 表单 fallback | `SchemaFormControl` |
 
-`ui.choice.image_three.v1` 当前支持 `equal_grid`、`hero_list`、`hover_focus` 三个 V2 变体名称；工作流和节点默认配置必须使用后端 manifest 中存在的实际变体名。
+`ui.choice.image_three.v1` 当前支持 `equal_grid`、`hero_list`、`hover_focus` 三个 V2 变体名称；`ui.input.asset_picker.v1` 支持 `list` 弹窗列表和 `dropdown` 直接下拉两个变体。工作流和节点默认配置必须使用后端 manifest 中存在的实际变体名。
 
 ## 后端契约边界
 

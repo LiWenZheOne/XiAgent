@@ -63,9 +63,7 @@ def test_orchestration_workflow_node_list(test_settings) -> None:
         "describe_panels",
         "merge_segment_descriptions",
         "review_storyboard_prompt",
-        "extract_panel_image_urls",
-        "assemble_prompt_v2",
-        "generate_image_v2",
+        "prepare_storyboard_panel_cards",
         "review_storyboard_image",
     ]
     assert {node_id: node["ref"] for node_id, node in nodes_by_id.items()} == {
@@ -77,9 +75,7 @@ def test_orchestration_workflow_node_list(test_settings) -> None:
         "describe_panels": "ai.parallel_deepseek_structured_json.v1",
         "merge_segment_descriptions": "tool.merge_segment_storyboard_descriptions.v1",
         "review_storyboard_prompt": "system.human_approval.v1",
-        "extract_panel_image_urls": "ai.deepseek_structured_json.v1",
-        "assemble_prompt_v2": "tool.storyboard_prompt_assembler.v1",
-        "generate_image_v2": "ai.runninghub_image_to_image.v1",
+        "prepare_storyboard_panel_cards": "tool.prepare_storyboard_panel_cards.v1",
         "review_storyboard_image": "system.human_approval.v1",
     }
 
@@ -99,10 +95,8 @@ def test_orchestration_workflow_edges_are_linear_dag(test_settings) -> None:
         {"from": "prepare_segment_storyboard_inputs", "to": "describe_panels"},
         {"from": "describe_panels", "to": "merge_segment_descriptions"},
         {"from": "merge_segment_descriptions", "to": "review_storyboard_prompt"},
-        {"from": "review_storyboard_prompt", "to": "extract_panel_image_urls"},
-        {"from": "extract_panel_image_urls", "to": "assemble_prompt_v2"},
-        {"from": "assemble_prompt_v2", "to": "generate_image_v2"},
-        {"from": "generate_image_v2", "to": "review_storyboard_image"},
+        {"from": "review_storyboard_prompt", "to": "prepare_storyboard_panel_cards"},
+        {"from": "prepare_storyboard_panel_cards", "to": "review_storyboard_image"},
         {"from": "review_storyboard_image", "to": "END"},
     ]
 
@@ -383,61 +377,60 @@ def test_merge_segment_descriptions_output_schema(test_settings) -> None:
     validate_workflow_contract(contract, build_node_registry(test_settings))
 
 
-def test_extract_panel_image_urls_output_schema(test_settings) -> None:
+def test_prepare_storyboard_panel_cards_output_schema(test_settings) -> None:
     contract = load_workflow_file(ORCHESTRATION_WORKFLOW_PATH)
-    schema = _nodes_by_id(contract)["extract_panel_image_urls"]["outputs"]
+    node = _nodes_by_id(contract)["prepare_storyboard_panel_cards"]
+    schema = node["outputs"]
 
     assert schema["type"] == "object"
-    for key in ["panel_image_refs", "image_refs", "description", "style", "constraints"]:
-        assert key in schema["required"]
+    assert schema["required"] == ["panel_cards"]
+    assert node["inputs"]["segment_descriptions"] == {
+        "from": "$nodes.merge_segment_descriptions.output.segment_descriptions",
+    }
+    assert node["inputs"]["storyboard_items"] == {
+        "from": "$nodes.prepare_segment_storyboard_inputs.output.items",
+    }
 
     validate_json_value(
         schema,
         {
-            "panel_image_refs": [
+            "panel_cards": [
                 {
-                    "full_name": "林冲",
-                    "image_ref": {
-                        "kind": "data_uri",
-                        "data": "data:image/png;base64,bGluY2hvbmc=",
-                        "role": "reference",
-                    },
-                    "variant": "囚服雪地",
+                    "card_id": "segment-0-panel-0",
+                    "segment_index": 0,
+                    "panel_index": 0,
+                    "segment_title": "雪夜",
+                    "description": "林冲披旧毡笠在风雪中前行。",
+                    "style": "电影感国风动画",
+                    "constraints": "保持角色服装发型一致。",
+                    "prompt": "分镜描述\n林冲披旧毡笠在风雪中前行。",
+                    "image_refs": [
+                        {
+                            "kind": "data_uri",
+                            "data": "data:image/png;base64,bGluY2hvbmc=",
+                            "role": "reference",
+                        }
+                    ],
+                    "reference_assets": [
+                        {
+                            "full_name": "林冲",
+                            "image_ref": {
+                                "kind": "data_uri",
+                                "data": "data:image/png;base64,bGluY2hvbmc=",
+                                "role": "reference",
+                            },
+                            "variant": "囚服雪地",
+                        }
+                    ],
+                    "aspect_ratio": "16:9",
+                    "resolution": "2K",
                 }
             ],
-            "image_refs": [
-                {
-                    "kind": "data_uri",
-                    "data": "data:image/png;base64,bGluY2hvbmc=",
-                    "role": "reference",
-                }
-            ],
-            "description": "林冲披旧毡笠在风雪中前行。",
-            "style": "电影感国风动画",
-            "constraints": "保持角色服装发型一致。",
-        },
-    )
-    validate_json_value(
-        schema,
-        {
-            "panel_image_refs": [],
-            "image_refs": [],
-            "description": "空场景无角色。",
-            "style": "默认风格",
-            "constraints": "无约束。",
         },
     )
 
     with pytest.raises(ValidationError):
-        validate_json_value(
-            schema,
-            {
-                "panel_image_refs": [],
-                "image_refs": [],
-                "style": "默认风格",
-                "constraints": "无约束。",
-            },
-        )
+        validate_json_value(schema, {})
 
     validate_workflow_contract(contract, build_node_registry(test_settings))
 
@@ -445,16 +438,32 @@ def test_extract_panel_image_urls_output_schema(test_settings) -> None:
 def test_review_storyboard_image_output_schema(test_settings) -> None:
     contract = load_workflow_file(ORCHESTRATION_WORKFLOW_PATH)
     schema = _nodes_by_id(contract)["review_storyboard_image"]["outputs"]
+    node = _nodes_by_id(contract)["review_storyboard_image"]
 
     assert schema["type"] == "object"
-    assert "decision" in schema["required"]
-    validate_json_value(schema, {"decision": "approve"})
-    validate_json_value(schema, {"decision": "reject"})
+    assert schema["required"] == ["decision", "panel_results"]
+    assert node["name"] == "分镜汇总"
+    assert node["ui"]["controls"]["interaction"]["control_id"] == "ui.interaction.storyboard_panel_cards.v1"
+    validate_json_value(
+        schema,
+        {
+            "decision": "finish",
+            "panel_results": [
+                {
+                    "card_id": "segment-0-panel-0",
+                    "segment_index": 0,
+                    "panel_index": 0,
+                    "prompt": "分镜提示词",
+                    "selected_image_url": "https://cdn.test/storyboard.png",
+                }
+            ],
+        },
+    )
 
     with pytest.raises(ValidationError):
         validate_json_value(
             schema,
-            {"selected_image_url": "https://cdn.test/storyboard.png"},
+            {"decision": "finish"},
         )
 
     validate_workflow_contract(contract, build_node_registry(test_settings))

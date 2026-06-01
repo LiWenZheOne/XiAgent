@@ -8,9 +8,11 @@ import { AssetPickerDialog } from "../node-ui/controls/AssetPickerDialog";
 import { AssetSummaryTableControl } from "../node-ui/controls/AssetSummaryTableControl";
 import { AssetTaskSummaryControl } from "../node-ui/controls/AssetTaskSummaryControl";
 import { ControlLibraryPage } from "../node-ui/ControlLibraryPage";
+import { EpisodeContextControl } from "../node-ui/controls/EpisodeContextControl";
 import { ImageChoiceThreeControl } from "../node-ui/controls/ImageChoiceThreeControl";
 import { SchemaFormControl } from "../node-ui/controls/SchemaFormControl";
 import { ScriptTextInputControl } from "../node-ui/controls/ScriptTextInputControl";
+import { StoryboardPanelCardsControl } from "../node-ui/controls/StoryboardPanelCardsControl";
 import { ValueDisplayControl } from "../node-ui/controls/ValueDisplayControl";
 import { getNodeUiControl, resolveNodeControlConfig, resolveNodeInteractionConfig } from "../node-ui/registry";
 import type { JsonSchema, NodeUiControlConfig, TaskNodeExecution, UiControlDescriptor, WorkflowNodeSpec } from "../api/types";
@@ -216,6 +218,15 @@ const controlDescriptors: UiControlDescriptor[] = [
     tags: ["asset", "image", "cards", "upload"],
     variants: [{ name: "grouped_cards", label: "按资产类型分组的补图卡片", tags: [], modes: ["interactive", "readonly"], required_bindings: [] }],
     description: "按资产类型分组的补图卡片。",
+  },
+  {
+    control_id: "ui.interaction.storyboard_panel_cards.v1",
+    version: "1.0.0",
+    name: "Storyboard Panel Cards",
+    kind: "interaction",
+    tags: ["storyboard", "panel", "image", "cards"],
+    variants: [{ name: "panel_review", label: "分镜汇总卡片", tags: [], modes: ["interactive", "readonly"], required_bindings: [] }],
+    description: "S8 分镜汇总控件。",
   },
   {
     control_id: "ui.interaction.asset_summary_table.v1",
@@ -667,6 +678,165 @@ describe("node-ui controls", () => {
     expect(String(libraryUploadForms[0].get("tag_ids"))).toContain("tag-character");
     expect(String(libraryUploadForms[0].get("tag_ids"))).toContain("tag-linchong");
     expect(fetchMock.mock.calls.some(([url]) => url === "/api/assets/text")).toBe(false);
+  });
+
+  it("renders storyboard panel cards and submits edited panel results", async () => {
+    const onSubmit = vi.fn();
+    render(
+      <StoryboardPanelCardsControl
+        config={{ control_id: "ui.interaction.storyboard_panel_cards.v1", variant: "panel_review", mode: "interactive" }}
+        node={{
+          node_execution_id: "exec-storyboard-panel",
+          node_id: "review_storyboard_image",
+          node_ref: "system.human_approval.v1",
+          status: "waiting",
+          input_snapshot: {
+            panel_cards: [
+              {
+                card_id: "segment-0-panel-0",
+                segment_index: 0,
+                panel_index: 0,
+                segment_title: "雪夜",
+                description: "林冲踏雪前行。",
+                style: "国风漫画",
+                constraints: "保持囚服。",
+                prompt: "分镜描述\n林冲踏雪前行。",
+                image_refs: [{ kind: "data_uri", data: "data:image/png;base64,cmVm", role: "reference" }],
+                reference_assets: [
+                  {
+                    full_name: "林冲",
+                    variant: "囚服",
+                    image_ref: { kind: "data_uri", data: "data:image/png;base64,cmVm", role: "reference" },
+                  },
+                ],
+                aspect_ratio: "16:9",
+                resolution: "2K",
+              },
+            ],
+          },
+        }}
+        onSubmit={onSubmit}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "雪夜" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "林冲 参考图" })).toHaveAttribute("src", "data:image/png;base64,cmVm");
+    await userEvent.clear(screen.getByLabelText("分段提示词"));
+    await userEvent.type(screen.getByLabelText("分段提示词"), "新的分镜提示词");
+    await userEvent.click(screen.getByRole("button", { name: "完成并继续" }));
+
+    expect(onSubmit).toHaveBeenCalledWith({
+      decision: "finish",
+      panel_results: [
+        expect.objectContaining({
+          card_id: "segment-0-panel-0",
+          prompt: "新的分镜提示词",
+        }),
+      ],
+    });
+  });
+
+  it("uses configured default reference assets in asset image cards when no match exists", async () => {
+    const onSubmit = vi.fn();
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.startsWith("/api/assets/tags")) {
+        return jsonResponse({ items: [] });
+      }
+      if (url.startsWith("/api/assets/search")) {
+        const called = new URL(url, "http://localhost");
+        const names = called.searchParams.get("names") ?? "";
+        if (names === "塞雷2d角色模板") {
+          return jsonResponse({
+            items: [{
+              asset_id: "asset-default-character",
+              asset_type: "file",
+              name: "塞雷2d角色模板",
+              scope: "global",
+              mime_type: "image/png",
+              size_bytes: 128,
+              storage_uri: "assets/default-character.png",
+              metadata: {
+                public_url: "https://assets.local.invalid/default-character.png",
+                appearance_description: "默认角色模板外貌。",
+              },
+              created_at: "2026-05-27T10:00:00Z",
+            }],
+          });
+        }
+        return jsonResponse({ items: [] });
+      }
+      if (url === "/api/assets/generate-image") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+        expect(body.prompt_result).toMatchObject({
+          reference_image_ref: {
+            kind: "asset",
+            asset_id: "asset-default-character",
+            role: "reference",
+          },
+          reference_appearance_description: "默认角色模板外貌。",
+        });
+        return jsonResponse({ generation_id: "image-generation-default", status: "queued" });
+      }
+      if (url === "/api/assets/generate-image/image-generation-default") {
+        return jsonResponse({
+          generation_id: "image-generation-default",
+          status: "succeeded",
+          result: {
+            full_name: "鲁智深",
+            image_url: "https://cdn.example.com/generated-luzhishen.png",
+            source: "ai_generated",
+          },
+        });
+      }
+      return jsonResponse({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const cardNode: TaskNodeExecution = {
+      node_execution_id: "exec-default-reference",
+      node_id: "upload_images",
+      node_ref: "system.human_approval.v1",
+      status: "waiting",
+      input_snapshot: {
+        characters: [{ full_name: "鲁智深", aliases: ["花和尚"], summary: "梁山好汉。" }],
+        enriched_characters: [{ full_name: "鲁智深", matched: false }],
+        variant_results: [{ full_name: "鲁智深", new_variant_name: "鲁智深_僧衣" }],
+        accessory_results: [{ full_name: "鲁智深", new_accessories: [] }],
+        prompt_results: [{ full_name: "鲁智深_僧衣", prompt: "生成僧衣角色" }],
+        approved_assets: {
+          characters: [{ type: "character", name: "鲁智深", matched: false, variant_name: "僧衣" }],
+          assets: [],
+          props: [],
+        },
+      },
+      metadata: {},
+    };
+
+    render(
+      <AssetImageCardsControl
+        config={{
+          control_id: "ui.interaction.asset_image_cards.v1",
+          variant: "grouped_cards",
+          mode: "interactive",
+          options: {
+            default_reference_templates: {
+              character: "塞雷2d角色模板",
+            },
+          },
+        }}
+        node={cardNode}
+        onSubmit={onSubmit}
+      />,
+    );
+
+    expect(await screen.findByText("塞雷2d角色模板")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "生成" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/assets/generate-image",
+      expect.objectContaining({ method: "POST" }),
+    ));
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 
   it("shows a custom dialog with the duplicated asset name when library save conflicts", async () => {
@@ -1650,7 +1820,7 @@ describe("node-ui controls", () => {
     });
   });
 
-  it("renders node user input through schema form and the reusable text asset picker", async () => {
+  it("renders node user input through schema form and the reusable text asset dropdown", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
       const parsed = new URL(String(input), "http://localhost");
       if (parsed.pathname === "/api/projects") {
@@ -1680,11 +1850,42 @@ describe("node-ui controls", () => {
               project_id: "project-1",
               mime_type: null,
               size_bytes: 0,
+              text_content: JSON.stringify({
+                episode_name: "23、私放晁天王",
+                episode_summary: "宋江私放晁盖，官府追查。",
+                source_script: "宋江听闻官府要捉晁盖，连夜报信。",
+                asset_catalog: {
+                  approved_assets: {
+                    characters: [{ name: "宋江" }, { name: "晁盖" }],
+                    assets: [{ name: "郓城县" }],
+                    props: [{ name: "书信" }],
+                  },
+                },
+                episode_asset_id: "asset-episode-23",
+              }),
               metadata: {},
               created_at: "2026-05-31T09:00:00Z",
             },
           ],
         });
+      }
+      if (parsed.pathname === "/api/assets/asset-episode-23/content") {
+        return Promise.resolve(new Response(JSON.stringify({
+          episode_name: "23、私放晁天王",
+          episode_summary: "宋江私放晁盖，官府追查。",
+          source_script: "宋江听闻官府要捉晁盖，连夜报信。",
+          asset_catalog: {
+            approved_assets: {
+              characters: [{ name: "宋江" }, { name: "晁盖" }],
+              assets: [{ name: "郓城县" }],
+              props: [{ name: "书信" }],
+            },
+          },
+          episode_asset_id: "asset-episode-23",
+        }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }));
       }
       return jsonResponse({ items: [] });
     });
@@ -1707,50 +1908,110 @@ describe("node-ui controls", () => {
       metadata: { input_schema: inputSchema, title: "选择集信息资产" },
     };
 
-    render(
-      <SchemaFormControl
-        config={{
-          control_id: "ui.input.schema_form.v1",
-          variant: "default",
-          mode: "input",
-          options: {
-            fields: {
-              episode_asset_id: {
-                control_id: "ui.input.asset_picker.v1",
-                variant: "list",
-                mode: "input",
-                asset_type: "text",
-                filter_tag_names: ["集元数据"],
-                button_label: "选择集",
-                dialog_title: "选择集信息资产",
-              },
-            },
+    const dropdownConfig: NodeUiControlConfig = {
+      control_id: "ui.input.schema_form.v1",
+      variant: "default",
+      mode: "input",
+      options: {
+        fields: {
+          episode_asset_id: {
+            control_id: "ui.input.asset_picker.v1",
+            variant: "dropdown",
+            mode: "input",
+            asset_type: "text",
+            filter_tag_names: ["集元数据"],
+            placeholder: "请选择集信息资产",
+            preview_control_id: "ui.display.episode_context.v1",
           },
-        }}
+        },
+      },
+    };
+    const assetSearchCallCount = () => fetchMock.mock.calls.filter(([calledUrl]) => {
+      const called = new URL(String(calledUrl), "http://localhost");
+      return called.pathname === "/api/assets/search";
+    }).length;
+
+    const { rerender } = render(
+      <SchemaFormControl
+        config={dropdownConfig}
         node={inputNode}
         onSubmit={onSubmit}
-        projectId="project-1"
+        projectId="global"
       />,
     );
 
-    await userEvent.click(screen.getByRole("button", { name: "选择集" }));
-    expect(await screen.findByRole("dialog", { name: "选择集信息资产" })).toBeInTheDocument();
+    const picker = await screen.findByRole("combobox", { name: "集信息资产" });
     await waitFor(() => {
       expect(fetchMock.mock.calls.some(([calledUrl]) => {
         const called = new URL(String(calledUrl), "http://localhost");
         return called.pathname === "/api/assets/search"
           && called.searchParams.get("asset_type") === "text"
+          && called.searchParams.get("scope") === "combined"
+          && called.searchParams.get("project_id") === "global"
           && called.searchParams.get("tag_names") === "集元数据";
       })).toBe(true);
     });
-    await userEvent.click(await screen.findByRole("button", { name: /23、私放晁天王/ }));
-    expect(screen.getByText("23、私放晁天王")).toBeInTheDocument();
+    await screen.findByRole("option", { name: "23、私放晁天王" });
+    const callsAfterInitialLoad = assetSearchCallCount();
+    rerender(
+      <SchemaFormControl
+        config={{ ...dropdownConfig, options: { ...dropdownConfig.options } }}
+        node={inputNode}
+        onSubmit={onSubmit}
+        projectId="global"
+      />,
+    );
+    expect(assetSearchCallCount()).toBe(callsAfterInitialLoad);
+    await userEvent.selectOptions(picker, "asset-episode-23");
+    expect(await screen.findByRole("heading", { name: "23、私放晁天王" })).toBeInTheDocument();
+    expect(screen.getByText(/宋江私放晁盖/)).toBeInTheDocument();
+    expect(screen.getByText("晁盖")).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "提交并继续" }));
 
     expect(onSubmit).toHaveBeenCalledWith({
       episode_asset_id: "asset-episode-23",
     });
+  });
+
+  it("renders loaded episode context with summary, script, and asset catalog", () => {
+    const nodeExecution: TaskNodeExecution = {
+      node_execution_id: "exec-episode-context",
+      node_id: "load_episode_metadata",
+      node_ref: "tool.episode_metadata_from_asset.v1",
+      status: "succeeded",
+      input_snapshot: {},
+      output_snapshot: {
+        episode_name: "24、夺命芦苇荡",
+        episode_summary: "何涛率官兵进入芦苇荡，阮氏兄弟设伏取胜。",
+        source_script: "何涛领兵来到石碣村。阮小七唱歌诱敌。",
+        asset_catalog: {
+          approved_assets: {
+            characters: [{ name: "何涛" }, { full_name: "阮小七" }],
+            assets: [{ name: "芦苇荡" }],
+            props: [{ name: "官船" }],
+          },
+        },
+        episode_asset_id: "asset-episode-24",
+      },
+      metadata: {},
+    };
+
+    render(
+      <EpisodeContextControl
+        config={{ control_id: "ui.display.episode_context.v1", variant: "summary_catalog", mode: "readonly" }}
+        node={nodeExecution}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "24、夺命芦苇荡" })).toBeInTheDocument();
+    expect(screen.getByText(/何涛率官兵进入芦苇荡/)).toBeInTheDocument();
+    expect(screen.getByText(/阮小七唱歌诱敌/)).toBeInTheDocument();
+    expect(screen.getByText("何涛")).toBeInTheDocument();
+    expect(screen.getByText("阮小七")).toBeInTheDocument();
+    expect(screen.getByText("芦苇荡")).toBeInTheDocument();
+    expect(screen.getByText("官船")).toBeInTheDocument();
+    expect(screen.getByText("4")).toBeInTheDocument();
   });
 
   it("renders submitted schema form values with the same controls in readonly mode", () => {

@@ -6,7 +6,7 @@ export interface AssetSearchScope {
 }
 
 export function assetSearchScopeForProject(projectId?: string): AssetSearchScope {
-  if (projectId && projectId !== "global") {
+  if (projectId) {
     return { scope: "combined", project_id: projectId };
   }
   return { scope: "global" };

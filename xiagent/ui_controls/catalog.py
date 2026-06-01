@@ -234,6 +234,49 @@ def build_builtin_ui_control_catalog() -> UiControlCatalog:
                 description="展示角色、地点、道具资产卡片，支持逐卡上传图片并只生成未上传资产。",
             ),
             UiControlDescriptor(
+                control_id="ui.interaction.storyboard_panel_cards.v1",
+                version="1.0.0",
+                name="Storyboard Panel Cards",
+                kind="interaction",
+                tags=("storyboard", "panel", "image", "cards", "generation", "interactive"),
+                variants=(
+                    UiControlVariant(
+                        name="panel_review",
+                        label="分镜汇总卡片",
+                        modes=("interactive", "readonly"),
+                        submit_schema={
+                            "type": "object",
+                            "required": ["decision", "panel_results"],
+                            "properties": {
+                                "decision": {"type": "string", "enum": ["finish"]},
+                                "panel_results": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "required": ["card_id", "segment_index", "panel_index", "prompt"],
+                                        "properties": {
+                                            "card_id": {"type": "string", "minLength": 1},
+                                            "segment_index": {"type": "integer", "minimum": 0},
+                                            "panel_index": {"type": "integer", "minimum": 0},
+                                            "segment_title": {"type": "string"},
+                                            "prompt": {"type": "string", "minLength": 1},
+                                            "image_refs": {"type": "array", "items": {"type": "object"}},
+                                            "reference_assets": {"type": "array", "items": {"type": "object"}},
+                                            "selected_image_url": {"type": "string"},
+                                            "generated_images": {"type": "array", "items": {"type": "object"}},
+                                        },
+                                        "additionalProperties": True,
+                                    },
+                                },
+                                "revision_notes": {"type": "string"},
+                            },
+                            "additionalProperties": True,
+                        },
+                    ),
+                ),
+                description="S8 分镜汇总交互控件，逐分格展示提示词、参考资产和生成图，支持单卡/批量生成与参考图维护。",
+            ),
+            UiControlDescriptor(
                 control_id="ui.display.asset_task_summary.v1",
                 version="1.0.0",
                 name="Asset Task Summary",
@@ -247,6 +290,21 @@ def build_builtin_ui_control_catalog() -> UiControlCatalog:
                     ),
                 ),
                 description="资产编目完成页只读概况控件，支持导出最终资产图像压缩包。",
+            ),
+            UiControlDescriptor(
+                control_id="ui.display.episode_context.v1",
+                version="1.0.0",
+                name="Episode Context",
+                kind="output",
+                tags=("episode", "asset", "catalog", "script", "readonly"),
+                variants=(
+                    UiControlVariant(
+                        name="summary_catalog",
+                        label="集信息与资产目录",
+                        modes=("readonly",),
+                    ),
+                ),
+                description="分镜生成读取集信息后展示剧情概括、原剧本和完整资产目录。",
             ),
             UiControlDescriptor(
                 control_id="ui.interaction.asset_summary_table.v1",
@@ -358,6 +416,19 @@ def build_builtin_ui_control_catalog() -> UiControlCatalog:
                     UiControlVariant(
                         name="list",
                         label="资产列表选择",
+                        modes=("input", "readonly"),
+                        submit_schema={
+                            "type": "object",
+                            "required": ["value"],
+                            "properties": {
+                                "value": {"type": "string", "minLength": 1},
+                            },
+                            "additionalProperties": False,
+                        },
+                    ),
+                    UiControlVariant(
+                        name="dropdown",
+                        label="资产下拉选择",
                         modes=("input", "readonly"),
                         submit_schema={
                             "type": "object",

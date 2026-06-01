@@ -244,6 +244,53 @@ const controlPreviewFixtures: Record<string, ControlPreviewFixture[]> = {
       projectId: "global",
     },
   ],
+  "ui.interaction.storyboard_panel_cards.v1": [
+    {
+      config: { control_id: "ui.interaction.storyboard_panel_cards.v1", variant: "panel_review", mode: "interactive" },
+      node: {
+        node_execution_id: "preview-storyboard-panel-cards",
+        node_id: "review_storyboard_image",
+        node_ref: "system.human_approval.v1",
+        status: "waiting",
+        input_snapshot: {
+          panel_cards: [
+            {
+              card_id: "segment-0-panel-0",
+              segment_index: 0,
+              panel_index: 0,
+              segment_title: "雪夜野猪林",
+              description: "林冲踏雪进入野猪林，远处树影压低。",
+              style: "国风动画漫画分镜，冷色雪夜。",
+              constraints: "保持林冲囚服、毡笠和花枪一致。",
+              prompt: "分镜描述\n林冲踏雪进入野猪林，远处树影压低。\n\n画风\n国风动画漫画分镜，冷色雪夜。",
+              image_refs: [sampleImageRefs[0]],
+              reference_assets: [
+                {
+                  full_name: "林冲",
+                  variant: "囚服",
+                  image_ref: sampleImageRefs[0],
+                  image_url: sampleImageUrls[0],
+                },
+              ],
+              aspect_ratio: "16:9",
+              resolution: "2K",
+              source_item: {
+                index: 0,
+                current_segment: { text: "林冲踏雪进入野猪林。" },
+                neighbor_segments: [],
+                segment_assignment: { segment_index: 0, characters: [{ full_name: "林冲" }], key_props: ["花枪"] },
+              },
+            },
+          ],
+          shared_context: {
+            full_script: "林冲踏雪进入野猪林。",
+            all_segments: [{ index: 0, text: "林冲踏雪进入野猪林。" }],
+          },
+        },
+      },
+      projectId: "global",
+    },
+  ],
   "ui.display.asset_task_summary.v1": [
     {
       config: { control_id: "ui.display.asset_task_summary.v1", variant: "catalog_complete", mode: "readonly" },
@@ -271,6 +318,29 @@ const controlPreviewFixtures: Record<string, ControlPreviewFixture[]> = {
                 source: "library",
               },
             ],
+          },
+        },
+      },
+    },
+  ],
+  "ui.display.episode_context.v1": [
+    {
+      config: { control_id: "ui.display.episode_context.v1", variant: "summary_catalog", mode: "readonly" },
+      node: {
+        node_execution_id: "preview-episode-context",
+        node_id: "load_episode_metadata",
+        node_ref: "tool.episode_metadata_from_asset.v1",
+        status: "succeeded",
+        output_snapshot: {
+          episode_name: "24、夺命芦苇荡",
+          episode_summary: "何涛率官兵进入芦苇荡，阮氏兄弟设伏取胜。",
+          source_script: "何涛领兵来到石碣村。阮小七唱歌诱敌。",
+          asset_catalog: {
+            approved_assets: {
+              characters: [{ name: "何涛" }, { name: "阮小七" }],
+              assets: [{ name: "芦苇荡" }],
+              props: [{ name: "官船" }],
+            },
           },
         },
       },
@@ -429,7 +499,7 @@ const controlPreviewFixtures: Record<string, ControlPreviewFixture[]> = {
           fields: {
             episode_asset_id: {
               control_id: "ui.input.asset_picker.v1",
-              variant: "list",
+              variant: "dropdown",
               mode: "readonly",
               asset_type: "text",
               filter_tag_names: ["集元数据"],

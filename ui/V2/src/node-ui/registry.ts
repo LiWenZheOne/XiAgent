@@ -3,11 +3,13 @@ import { AssetImageCardsControl } from "./controls/AssetImageCardsControl";
 import { AssetSummaryTableControl } from "./controls/AssetSummaryTableControl";
 import { AssetTaskSummaryControl } from "./controls/AssetTaskSummaryControl";
 import { FallbackValueControl } from "./controls/FallbackValueControl";
+import { EpisodeContextControl } from "./controls/EpisodeContextControl";
 import { ImageCandidatesControl } from "./controls/ImageCandidatesControl";
 import { ImageChoiceThreeControl } from "./controls/ImageChoiceThreeControl";
 import { ImageViewerControl } from "./controls/ImageViewerControl";
 import { SchemaFormControl } from "./controls/SchemaFormControl";
 import { ScriptTextInputControl } from "./controls/ScriptTextInputControl";
+import { StoryboardPanelCardsControl } from "./controls/StoryboardPanelCardsControl";
 import { ValueDisplayControl } from "./controls/ValueDisplayControl";
 import type { NodeUiComponent } from "./types";
 
@@ -18,8 +20,10 @@ export const nodeUiRegistry: Record<string, NodeUiComponent> = {
   "ui.choice.image_three.v1": ImageChoiceThreeControl,
   "ui.interaction.approval.v1": ApprovalControl,
   "ui.interaction.asset_image_cards.v1": AssetImageCardsControl,
+  "ui.interaction.storyboard_panel_cards.v1": StoryboardPanelCardsControl,
   "ui.interaction.asset_summary_table.v1": AssetSummaryTableControl,
   "ui.display.asset_task_summary.v1": AssetTaskSummaryControl,
+  "ui.display.episode_context.v1": EpisodeContextControl,
   "ui.input.schema_form.v1": SchemaFormControl,
   "ui.input.script_text.v1": ScriptTextInputControl,
   "ui.fallback.schema_form.v1": SchemaFormControl,

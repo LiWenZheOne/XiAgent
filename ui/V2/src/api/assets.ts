@@ -234,6 +234,7 @@ export interface GenerateAssetImageInput {
 
 export interface GeneratedAssetImage {
   full_name?: string;
+  card_id?: string;
   image_url: string;
   source?: string;
   runninghub_task_id?: string;
@@ -259,6 +260,51 @@ export async function generateAssetImage(input: GenerateAssetImageInput): Promis
     body: JSON.stringify(input),
   });
   return waitForGeneratedAssetImage(job.generation_id);
+}
+
+export interface GenerateStoryboardPanelImageInput {
+  project_id?: string;
+  card_id: string;
+  prompt: string;
+  image_refs: Array<Record<string, unknown>>;
+  negative_prompt?: string;
+  aspect_ratio?: string;
+  resolution?: string;
+}
+
+export async function generateStoryboardPanelImage(input: GenerateStoryboardPanelImageInput): Promise<GeneratedAssetImage> {
+  const job = await apiRequest<ImageGenerationJob>("/api/assets/storyboard-panel-image", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  return waitForGeneratedAssetImage(job.generation_id);
+}
+
+export interface RegenerateStoryboardPanelPromptInput {
+  project_id?: string;
+  card: Record<string, unknown>;
+  item: Record<string, unknown>;
+  shared_context?: Record<string, unknown>;
+  generation_rules?: string;
+  negative_prompt?: string;
+  aspect_ratio?: string;
+  resolution?: string;
+}
+
+export interface RegenerateStoryboardPanelPromptResult {
+  card: Record<string, unknown>;
+  segment_description: Record<string, unknown>;
+}
+
+export async function regenerateStoryboardPanelPrompt(
+  input: RegenerateStoryboardPanelPromptInput,
+): Promise<RegenerateStoryboardPanelPromptResult> {
+  return apiRequest<RegenerateStoryboardPanelPromptResult>("/api/assets/storyboard-panel-prompt", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
 }
 
 async function waitForGeneratedAssetImage(generationId: string): Promise<GeneratedAssetImage> {

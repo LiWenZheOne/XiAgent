@@ -62,6 +62,7 @@ interface SessionState {
 interface TaskRuntimeContext {
   status: string;
   currentNodeLabel: string;
+  segmentCount?: number;
 }
 
 interface WorkflowTemplate {
@@ -585,6 +586,10 @@ function WorkbenchPage({
           <div>
             <dt>当前节点</dt>
             <dd>{selectedTask ? contextCurrentNode : "未记录"}</dd>
+          </div>
+          <div>
+            <dt>剧本分段</dt>
+            <dd>{selectedTask ? formatSegmentCount(runtimeContext?.segmentCount) : "未记录"}</dd>
           </div>
         </dl>
         <div className="hint-card">
@@ -1427,7 +1432,8 @@ function NodeExecutionDetails({
     : resolveNodeControlConfig(node, nodeSpec, snapshot, "output");
   const interactionConfig = resolveNodeInteractionConfig(node, nodeSpec, snapshot);
   const hidesGenericSections = interactionConfig?.control_id === "ui.interaction.asset_summary_table.v1"
-    || interactionConfig?.control_id === "ui.interaction.asset_image_cards.v1";
+    || interactionConfig?.control_id === "ui.interaction.asset_image_cards.v1"
+    || interactionConfig?.control_id === "ui.interaction.storyboard_panel_cards.v1";
   const InteractionControl = interactionConfig ? getNodeUiControl(interactionConfig.control_id) : null;
   const waitingForInteraction = isWaitingNode(node, snapshot);
   const renderedInteractionConfig = interactionConfig && !waitingForInteraction
@@ -2998,6 +3004,7 @@ function nodeActivityText(node: TaskNodeExecution, eventsByNode: Map<string, Tas
 
 function taskRuntimeContext(detail: TaskDetailResponse, orderedNodes: TaskNodeExecution[]): TaskRuntimeContext {
   const status = detail.task.status;
+  const segmentCount = readStoryboardSegmentCount(orderedNodes);
   const activeNode =
     orderedNodes.find((node) => statusLabel(node.status) === "等待用户") ??
     orderedNodes.find((node) => statusLabel(node.status) === "运行中") ??
@@ -3007,19 +3014,34 @@ function taskRuntimeContext(detail: TaskDetailResponse, orderedNodes: TaskNodeEx
     return {
       status,
       currentNodeLabel: nodeDisplayTitle(activeNode, detail.workflow_snapshot),
+      segmentCount,
     };
   }
   if (statusLabel(status) === "成功") {
-    return { status, currentNodeLabel: "已完成" };
+    return { status, currentNodeLabel: "已完成", segmentCount };
   }
   if (detail.task.current_node_id) {
     const node = orderedNodes.find((item) => item.node_id === detail.task.current_node_id);
     return {
       status,
       currentNodeLabel: node ? nodeDisplayTitle(node, detail.workflow_snapshot) : formatFieldLabel(detail.task.current_node_id),
+      segmentCount,
     };
   }
-  return { status, currentNodeLabel: "未记录" };
+  return { status, currentNodeLabel: "未记录", segmentCount };
+}
+
+function readStoryboardSegmentCount(nodes: TaskNodeExecution[]): number | undefined {
+  const splitNode = nodes.find((node) => node.node_id === "split_script");
+  const splitOutput = recordValue(splitNode?.output_snapshot);
+  const count = splitOutput?.count;
+  if (typeof count === "number" && Number.isFinite(count)) return count;
+  const segments = splitOutput?.segments;
+  return Array.isArray(segments) ? segments.length : undefined;
+}
+
+function formatSegmentCount(count: number | undefined): string {
+  return count === undefined ? "待生成" : `${count} 段`;
 }
 
 function nodeShouldDefaultExpand(node: TaskNodeExecution): boolean {
@@ -3064,6 +3086,7 @@ function nodeSectionDefaultOpenValue(config: unknown): boolean | undefined {
 function nodeSectionVisible(nodeSpec: WorkflowNodeSpec | undefined, section: "input" | "output" | "events", fallback: boolean): boolean {
   const config = recordValue(nodeSpec?.ui?.sections?.[section]);
   if (!config) return fallback;
+  if (config.remove === true) return false;
   if (typeof config.visible === "boolean") return config.visible;
   if (typeof config.hidden === "boolean") return !config.hidden;
   return fallback;
