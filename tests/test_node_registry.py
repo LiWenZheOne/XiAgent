@@ -342,6 +342,14 @@ async def test_prepare_storyboard_panel_cards_builds_cards() -> None:
 
     card = result.output["panel_cards"][0]
     assert card["card_id"] == "segment-0-panel-0"
+    assert card["reference_images"] == [
+        {
+            "label": "林冲",
+            "variant": "囚服",
+            "image_ref": {"kind": "asset", "asset_id": "asset-linchong", "role": "reference"},
+            "source": "asset",
+        }
+    ]
     assert card["reference_assets"][0]["full_name"] == "林冲"
     assert card["image_refs"] == [{"kind": "asset", "asset_id": "asset-linchong", "role": "reference"}]
     assert "林冲踏雪前行" in card["prompt"]

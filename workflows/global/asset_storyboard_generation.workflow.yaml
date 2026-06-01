@@ -40,12 +40,10 @@ workflow:
           - prepare_segment_storyboard_inputs
       - id: p3_storyboard
         name: P3 分镜生成
-        description: 生成分镜描述、审核提示词并生成目标分镜图像。
+        description: 生成分镜描述，并在分镜汇总中审核提示词、参考图和目标分镜图像。
         nodes:
           - describe_panels
           - merge_segment_descriptions
-          - review_storyboard_prompt
-          - prepare_storyboard_panel_cards
           - review_storyboard_image
     defaults:
       ai:
@@ -546,42 +544,6 @@ nodes:
             additionalProperties: false
       additionalProperties: false
 
-  - id: review_storyboard_prompt
-    ref: system.human_approval.v1
-    name: 审核分镜提示词
-    inputs:
-      question:
-        template: |
-          请审核以下分镜描述。
-
-          段落分镜描述：
-          {segment_descriptions}
-        vars:
-          segment_descriptions:
-            from: "$nodes.merge_segment_descriptions.output.segment_descriptions"
-      decision:
-        from_user: true
-        schema:
-          type: string
-          minLength: 1
-      corrections:
-        from_user: true
-        required: false
-        schema:
-          type: object
-          additionalProperties: true
-    outputs:
-      type: object
-      required: ["decision"]
-      properties:
-        decision:
-          type: string
-          minLength: 1
-        corrections:
-          type: object
-          additionalProperties: true
-      additionalProperties: false
-
   - id: prepare_storyboard_panel_cards
     ref: tool.prepare_storyboard_panel_cards.v1
     name: 准备分镜汇总卡片
@@ -706,8 +668,6 @@ edges:
   - from: describe_panels
     to: merge_segment_descriptions
   - from: merge_segment_descriptions
-    to: review_storyboard_prompt
-  - from: review_storyboard_prompt
     to: prepare_storyboard_panel_cards
   - from: prepare_storyboard_panel_cards
     to: review_storyboard_image

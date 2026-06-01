@@ -264,12 +264,34 @@ const controlPreviewFixtures: Record<string, ControlPreviewFixture[]> = {
               constraints: "保持林冲囚服、毡笠和花枪一致。",
               prompt: "分镜描述\n林冲踏雪进入野猪林，远处树影压低。\n\n画风\n国风动画漫画分镜，冷色雪夜。",
               image_refs: [sampleImageRefs[0]],
+              reference_images: [
+                {
+                  label: "林冲",
+                  variant: "囚服",
+                  image_ref: sampleImageRefs[0],
+                  preview_url: sampleImageUrls[0],
+                  source: "asset",
+                },
+                {
+                  label: "现场补充参考",
+                  image_ref: sampleImageRefs[1],
+                  preview_url: sampleImageUrls[1],
+                  source: "upload",
+                },
+              ],
               reference_assets: [
                 {
                   full_name: "林冲",
                   variant: "囚服",
                   image_ref: sampleImageRefs[0],
                   image_url: sampleImageUrls[0],
+                  source: "asset",
+                },
+                {
+                  full_name: "现场补充参考",
+                  image_ref: sampleImageRefs[1],
+                  image_url: sampleImageUrls[1],
+                  source: "upload",
                 },
               ],
               aspect_ratio: "16:9",

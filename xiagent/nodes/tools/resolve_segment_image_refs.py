@@ -144,6 +144,9 @@ def _resolve_character(character: Mapping[str, Any], lookup: Mapping[tuple[str, 
         image_ref = _image_ref_from_item(character)
     if image_ref is not None:
         result["image_ref"] = image_ref
+        image_url = _image_url_from_item(catalog_item) or _image_url_from_item(character)
+        if image_url:
+            result["image_url"] = image_url
     return result
 
 
@@ -168,15 +171,25 @@ def _build_catalog_lookup(asset_catalog: Mapping[str, Any]) -> dict[tuple[str, s
     for image in _list(asset_catalog.get("asset_images")):
         if not isinstance(image, Mapping):
             continue
-        name = _text(image.get("full_name")) or _text(image.get("name"))
-        if not name:
+        names = _lookup_names(image)
+        if not names:
             continue
-        variant = _text(image.get("variant")) or _text(image.get("variant_name"))
         normalized = dict(image)
-        _store_lookup_item(lookup, (name, variant), normalized)
-        _store_lookup_item(lookup, (name, ""), normalized)
+        variant = _text(image.get("variant")) or _text(image.get("variant_name")) or _variant_from_full_name(image)
+        for name in names:
+            _store_lookup_item(lookup, (name, variant), normalized)
+            _store_lookup_item(lookup, (name, ""), normalized)
 
     return lookup
+
+
+def _lookup_names(item: Mapping[str, Any]) -> list[str]:
+    names: list[str] = []
+    for key in ("asset_key", "name", "full_name"):
+        name = _text(item.get(key))
+        if name and name not in names:
+            names.append(name)
+    return names
 
 
 def _store_lookup_item(
@@ -212,6 +225,25 @@ def _image_ref_from_item(item: Mapping[str, Any] | None) -> dict[str, str] | Non
         if asset_id:
             return {"kind": "asset", "asset_id": asset_id, "role": "reference"}
     return None
+
+
+def _image_url_from_item(item: Mapping[str, Any] | None) -> str:
+    if item is None:
+        return ""
+    return _text(item.get("image_url")) or _text(item.get("public_url")) or _text(item.get("storage_uri"))
+
+
+def _variant_from_full_name(item: Mapping[str, Any]) -> str:
+    full_name = _text(item.get("full_name"))
+    asset_key = _text(item.get("asset_key"))
+    if not full_name or not asset_key:
+        return ""
+    parts = [part for part in full_name.split("_") if part]
+    try:
+        key_index = parts.index(asset_key)
+    except ValueError:
+        return ""
+    return parts[key_index + 1] if key_index + 1 < len(parts) else ""
 
 
 def _clean_image_ref(value: Any) -> dict[str, str] | None:

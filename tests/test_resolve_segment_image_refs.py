@@ -175,6 +175,50 @@ async def test_resolve_segment_image_refs_prefers_generated_asset_images() -> No
 
 
 @pytest.mark.asyncio
+async def test_resolve_segment_image_refs_matches_asset_images_by_asset_key() -> None:
+    node = ResolveSegmentImageRefsNode()
+
+    result = await node.run(
+        None,
+        {
+            "segment_assignments": [
+                {
+                    "segment_index": 0,
+                    "characters": [{"full_name": "何涛", "variant": "官兵装束"}],
+                    "key_props": [],
+                }
+            ],
+            "asset_catalog": {
+                "approved_assets": {
+                    "characters": [
+                        {
+                            "name": "何涛",
+                            "variant_name": "官兵装束",
+                        }
+                    ],
+                },
+                "asset_images": [
+                    {
+                        "asset_id": "asset-hetao",
+                        "asset_key": "何涛",
+                        "full_name": "角色_何涛_官兵装束_官帽、佩刀、革带",
+                        "image_url": "https://cdn.test/hetao.png",
+                    }
+                ],
+            },
+        },
+    )
+
+    character = result.output["segment_assignments"][0]["characters"][0]
+    assert character["image_ref"] == {
+        "kind": "asset",
+        "asset_id": "asset-hetao",
+        "role": "reference",
+    }
+    assert character["image_url"] == "https://cdn.test/hetao.png"
+
+
+@pytest.mark.asyncio
 async def test_resolve_segment_image_refs_leaves_unmatched_character_without_ref() -> None:
     node = ResolveSegmentImageRefsNode()
 

@@ -62,7 +62,6 @@ def test_orchestration_workflow_node_list(test_settings) -> None:
         "prepare_segment_storyboard_inputs",
         "describe_panels",
         "merge_segment_descriptions",
-        "review_storyboard_prompt",
         "prepare_storyboard_panel_cards",
         "review_storyboard_image",
     ]
@@ -74,7 +73,6 @@ def test_orchestration_workflow_node_list(test_settings) -> None:
         "prepare_segment_storyboard_inputs": "tool.prepare_segment_storyboard_inputs.v1",
         "describe_panels": "ai.parallel_deepseek_structured_json.v1",
         "merge_segment_descriptions": "tool.merge_segment_storyboard_descriptions.v1",
-        "review_storyboard_prompt": "system.human_approval.v1",
         "prepare_storyboard_panel_cards": "tool.prepare_storyboard_panel_cards.v1",
         "review_storyboard_image": "system.human_approval.v1",
     }
@@ -94,8 +92,7 @@ def test_orchestration_workflow_edges_are_linear_dag(test_settings) -> None:
         {"from": "resolve_segment_image_refs", "to": "prepare_segment_storyboard_inputs"},
         {"from": "prepare_segment_storyboard_inputs", "to": "describe_panels"},
         {"from": "describe_panels", "to": "merge_segment_descriptions"},
-        {"from": "merge_segment_descriptions", "to": "review_storyboard_prompt"},
-        {"from": "review_storyboard_prompt", "to": "prepare_storyboard_panel_cards"},
+        {"from": "merge_segment_descriptions", "to": "prepare_storyboard_panel_cards"},
         {"from": "prepare_storyboard_panel_cards", "to": "review_storyboard_image"},
         {"from": "review_storyboard_image", "to": "END"},
     ]
@@ -409,6 +406,18 @@ def test_prepare_storyboard_panel_cards_output_schema(test_settings) -> None:
                             "kind": "data_uri",
                             "data": "data:image/png;base64,bGluY2hvbmc=",
                             "role": "reference",
+                        }
+                    ],
+                    "reference_images": [
+                        {
+                            "label": "林冲",
+                            "image_ref": {
+                                "kind": "data_uri",
+                                "data": "data:image/png;base64,bGluY2hvbmc=",
+                                "role": "reference",
+                            },
+                            "variant": "囚服雪地",
+                            "source": "asset",
                         }
                     ],
                     "reference_assets": [

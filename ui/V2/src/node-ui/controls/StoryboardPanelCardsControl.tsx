@@ -23,6 +23,15 @@ interface ReferenceAsset {
   variant?: string;
   image_ref: ImageRef;
   image_url?: string;
+  source?: "asset" | "upload";
+}
+
+interface ReferenceImage {
+  image_ref: ImageRef;
+  label: string;
+  variant?: string;
+  source?: "asset" | "upload";
+  preview_url?: string;
 }
 
 interface PanelCard {
@@ -36,6 +45,7 @@ interface PanelCard {
   prompt: string;
   negative_prompt?: string;
   image_refs: ImageRef[];
+  reference_images: ReferenceImage[];
   reference_assets: ReferenceAsset[];
   aspect_ratio: string;
   resolution: string;
@@ -50,8 +60,7 @@ interface GeneratedImage {
 
 interface PanelDraft {
   prompt: string;
-  image_refs: ImageRef[];
-  reference_assets: ReferenceAsset[];
+  reference_images: ReferenceImage[];
   generated_images: GeneratedImage[];
   selected_image_url: string;
   status?: string;
@@ -96,7 +105,7 @@ export function StoryboardPanelCardsControl({
     const objectUrls: string[] = [];
     const assetIds = Array.from(new Set(cards.flatMap((card) => {
       const draft = drafts[card.card_id];
-      const refs = draft?.reference_assets ?? card.reference_assets;
+      const refs = draft?.reference_images ?? card.reference_images;
       return refs.map((ref) => ref.image_ref.asset_id).filter((id): id is string => Boolean(id));
     })));
     if (!assetIds.length) {
@@ -129,17 +138,20 @@ export function StoryboardPanelCardsControl({
   }
 
   function updateCard(cardId: string, updater: (draft: PanelDraft) => PanelDraft) {
-    const next = {
-      ...drafts,
-      [cardId]: updater(drafts[cardId] ?? draftFromCard(cards.find((card) => card.card_id === cardId))),
-    };
-    setDrafts(next);
-    void persist(next);
+    setDrafts((current) => {
+      const next = {
+        ...current,
+        [cardId]: updater(current[cardId] ?? draftFromCard(cards.find((card) => card.card_id === cardId))),
+      };
+      void persist(next);
+      return next;
+    });
   }
 
   async function generateCard(card: PanelCard) {
     const draft = drafts[card.card_id] ?? draftFromCard(card);
-    if (!draft.image_refs.length) {
+    const imageRefs = imageRefsFromReferenceImages(draft.reference_images);
+    if (!imageRefs.length) {
       updateCard(card.card_id, (current) => ({ ...current, error: "请先添加至少一张参考图。" }));
       return;
     }
@@ -149,7 +161,7 @@ export function StoryboardPanelCardsControl({
         project_id: projectId,
         card_id: card.card_id,
         prompt: draft.prompt,
-        image_refs: draft.image_refs.map((ref) => ({ ...ref })),
+        image_refs: imageRefs.map((ref) => ({ ...ref })),
         negative_prompt: card.negative_prompt,
         aspect_ratio: card.aspect_ratio,
         resolution: card.resolution,
@@ -227,11 +239,12 @@ export function StoryboardPanelCardsControl({
     }
   }
 
-  function addAssetReference(cardId: string, asset: AssetRecord) {
-    const ref: ReferenceAsset = {
-      full_name: asset.name,
+  function addAssetReference(cardId: string, asset: AssetRecord, source: ReferenceImage["source"] = "asset") {
+    const ref: ReferenceImage = {
+      label: asset.name,
       image_ref: { kind: "asset", asset_id: asset.asset_id, role: "reference" },
-      image_url: asset.metadata?.public_url,
+      preview_url: asset.metadata?.public_url,
+      source,
     };
     updateCard(cardId, (current) => addReference(current, ref));
     setPicker(null);
@@ -251,7 +264,7 @@ export function StoryboardPanelCardsControl({
         publish: true,
         metadata: { source: "storyboard_panel_reference" },
       });
-      addAssetReference(card.card_id, asset);
+      addAssetReference(card.card_id, asset, "upload");
       updateCard(card.card_id, (current) => ({ ...current, status: "ready", error: "" }));
     } catch (error) {
       updateCard(card.card_id, (current) => ({ ...current, status: "failed", error: readableError(error, "上传失败。") }));
@@ -291,7 +304,7 @@ export function StoryboardPanelCardsControl({
           const selectedImage = draft.selected_image_url || draft.generated_images[draft.generated_images.length - 1]?.image_url || "";
           return (
             <article className="storyboard-panel-card" key={card.card_id}>
-              <header>
+              <header className="storyboard-card-head">
                 <div>
                   <p className="eyebrow">段落 {card.segment_index + 1} · 分格 {card.panel_index + 1}</p>
                   <h4>{card.segment_title}</h4>
@@ -308,76 +321,107 @@ export function StoryboardPanelCardsControl({
                 ) : null}
               </header>
 
-              <div className="storyboard-panel-preview">
-                {selectedImage ? <img alt={`${card.segment_title} 分镜图`} src={selectedImage} /> : <span>等待生成</span>}
-              </div>
-
-              <label className="storyboard-panel-prompt">
-                <span>分段提示词</span>
-                <textarea
-                  readOnly={readonly}
-                  value={draft.prompt}
-                  onChange={(event) => updateCard(card.card_id, (current) => ({ ...current, prompt: event.target.value }))}
-                />
-              </label>
-
-              <div className="storyboard-reference-list" aria-label="参考资产">
-                <div className="storyboard-reference-head">
-                  <span>参考资产</span>
-                  {!readonly ? (
-                    <div>
-                      <button className="text-button" type="button" onClick={() => openPicker(card.card_id)}>添加资产</button>
-                      <label className="text-button">
-                        上传参考图
-                        <input type="file" accept="image/*" onChange={(event) => uploadReference(card, event)} />
-                      </label>
-                    </div>
-                  ) : null}
+              <div className="storyboard-card-workspace">
+                <div className="storyboard-frame-column">
+                  <section className="storyboard-generated-pool" aria-label="生成图像池">
+                    <header>
+                      <span>生成图像池</span>
+                      <small>{draft.generated_images.length ? `${draft.generated_images.length} 张生成图` : "等待生成"}</small>
+                    </header>
+                    {draft.generated_images.length ? (
+                      <div className="storyboard-generated-grid">
+                        {draft.generated_images.map((image, index) => {
+                          const active = selectedImage === image.image_url;
+                          return (
+                            <button
+                              className={active ? "active" : ""}
+                              key={`${image.image_url}-${index}`}
+                              type="button"
+                              disabled={readonly}
+                              onClick={() => updateCard(card.card_id, (current) => ({ ...current, selected_image_url: image.image_url }))}
+                            >
+                              <img alt={`生成图 ${index + 1}`} src={image.image_url} />
+                              <span>{active ? "已选定稿" : `生成 ${index + 1}`}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="storyboard-panel-preview">
+                        <span>生成后的图像会进入这里</span>
+                      </div>
+                    )}
+                  </section>
                 </div>
-                {draft.reference_assets.length ? draft.reference_assets.map((ref, index) => (
-                  <div className="storyboard-reference-chip" key={`${card.card_id}-${index}`}>
-                    <span className="storyboard-reference-thumb">
-                      {referenceImageUrl(ref, previewUrls) ? <img alt={`${ref.full_name} 参考图`} src={referenceImageUrl(ref, previewUrls)} /> : "图"}
-                    </span>
-                    <span>
-                      <strong>{ref.full_name}</strong>
-                      {ref.variant ? <small>{ref.variant}</small> : null}
-                    </span>
-                    {!readonly ? (
-                      <button type="button" aria-label={`删除参考资产 ${ref.full_name}`} onClick={() => updateCard(card.card_id, (current) => removeReference(current, index))}>
-                        删除
-                      </button>
-                    ) : null}
-                  </div>
-                )) : <p className="muted">暂无参考图。</p>}
-              </div>
 
-              {draft.generated_images.length > 1 ? (
-                <div className="storyboard-generated-strip" aria-label="生成历史">
-                  {draft.generated_images.map((image, index) => (
-                    <button
-                      className={draft.selected_image_url === image.image_url ? "active" : ""}
-                      key={`${image.image_url}-${index}`}
-                      type="button"
-                      disabled={readonly}
-                      onClick={() => updateCard(card.card_id, (current) => ({ ...current, selected_image_url: image.image_url }))}
-                    >
-                      <img alt={`生成图 ${index + 1}`} src={image.image_url} />
-                    </button>
-                  ))}
+                <div className="storyboard-editor-column">
+                  <section className="storyboard-prompt-editor" aria-label="分段提示词编辑">
+                    <header>
+                      <span>分段提示词</span>
+                      {!readonly ? (
+                        <button
+                          className="secondary-button storyboard-mini-button"
+                          type="button"
+                          disabled={Boolean(prompting[card.card_id])}
+                          onClick={() => regeneratePrompt(card)}
+                        >
+                          {prompting[card.card_id] ? "提示词生成中" : "重新生成提示词"}
+                        </button>
+                      ) : null}
+                    </header>
+                    <textarea
+                      aria-label="分段提示词"
+                      readOnly={readonly}
+                      value={draft.prompt}
+                      onChange={(event) => updateCard(card.card_id, (current) => ({ ...current, prompt: event.target.value }))}
+                    />
+                  </section>
+
+                  <section className="storyboard-image-pool" aria-label="参考图像池">
+                    <header className="storyboard-image-pool-head">
+                      <div>
+                        <span>参考图像池</span>
+                        <small>{draft.reference_images.length} 张参考图</small>
+                      </div>
+                      {!readonly ? (
+                        <div>
+                          <button className="secondary-button storyboard-mini-button" type="button" onClick={() => openPicker(card.card_id)}>添加资产</button>
+                          <label className="secondary-button storyboard-mini-button">
+                            上传图像
+                            <input type="file" accept="image/*" onChange={(event) => uploadReference(card, event)} />
+                          </label>
+                        </div>
+                      ) : null}
+                    </header>
+                    {draft.reference_images.length ? (
+                      <div className="storyboard-image-pool-grid">
+                        {draft.reference_images.map((ref, index) => {
+                          const imageUrl = referenceImageUrl(ref, previewUrls);
+                          const isUpload = ref.source === "upload";
+                          return (
+                            <div
+                              className={`storyboard-pool-item ${isUpload ? "manual-source" : "asset-source"}`}
+                              key={`${card.card_id}-${index}`}
+                            >
+                              <span className="storyboard-pool-thumb">
+                                {imageUrl ? <img alt={`${ref.label} 参考图`} src={imageUrl} /> : "图"}
+                              </span>
+                              <span className="storyboard-pool-kind">{isUpload ? "上传" : "资产"}</span>
+                              {!readonly ? (
+                                <button type="button" aria-label={`删除参考图 ${ref.label}`} onClick={() => updateCard(card.card_id, (current) => removeReference(current, index))}>
+                                  删除
+                                </button>
+                              ) : null}
+                              <strong>{ref.label}</strong>
+                              {ref.variant ? <small>{ref.variant}</small> : null}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : <p className="storyboard-pool-empty">暂无参考图。</p>}
+                  </section>
                 </div>
-              ) : null}
-
-              {!readonly ? (
-                <button
-                  className="text-button"
-                  type="button"
-                  disabled={Boolean(prompting[card.card_id])}
-                  onClick={() => regeneratePrompt(card)}
-                >
-                  {prompting[card.card_id] ? "提示词生成中" : "重新生成提示词"}
-                </button>
-              ) : null}
+              </div>
               {draft.error ? <p className="form-error">{draft.error}</p> : null}
             </article>
           );
@@ -442,6 +486,7 @@ function normalizeCard(value: unknown): PanelCard | null {
     prompt: text(item.prompt),
     negative_prompt: text(item.negative_prompt),
     image_refs: imageRefs(item.image_refs),
+    reference_images: referenceImages(item.reference_images, item.reference_assets, item.image_refs),
     reference_assets: referenceAssets(item.reference_assets),
     aspect_ratio: text(item.aspect_ratio) || "16:9",
     resolution: text(item.resolution) || "2K",
@@ -461,8 +506,7 @@ function initialDrafts(cards: PanelCard[], output: Record<string, unknown>): Dra
 function draftFromCard(card?: PanelCard): PanelDraft {
   return {
     prompt: card?.prompt ?? "",
-    image_refs: card?.image_refs ?? [],
-    reference_assets: card?.reference_assets ?? [],
+    reference_images: card?.reference_images ?? [],
     generated_images: [],
     selected_image_url: "",
   };
@@ -473,10 +517,10 @@ function draftFromSubmitted(card: PanelCard, value: Record<string, unknown>): Pa
     ? value.generated_images.map((item) => recordValue(item)).map((item) => ({ image_url: text(item.image_url), source: text(item.source), runninghub_task_id: text(item.runninghub_task_id) })).filter((item) => item.image_url)
     : [];
   const selected = text(value.selected_image_url);
+  const submittedReferences = referenceImages(value.reference_images, value.reference_assets, value.image_refs);
   return {
     prompt: text(value.prompt) || card.prompt,
-    image_refs: imageRefs(value.image_refs).length ? imageRefs(value.image_refs) : card.image_refs,
-    reference_assets: referenceAssets(value.reference_assets).length ? referenceAssets(value.reference_assets) : card.reference_assets,
+    reference_images: submittedReferences.length ? submittedReferences : card.reference_images,
     generated_images: generated,
     selected_image_url: selected || generated[generated.length - 1]?.image_url || "",
   };
@@ -487,14 +531,16 @@ function payloadFromDrafts(cards: PanelCard[], drafts: DraftMap): Record<string,
     decision: "finish",
     panel_results: cards.map((card) => {
       const draft = drafts[card.card_id] ?? draftFromCard(card);
+      const imageRefs = imageRefsFromReferenceImages(draft.reference_images);
       return {
         card_id: card.card_id,
         segment_index: card.segment_index,
         panel_index: card.panel_index,
         segment_title: card.segment_title,
         prompt: draft.prompt,
-        image_refs: draft.image_refs,
-        reference_assets: draft.reference_assets,
+        reference_images: draft.reference_images,
+        image_refs: imageRefs,
+        reference_assets: legacyReferenceAssets(draft.reference_images),
         selected_image_url: draft.selected_image_url,
         generated_images: draft.generated_images,
       };
@@ -502,27 +548,39 @@ function payloadFromDrafts(cards: PanelCard[], drafts: DraftMap): Record<string,
   };
 }
 
-function addReference(draft: PanelDraft, ref: ReferenceAsset): PanelDraft {
-  if (ref.image_ref.asset_id && draft.image_refs.some((item) => item.asset_id === ref.image_ref.asset_id)) return draft;
+function addReference(draft: PanelDraft, ref: ReferenceImage): PanelDraft {
+  if (ref.image_ref.asset_id && draft.reference_images.some((item) => item.image_ref.asset_id === ref.image_ref.asset_id)) return draft;
   return {
     ...draft,
-    image_refs: [...draft.image_refs, ref.image_ref],
-    reference_assets: [...draft.reference_assets, ref],
+    reference_images: [...draft.reference_images, ref],
   };
 }
 
 function removeReference(draft: PanelDraft, index: number): PanelDraft {
   return {
     ...draft,
-    image_refs: draft.image_refs.filter((_, itemIndex) => itemIndex !== index),
-    reference_assets: draft.reference_assets.filter((_, itemIndex) => itemIndex !== index),
+    reference_images: draft.reference_images.filter((_, itemIndex) => itemIndex !== index),
   };
 }
 
-function referenceImageUrl(ref: ReferenceAsset, previewUrls: Record<string, string>): string {
-  if (ref.image_url) return ref.image_url;
+function referenceImageUrl(ref: ReferenceImage, previewUrls: Record<string, string>): string {
+  if (ref.preview_url) return ref.preview_url;
   if (ref.image_ref.kind === "data_uri") return ref.image_ref.data ?? "";
   return ref.image_ref.asset_id ? previewUrls[ref.image_ref.asset_id] ?? "" : "";
+}
+
+function imageRefsFromReferenceImages(referenceImages: ReferenceImage[]): ImageRef[] {
+  return referenceImages.map((item) => item.image_ref).filter((item) => (item.kind === "asset" ? Boolean(item.asset_id) : Boolean(item.data)));
+}
+
+function legacyReferenceAssets(referenceImages: ReferenceImage[]): ReferenceAsset[] {
+  return referenceImages.map((item) => ({
+    full_name: item.label,
+    variant: item.variant,
+    image_ref: item.image_ref,
+    image_url: item.preview_url,
+    source: item.source ?? "asset",
+  }));
 }
 
 function imageRefs(value: unknown): ImageRef[] {
@@ -551,6 +609,47 @@ function referenceAssets(value: unknown): ReferenceAsset[] {
       variant: text(item.variant) || undefined,
       image_ref: imageRef,
       image_url: text(item.image_url) || undefined,
+      source: text(item.source) === "upload" ? "upload" : "asset",
+    });
+  }
+  return refs;
+}
+
+function referenceImages(value: unknown, legacyAssets: unknown, legacyImageRefs: unknown): ReferenceImage[] {
+  const direct = referenceImagesFromValue(value);
+  if (direct.length) return direct;
+
+  const assets = referenceAssets(legacyAssets);
+  if (assets.length) {
+    return assets.map((asset) => ({
+      label: asset.full_name,
+      variant: asset.variant,
+      image_ref: asset.image_ref,
+      preview_url: asset.image_url,
+      source: asset.source,
+    }));
+  }
+
+  return imageRefs(legacyImageRefs).map((imageRef, index) => ({
+    label: `参考图 ${index + 1}`,
+    image_ref: imageRef,
+    source: imageRef.kind === "data_uri" ? "upload" : "asset",
+  }));
+}
+
+function referenceImagesFromValue(value: unknown): ReferenceImage[] {
+  if (!Array.isArray(value)) return [];
+  const refs: ReferenceImage[] = [];
+  for (const rawItem of value) {
+    const item = recordValue(rawItem);
+    const imageRef = imageRefs([item.image_ref])[0];
+    if (!imageRef) continue;
+    refs.push({
+      label: text(item.label) || text(item.full_name) || "参考图",
+      variant: text(item.variant) || undefined,
+      image_ref: imageRef,
+      preview_url: text(item.preview_url) || text(item.image_url) || undefined,
+      source: text(item.source) === "upload" ? "upload" : "asset",
     });
   }
   return refs;

@@ -79,8 +79,9 @@ class PrepareStoryboardPanelCardsNode(BaseNode):
             segment_index = _int(segment.get("index"), len(cards))
             segment_title = _text(segment.get("segment_title")) or f"段落 {segment_index + 1}"
             assignment = assignments.get(segment_index, {})
-            references = _reference_assets(assignment)
-            image_refs = [item["image_ref"] for item in references if isinstance(item.get("image_ref"), Mapping)]
+            reference_images = _reference_images(assignment)
+            image_refs = [item["image_ref"] for item in reference_images if isinstance(item.get("image_ref"), Mapping)]
+            references = _legacy_reference_assets(reference_images)
             segment_context = _segment_context(assignment)
             source_item = items_by_index.get(segment_index, {})
 
@@ -108,6 +109,7 @@ class PrepareStoryboardPanelCardsNode(BaseNode):
                         "constraints": constraints,
                         "prompt": prompt,
                         "negative_prompt": negative_prompt,
+                        "reference_images": reference_images,
                         "image_refs": image_refs,
                         "reference_assets": references,
                         "aspect_ratio": aspect_ratio,
@@ -139,6 +141,7 @@ def _panel_card_schema() -> dict[str, Any]:
             "constraints",
             "prompt",
             "image_refs",
+            "reference_images",
             "reference_assets",
             "aspect_ratio",
             "resolution",
@@ -154,6 +157,21 @@ def _panel_card_schema() -> dict[str, Any]:
             "prompt": {"type": "string", "minLength": 1},
             "negative_prompt": {"type": "string"},
             "image_refs": image_refs_schema(),
+            "reference_images": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["image_ref", "label", "source"],
+                    "properties": {
+                        "image_ref": image_refs_schema()["items"],
+                        "label": {"type": "string", "minLength": 1},
+                        "variant": {"type": "string"},
+                        "source": {"type": "string", "enum": ["asset", "upload"]},
+                        "preview_url": {"type": "string"},
+                    },
+                    "additionalProperties": False,
+                },
+            },
             "reference_assets": {
                 "type": "array",
                 "items": {
@@ -164,6 +182,7 @@ def _panel_card_schema() -> dict[str, Any]:
                         "variant": {"type": "string"},
                         "image_ref": image_refs_schema()["items"],
                         "image_url": {"type": "string"},
+                        "source": {"type": "string", "enum": ["asset", "upload"]},
                     },
                     "additionalProperties": False,
                 },
@@ -194,23 +213,46 @@ def _items_by_index(value: Any) -> dict[int, Mapping[str, Any]]:
     return result
 
 
-def _reference_assets(assignment: Mapping[str, Any]) -> list[dict[str, Any]]:
+def _reference_images(assignment: Mapping[str, Any]) -> list[dict[str, Any]]:
     references: list[dict[str, Any]] = []
     for character in _object_list(assignment.get("characters")):
         image_ref = character.get("image_ref")
         name = _text(character.get("full_name"))
         if name and isinstance(image_ref, Mapping):
             item: dict[str, Any] = {
-                "full_name": name,
+                "label": name,
                 "image_ref": dict(image_ref),
+                "source": "asset",
             }
             variant = _text(character.get("variant"))
             if variant:
                 item["variant"] = variant
             image_url = _text(character.get("image_url"))
             if image_url:
-                item["image_url"] = image_url
+                item["preview_url"] = image_url
             references.append(item)
+    return references
+
+
+def _legacy_reference_assets(reference_images: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    references: list[dict[str, Any]] = []
+    for image in reference_images:
+        image_ref = image.get("image_ref")
+        label = _text(image.get("label"))
+        if not label or not isinstance(image_ref, Mapping):
+            continue
+        item: dict[str, Any] = {
+            "full_name": label,
+            "image_ref": dict(image_ref),
+            "source": _text(image.get("source")) or "asset",
+        }
+        variant = _text(image.get("variant"))
+        if variant:
+            item["variant"] = variant
+        preview_url = _text(image.get("preview_url"))
+        if preview_url:
+            item["image_url"] = preview_url
+        references.append(item)
     return references
 
 

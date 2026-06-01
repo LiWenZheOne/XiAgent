@@ -702,6 +702,14 @@ describe("node-ui controls", () => {
                 constraints: "保持囚服。",
                 prompt: "分镜描述\n林冲踏雪前行。",
                 image_refs: [{ kind: "data_uri", data: "data:image/png;base64,cmVm", role: "reference" }],
+                reference_images: [
+                  {
+                    label: "林冲",
+                    variant: "囚服",
+                    image_ref: { kind: "data_uri", data: "data:image/png;base64,cmVm", role: "reference" },
+                    source: "asset",
+                  },
+                ],
                 reference_assets: [
                   {
                     full_name: "林冲",
@@ -720,7 +728,11 @@ describe("node-ui controls", () => {
     );
 
     expect(screen.getByRole("heading", { name: "雪夜" })).toBeInTheDocument();
+    expect(screen.getByLabelText("参考图像池")).toBeInTheDocument();
+    expect(screen.getByLabelText("生成图像池")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "重新生成提示词" })).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "林冲 参考图" })).toHaveAttribute("src", "data:image/png;base64,cmVm");
+    expect(screen.getByText("资产")).toBeInTheDocument();
     await userEvent.clear(screen.getByLabelText("分段提示词"));
     await userEvent.type(screen.getByLabelText("分段提示词"), "新的分镜提示词");
     await userEvent.click(screen.getByRole("button", { name: "完成并继续" }));
@@ -731,6 +743,13 @@ describe("node-ui controls", () => {
         expect.objectContaining({
           card_id: "segment-0-panel-0",
           prompt: "新的分镜提示词",
+          reference_images: [
+            expect.objectContaining({
+              label: "林冲",
+              image_ref: { kind: "data_uri", data: "data:image/png;base64,cmVm", role: "reference" },
+            }),
+          ],
+          image_refs: [{ kind: "data_uri", data: "data:image/png;base64,cmVm", role: "reference" }],
         }),
       ],
     });
