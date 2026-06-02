@@ -27,6 +27,9 @@ from xiagent.nodes.tools.prepare_asset_semantic_match import PrepareAssetSemanti
 from xiagent.nodes.tools.prepare_storyboard_panel_cards import (
     PrepareStoryboardPanelCardsNode,
 )
+from xiagent.nodes.tools.prepare_storyboard_asset_index import (
+    PrepareStoryboardAssetIndexNode,
+)
 from xiagent.nodes.tools.resolve_accessory_asset_refs import ResolveAccessoryAssetRefsNode
 from xiagent.nodes.tools.resolve_character_variant_refs import ResolveCharacterVariantRefsNode
 from xiagent.nodes.tools.resolve_segment_image_refs import ResolveSegmentImageRefsNode
@@ -94,6 +97,7 @@ def test_build_node_registry_registers_builtin_nodes(test_settings) -> None:
         "tool.prepare_segment_storyboard_inputs.v1",
         "tool.prepare_asset_semantic_match.v1",
         "tool.prepare_storyboard_panel_cards.v1",
+        "tool.prepare_storyboard_asset_index.v1",
         "ai.assign_assets_to_segments.v1",
         "ai.deepseek_chat.v1",
         "ai.deepseek_structured_json.v1",
@@ -349,8 +353,6 @@ async def test_resolve_segment_image_refs_preserves_presence_and_fills_appearanc
                             "asset_name": "林冲",
                             "asset_tags": ["囚服", "毡笠"],
                             "presence": "present",
-                            "visibility": "in_frame",
-                            "reason": "本段正面描写林冲踏雪。",
                             "image_ref": {"kind": "asset", "asset_id": "input-ref", "role": "reference"},
                         }
                     ],
@@ -377,8 +379,6 @@ async def test_resolve_segment_image_refs_preserves_presence_and_fills_appearanc
     assert character["asset_tags"] == ["囚服", "毡笠"]
     assert character["appearance_description"] == "戴毡笠、穿囚服。"
     assert character["presence"] == "present"
-    assert character["visibility"] == "in_frame"
-    assert character["reason"] == "本段正面描写林冲踏雪。"
     assert character["image_ref"] == {"kind": "asset", "asset_id": "input-ref", "role": "reference"}
 
 
@@ -433,6 +433,7 @@ async def test_prepare_storyboard_panel_cards_builds_cards() -> None:
                             "description": "林冲踏雪前行。",
                             "style": "国风漫画",
                             "constraints": "保持囚服和毡笠。",
+                            "visible_characters": ["林冲"],
                         }
                     ],
                 }
@@ -447,6 +448,12 @@ async def test_prepare_storyboard_panel_cards_builds_cards() -> None:
                             "asset_name": "林冲",
                             "asset_tags": ["囚服"],
                             "image_ref": {"kind": "asset", "asset_id": "asset-linchong", "role": "reference"},
+                        },
+                        {
+                            "asset_type": "character",
+                            "asset_name": "鲁智深",
+                            "asset_tags": ["僧衣"],
+                            "image_ref": {"kind": "asset", "asset_id": "asset-luzhishen", "role": "reference"},
                         }
                     ],
                     "key_props": ["花枪"],
@@ -473,7 +480,8 @@ async def test_prepare_storyboard_panel_cards_builds_cards() -> None:
         }
     ]
     assert "林冲踏雪前行" in card["prompt"]
-    assert "出场角色：林冲（囚服）" in card["prompt"]
+    assert "出场角色：林冲（囚服）、鲁智深（僧衣）" in card["prompt"]
+    assert card["visible_characters"] == ["林冲"]
 
 
 async def test_resolve_accessory_asset_refs_uses_match_or_first_variant_asset() -> None:
@@ -649,6 +657,87 @@ async def test_episode_metadata_nodes_roundtrip_payload() -> None:
     assert loaded.output["asset_catalog"]["generation_summary"] == result.output["generation_summary"]
     assert loaded.output["asset_catalog"]["approved_assets"]["characters"][0]["asset_name"] == "宋江"
     assert loaded.asset_refs[0].asset_id == "asset-episode"
+
+    storyboard_ctx = NodeContext(
+        user_id="user-1",
+        project_id="project-1",
+        task_id="task-1",
+        node_id="select_episode_metadata",
+        node_execution_id="exec-2",
+        config={},
+        output_schema={
+            "type": "object",
+            "required": ["episode_name", "episode_summary", "source_script", "asset_catalog", "episode_asset_id"],
+            "properties": {
+                "episode_name": {"type": "string", "minLength": 1},
+                "episode_summary": {"type": "string"},
+                "source_script": {"type": "string", "minLength": 1},
+                "background": {"type": "string"},
+                "asset_catalog": {"type": "object", "additionalProperties": True},
+                "asset_images": {"type": "array", "items": {"type": "object"}},
+                "episode_asset_id": {"type": "string", "minLength": 1},
+                "storyboard_options": {
+                    "type": "object",
+                    "properties": {
+                        "no_material": {"type": "boolean"},
+                        "enrich_description": {"type": "boolean"},
+                    },
+                    "additionalProperties": False,
+                },
+            },
+            "additionalProperties": False,
+        },
+        asset_service=service,  # type: ignore[arg-type]
+        event_sink=None,
+        logger=None,
+    )
+    storyboard_loaded = await EpisodeMetadataFromAssetNode().run(
+        storyboard_ctx,
+        {"episode_asset_id": result.output["episode_asset_id"]},
+    )
+    assert "generation_summary" not in storyboard_loaded.output
+    assert storyboard_loaded.output["asset_catalog"]["generation_summary"] == result.output["generation_summary"]
+
+
+async def test_prepare_storyboard_asset_index_keeps_only_lightweight_identity_fields() -> None:
+    result = await PrepareStoryboardAssetIndexNode().run(
+        None,
+        {
+            "asset_catalog": {
+                "approved_assets": {
+                    "characters": [
+                        {
+                            "asset_name": "何涛",
+                            "asset_type": "character",
+                            "aliases": ["何观察"],
+                            "summary": "官府观察。",
+                            "prompt": "很长的生成提示词",
+                            "reference_image_ref": {"kind": "asset", "asset_id": "asset-hetiao"},
+                        }
+                    ],
+                    "assets": [{"asset_name": "机密房", "asset_type": "scene", "description": "官府内议事处。"}],
+                    "props": [{"asset_name": "钢叉", "asset_type": "prop"}],
+                }
+            }
+        },
+    )
+
+    assert result.output == {
+        "asset_index": {
+            "characters": [
+                {
+                    "asset_name": "何涛",
+                    "asset_type": "character",
+                    "aliases": ["何观察"],
+                    "summary": "官府观察。",
+                }
+            ],
+            "locations": [{"asset_name": "机密房", "asset_type": "scene", "description": "官府内议事处。"}],
+            "props": [{"asset_name": "钢叉", "asset_type": "prop"}],
+        }
+    }
+    assert "prompt" not in str(result.output)
+    assert "reference_image_ref" not in str(result.output)
 
 
 async def test_complete_asset_images_prepares_only_missing_prompts() -> None:

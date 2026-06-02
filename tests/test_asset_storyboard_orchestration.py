@@ -46,6 +46,7 @@ def test_orchestration_workflow_contract_structure(test_settings) -> None:
     ]
     assert "storyboard_target" not in select_outputs["required"]
     assert "storyboard_target" not in select_outputs["properties"]
+    assert "generation_summary" not in select_outputs["properties"]
 
     validate_workflow_contract(contract, build_node_registry(test_settings))
 
@@ -57,6 +58,7 @@ def test_orchestration_workflow_node_list(test_settings) -> None:
     assert list(nodes_by_id) == [
         "select_episode_metadata",
         "split_script",
+        "prepare_storyboard_asset_index",
         "assign_assets_to_segments",
         "resolve_segment_image_refs",
         "prepare_segment_storyboard_inputs",
@@ -68,6 +70,7 @@ def test_orchestration_workflow_node_list(test_settings) -> None:
     assert {node_id: node["ref"] for node_id, node in nodes_by_id.items()} == {
         "select_episode_metadata": "tool.episode_metadata_from_asset.v1",
         "split_script": "tool.script_split.v1",
+        "prepare_storyboard_asset_index": "tool.prepare_storyboard_asset_index.v1",
         "assign_assets_to_segments": "ai.deepseek_structured_json.v1",
         "resolve_segment_image_refs": "tool.resolve_segment_image_refs.v1",
         "prepare_segment_storyboard_inputs": "tool.prepare_segment_storyboard_inputs.v1",
@@ -87,7 +90,8 @@ def test_orchestration_workflow_edges_are_linear_dag(test_settings) -> None:
     assert contract["edges"] == [
         {"from": "START", "to": "select_episode_metadata"},
         {"from": "select_episode_metadata", "to": "split_script"},
-        {"from": "split_script", "to": "assign_assets_to_segments"},
+        {"from": "split_script", "to": "prepare_storyboard_asset_index"},
+        {"from": "prepare_storyboard_asset_index", "to": "assign_assets_to_segments"},
         {"from": "assign_assets_to_segments", "to": "resolve_segment_image_refs"},
         {"from": "resolve_segment_image_refs", "to": "prepare_segment_storyboard_inputs"},
         {"from": "prepare_segment_storyboard_inputs", "to": "describe_panels"},
@@ -126,6 +130,7 @@ def test_select_episode_node_loads_and_displays_episode_context(test_settings) -
     assert select_sections["events"]["visible"] is False
     assert "source_script" in select_node["outputs"]["required"]
     assert "asset_catalog" in select_node["outputs"]["required"]
+    assert "generation_summary" not in select_node["outputs"]["properties"]
     assert select_node["outputs"]["properties"]["storyboard_options"]["properties"] == {
         "no_material": {"type": "boolean"},
         "enrich_description": {"type": "boolean"},
@@ -145,16 +150,23 @@ def test_episode_context_drives_segment_asset_assignment(test_settings) -> None:
     }
     assert "background" not in split_node["inputs"]
 
+    index_node = nodes_by_id["prepare_storyboard_asset_index"]
+    assert index_node["inputs"] == {
+        "asset_catalog": {
+            "from": "$nodes.select_episode_metadata.output.asset_catalog",
+        }
+    }
+
     assign_node = nodes_by_id["assign_assets_to_segments"]
     prompt_vars = assign_node["inputs"]["prompt"]["vars"]
     assert prompt_vars["segments"] == {"from": "$nodes.split_script.output.segments"}
-    assert prompt_vars["asset_catalog"] == {
-        "from": "$nodes.select_episode_metadata.output.asset_catalog",
+    assert prompt_vars["asset_index"] == {
+        "from": "$nodes.prepare_storyboard_asset_index.output.asset_index",
     }
     assert prompt_vars["background"] == {
         "from": "$nodes.select_episode_metadata.output.background",
     }
-    assert "不要拼接 image_ref" in assign_node["inputs"]["prompt"]["template"]
+    assert "不要输出 reason、visibility、asset_type、asset_tags、asset_id、image_ref 或 image_url" in assign_node["inputs"]["prompt"]["template"]
     assert "full_name" not in assign_node["inputs"]["prompt"]["template"]
 
     resolve_node = nodes_by_id["resolve_segment_image_refs"]
@@ -218,13 +230,8 @@ def test_assign_assets_to_segments_output_schema(test_settings) -> None:
                     "segment_index": 0,
                     "characters": [
                         {
-                            "asset_type": "character",
                             "asset_name": "林冲",
-                            "asset_tags": ["囚服雪地"],
                             "presence": "present",
-                            "visibility": "in_frame",
-                            "reason": "本段正面描写林冲踏雪。",
-                            "asset_id": "asset-linchong",
                         }
                     ],
                     "key_props": ["花枪", "旧毡笠"],
@@ -270,8 +277,6 @@ def test_resolve_segment_image_refs_output_schema(test_settings) -> None:
                             "asset_tags": ["囚服雪地"],
                             "appearance_description": "戴毡笠、穿囚服。",
                             "presence": "present",
-                            "visibility": "in_frame",
-                            "reason": "本段正面描写林冲踏雪。",
                         }
                     ],
                     "key_props": ["花枪"],
@@ -312,8 +317,6 @@ def test_prepare_segment_storyboard_inputs_output_schema(test_settings) -> None:
                                 "asset_tags": ["囚服雪地"],
                                 "appearance_description": "戴毡笠、穿囚服。",
                                 "presence": "present",
-                                "visibility": "in_frame",
-                                "reason": "本段正面描写林冲踏雪。",
                             }
                         ],
                         "key_props": [],
@@ -361,7 +364,8 @@ def test_describe_panels_uses_parallel_segment_items(test_settings) -> None:
     assert "neighbor_segments" not in describe_node["inputs"]["prompt_template"]["value"]
     assert "all_segments" not in describe_node["inputs"]["system"]["value"]
     assert "panel_count_min 和 panel_count_max" in describe_node["inputs"]["prompt_template"]["value"]
-    assert "visibility 为 off_frame 或 reference_only" in describe_node["inputs"]["prompt_template"]["value"]
+    assert "visible_characters" in describe_node["inputs"]["prompt_template"]["value"]
+    assert "visibility 为 off_frame 或 reference_only" not in describe_node["inputs"]["prompt_template"]["value"]
     assert describe_node["outputs"]["required"] == ["results"]
 
     validate_json_value(
@@ -377,6 +381,7 @@ def test_describe_panels_uses_parallel_segment_items(test_settings) -> None:
                             "description": "林冲在雪中行走。",
                             "style": "国风动画",
                             "constraints": "保持角色服饰一致。",
+                            "visible_characters": ["林冲"],
                         }
                     ],
                 }
@@ -406,6 +411,7 @@ def test_merge_segment_descriptions_output_schema(test_settings) -> None:
                             "description": "林冲在雪中行走。",
                             "style": "国风动画",
                             "constraints": "保持角色服饰一致。",
+                            "visible_characters": ["林冲"],
                         }
                     ],
                 }

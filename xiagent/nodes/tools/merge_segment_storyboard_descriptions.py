@@ -72,6 +72,10 @@ def _segment_description_schema() -> dict[str, Any]:
                         "description": {"type": "string", "minLength": 1},
                         "style": {"type": "string", "minLength": 1},
                         "constraints": {"type": "string", "minLength": 1},
+                        "visible_characters": {
+                            "type": "array",
+                            "items": {"type": "string", "minLength": 1},
+                        },
                         "character_focus": {"type": "string"},
                         "environment_details": {"type": "string"},
                         "shot_type": {"type": "string"},

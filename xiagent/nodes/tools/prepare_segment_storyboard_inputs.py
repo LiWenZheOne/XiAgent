@@ -178,8 +178,6 @@ def _compact_character(character: Mapping[str, Any]) -> dict[str, Any]:
         "asset_tags",
         "appearance_description",
         "presence",
-        "visibility",
-        "reason",
     ):
         value = character.get(key)
         if key == "asset_tags":

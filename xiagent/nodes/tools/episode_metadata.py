@@ -211,7 +211,7 @@ class EpisodeMetadataFromAssetNode(BaseNode):
             )
         return NodeResult(
             status="succeeded",
-            output=output,
+            output=_output_for_context(ctx, output),
             asset_refs=[AssetRef(asset_id=episode_asset_id, usage_type="episode_metadata", source=ctx.node_id)],
         )
 
@@ -240,6 +240,15 @@ def _episode_output_schema() -> dict[str, Any]:
         },
         "additionalProperties": False,
     }
+
+
+def _output_for_context(ctx: NodeContext | None, output: dict[str, Any]) -> dict[str, Any]:
+    if ctx is None:
+        return output
+    properties = ctx.output_schema.get("properties")
+    if not isinstance(properties, Mapping):
+        return output
+    return {name: output[name] for name in properties if isinstance(name, str) and name in output}
 
 
 def _normalize_asset_catalog(value: dict[str, Any]) -> dict[str, Any]:

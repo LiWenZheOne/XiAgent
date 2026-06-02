@@ -79,7 +79,6 @@ class PrepareStoryboardPanelCardsNode(BaseNode):
             segment_index = _int(segment.get("index"), len(cards))
             segment_title = _text(segment.get("segment_title")) or f"段落 {segment_index + 1}"
             assignment = assignments.get(segment_index, {})
-            reference_images = _reference_images(assignment)
             segment_context = _segment_context(assignment)
             source_item = items_by_index.get(segment_index, {})
 
@@ -87,6 +86,8 @@ class PrepareStoryboardPanelCardsNode(BaseNode):
                 description = _text(panel.get("description")) or "分镜画面"
                 style = _text(panel.get("style")) or "高质量漫画分镜"
                 constraints = _text(panel.get("constraints")) or "保持角色、服装、道具和场景连续性。"
+                visible_characters = _visible_character_names(panel.get("visible_characters"))
+                reference_images = _reference_images(assignment, visible_characters=visible_characters)
                 prompt = _assemble_prompt(
                     description=description,
                     style=style,
@@ -108,6 +109,7 @@ class PrepareStoryboardPanelCardsNode(BaseNode):
                         "prompt": prompt,
                         "negative_prompt": negative_prompt,
                         "reference_images": reference_images,
+                        "visible_characters": visible_characters,
                         "aspect_ratio": aspect_ratio,
                         "resolution": resolution,
                         "source_item": source_item,
@@ -167,6 +169,7 @@ def _panel_card_schema() -> dict[str, Any]:
                     "additionalProperties": False,
                 },
             },
+            "visible_characters": {"type": "array", "items": {"type": "string", "minLength": 1}},
             "aspect_ratio": {"type": "string", "minLength": 1},
             "resolution": {"type": "string", "minLength": 1},
             "source_item": {"type": "object", "additionalProperties": True},
@@ -193,12 +196,19 @@ def _items_by_index(value: Any) -> dict[int, Mapping[str, Any]]:
     return result
 
 
-def _reference_images(assignment: Mapping[str, Any]) -> list[dict[str, Any]]:
+def _reference_images(
+    assignment: Mapping[str, Any],
+    *,
+    visible_characters: list[str],
+) -> list[dict[str, Any]]:
     references: list[dict[str, Any]] = []
+    visible_names = {_normalise_name(name) for name in visible_characters}
     for character in _object_list(assignment.get("characters")):
         normalized = normalize_asset_record(character, default_asset_type="character")
         image_ref = character.get("image_ref")
         name = _text(normalized.get("asset_name"))
+        if visible_names and _normalise_name(name) not in visible_names:
+            continue
         if name and isinstance(image_ref, Mapping):
             item: dict[str, Any] = {
                 "label": name,
@@ -215,6 +225,10 @@ def _reference_images(assignment: Mapping[str, Any]) -> list[dict[str, Any]]:
                 item["preview_url"] = image_url
             references.append(item)
     return references
+
+
+def _visible_character_names(value: Any) -> list[str]:
+    return _string_list(value)
 
 
 def _segment_context(assignment: Mapping[str, Any]) -> str:
@@ -314,3 +328,7 @@ def _text(value: Any) -> str:
 
 def _int(value: Any, fallback: int) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) else fallback
+
+
+def _normalise_name(value: str) -> str:
+    return value.strip().casefold()

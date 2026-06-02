@@ -35,6 +35,7 @@ workflow:
         description: 拆分剧本，并按每个分段分配在场资产。
         nodes:
           - split_script
+          - prepare_storyboard_asset_index
           - assign_assets_to_segments
           - resolve_segment_image_refs
           - prepare_segment_storyboard_inputs
@@ -211,23 +212,103 @@ nodes:
             additionalProperties: false
       additionalProperties: false
 
+  - id: prepare_storyboard_asset_index
+    ref: tool.prepare_storyboard_asset_index.v1
+    name: 准备分镜资产索引
+    inputs:
+      asset_catalog:
+        from: "$nodes.select_episode_metadata.output.asset_catalog"
+    outputs:
+      type: object
+      required: ["asset_index"]
+      properties:
+        asset_index:
+          type: object
+          required: ["characters", "locations", "props"]
+          properties:
+            characters:
+              type: array
+              items:
+                type: object
+                required: ["asset_name"]
+                properties:
+                  asset_name:
+                    type: string
+                    minLength: 1
+                  asset_type:
+                    type: string
+                    minLength: 1
+                  aliases:
+                    type: array
+                    items:
+                      type: string
+                  summary:
+                    type: string
+                  description:
+                    type: string
+                additionalProperties: false
+            locations:
+              type: array
+              items:
+                type: object
+                required: ["asset_name"]
+                properties:
+                  asset_name:
+                    type: string
+                    minLength: 1
+                  asset_type:
+                    type: string
+                    minLength: 1
+                  aliases:
+                    type: array
+                    items:
+                      type: string
+                  summary:
+                    type: string
+                  description:
+                    type: string
+                additionalProperties: false
+            props:
+              type: array
+              items:
+                type: object
+                required: ["asset_name"]
+                properties:
+                  asset_name:
+                    type: string
+                    minLength: 1
+                  asset_type:
+                    type: string
+                    minLength: 1
+                  aliases:
+                    type: array
+                    items:
+                      type: string
+                  summary:
+                    type: string
+                  description:
+                    type: string
+                additionalProperties: false
+          additionalProperties: false
+      additionalProperties: false
+
   - id: assign_assets_to_segments
     ref: ai.deepseek_structured_json.v1
     name: 分配段落资产
     inputs:
       system:
         value: |
-          仅返回合法 JSON。你是剧本分镜助手。请根据集资产目录和剧本段落，为每个分段分配实际出现或应作为参考的角色、地点和关键道具。
-          只包含叙事段落中实际出现或直接影响画面的资产；仅在对话中提及但不在场的角色不要加入 characters。
+          仅返回合法 JSON。你是剧本连续性分析助手。请根据完整剧本分段和轻量资产索引，为每个分段判断实际在场或对当前场景有直接影响的角色、地点和关键道具。
+          只判断剧情在场关系，不判断是否入画；入画选择交给后续分镜提示词生成步骤。
       prompt:
         template: |
-          请为以下剧本段落分配资产。
+          请为以下剧本段落整理轻量在场资产表。
 
           剧本段落：
           {segments}
 
-          集资产目录：
-          {asset_catalog}
+          轻量资产索引：
+          {asset_index}
 
           世界背景：
           {background}
@@ -239,23 +320,20 @@ nodes:
           - segment_index：段落索引
           - location：本段主要地点，没有则空字符串
           - time：本段时间，没有则空字符串
-          - characters：本段角色数组，每个包含 asset_type、asset_name、asset_tags、presence、visibility、reason，可选 asset_id、image_url
-          - key_props：关键道具数组
+          - characters：本段实际在场或持续处于同一场景内的角色数组，每个只包含 asset_name、presence
+          - key_props：本段实际出现或影响画面的关键道具名称数组
 
           角色判断规则：
           - presence 表示物理在场状态，取值 present、mentioned_only、absent、uncertain。
-          - visibility 表示是否建议入画，取值 in_frame、off_frame、background、reference_only。
-          - 角色在上一段进入同一场景、本段未离开，即使本段没有再次点名，也可以判断为 present；是否入画由本段镜头需要决定。
-          - 仅在对话中被提及、命令中被派遣、计划或回忆中出现的角色，presence=mentioned_only，不得设为 in_frame。
-          - 物理在场不等于必须入画；可根据叙事需要设为 off_frame、background 或 reference_only。
-          - reason 必须简洁说明在场/入画判断依据。
-          - asset_tags 只写稳定服装、造型、配件标签，不写"角色/地点/道具"或角色名。
-          - 不要拼接 image_ref；后续工具节点会根据资产目录补全结构化图像引用和外观描述。
+          - 角色在上一段进入同一场景、本段未离开，即使本段没有再次点名，也可以判断为 present。
+          - 仅在对话中被提及、命令中被派遣、计划或回忆中出现的角色，presence=mentioned_only；如果不会影响当前画面，不要加入 characters。
+          - 只使用轻量资产索引中的资产名称，不要创造新角色名、地点名或道具名。
+          - 不要输出 reason、visibility、asset_type、asset_tags、asset_id、image_ref 或 image_url；后续工具节点会根据完整资产目录补全。
         vars:
           segments:
             from: "$nodes.split_script.output.segments"
-          asset_catalog:
-            from: "$nodes.select_episode_metadata.output.asset_catalog"
+          asset_index:
+            from: "$nodes.prepare_storyboard_asset_index.output.asset_index"
           background:
             from: "$nodes.select_episode_metadata.output.background"
       max_attempts:
@@ -281,32 +359,14 @@ nodes:
                 type: array
                 items:
                   type: object
-                  required: ["asset_type", "asset_name", "asset_tags", "presence", "visibility", "reason"]
+                  required: ["asset_name", "presence"]
                   properties:
-                    asset_type:
-                      type: string
-                      minLength: 1
                     asset_name:
                       type: string
                       minLength: 1
-                    asset_tags:
-                      type: array
-                      items:
-                        type: string
                     presence:
                       type: string
                       enum: ["present", "mentioned_only", "absent", "uncertain"]
-                    visibility:
-                      type: string
-                      enum: ["in_frame", "off_frame", "background", "reference_only"]
-                    reason:
-                      type: string
-                      minLength: 1
-                    asset_id:
-                      type: string
-                      minLength: 1
-                    image_url:
-                      type: string
                   additionalProperties: false
               key_props:
                 type: array
@@ -362,11 +422,6 @@ nodes:
                     presence:
                       type: string
                       enum: ["present", "mentioned_only", "absent", "uncertain"]
-                    visibility:
-                      type: string
-                      enum: ["in_frame", "off_frame", "background", "reference_only"]
-                    reason:
-                      type: string
                     image_ref:
                       type: object
                       required: ["kind"]
@@ -474,8 +529,8 @@ nodes:
           - 当前段落可设计为一页漫画中的多个分格；分格大小不要平均，布局应有节奏和设计感。
           - 必须根据 item.current_segment.panel_count_min 和 panel_count_max 决定 panels 数量：二者相等时 panels 数量必须等于该值；二者不同则 panels 数量必须落在范围内，并在 thinking 中说明选择该数量的理由。
           - 描述中不写对话，不写角色服装和外貌细节，不出现腿部、脚部、鞋履相关描写。
-          - segment_assignment.characters 中只提供当前段相关角色的 asset_name、asset_tags、appearance_description、presence、visibility、reason；只允许 visibility 为 in_frame 或 background 的角色入画。
-          - visibility 为 off_frame 或 reference_only 的角色只能作为剧情连续性和参考图一致性信息，不得画进画面。
+          - segment_assignment.characters 表示当前段在场或持续处于同一场景的角色；请根据当前分格的镜头意图决定哪些角色真正入画，并写入 visible_characters。
+          - 没有写入 visible_characters 的在场角色只能作为剧情连续性参考，不得默认画进该分格。
           - 如果出现复数次要角色，先确定数量并给每个次要角色编号，再分别描述动作。
           - 先读情绪，再定镜头：根据水浒传剧情、当前段落情绪和前后段承接，选择最能放大情绪的镜头语言。
           - 禁止默认构图：不得无理由使用正中平视、角色左右对称或平面布局；每格必须有明确视觉意图。
@@ -490,7 +545,7 @@ nodes:
           - thinking：按上述审查项简洁说明分镜设计依据
           - panels：当前段落的分格数组
 
-          每个 panel 必须包含 description、style、constraints，可选 character_focus、environment_details、shot_type、camera_angle、composition、lighting、mood、action、key_props、continuity_notes。
+          每个 panel 必须包含 description、style、constraints、visible_characters，可选 character_focus、environment_details、shot_type、camera_angle、composition、lighting、mood、action、key_props、continuity_notes。
       prompt_fields:
         value: ["index", "current_segment", "segment_assignment"]
       max_attempts:
@@ -518,7 +573,7 @@ nodes:
                 type: array
                 items:
                   type: object
-                  required: ["description", "style", "constraints"]
+                  required: ["description", "style", "constraints", "visible_characters"]
                   properties:
                     description:
                       type: string
@@ -529,6 +584,11 @@ nodes:
                     constraints:
                       type: string
                       minLength: 1
+                    visible_characters:
+                      type: array
+                      items:
+                        type: string
+                        minLength: 1
                     character_focus:
                       type: string
                     environment_details:
@@ -582,7 +642,7 @@ nodes:
                 type: array
                 items:
                   type: object
-                  required: ["description", "style", "constraints"]
+                  required: ["description", "style", "constraints", "visible_characters"]
                   properties:
                     description:
                       type: string
@@ -593,6 +653,11 @@ nodes:
                     constraints:
                       type: string
                       minLength: 1
+                    visible_characters:
+                      type: array
+                      items:
+                        type: string
+                        minLength: 1
                     character_focus:
                       type: string
                     environment_details:
@@ -732,6 +797,8 @@ edges:
   - from: select_episode_metadata
     to: split_script
   - from: split_script
+    to: prepare_storyboard_asset_index
+  - from: prepare_storyboard_asset_index
     to: assign_assets_to_segments
   - from: assign_assets_to_segments
     to: resolve_segment_image_refs

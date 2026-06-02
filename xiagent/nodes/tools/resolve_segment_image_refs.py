@@ -58,8 +58,6 @@ class ResolveSegmentImageRefsNode(BaseNode):
                                             },
                                             "appearance_description": {"type": "string"},
                                             "presence": {"type": "string"},
-                                            "visibility": {"type": "string"},
-                                            "reason": {"type": "string"},
                                             "image_ref": _image_ref_schema(),
                                             "image_url": {"type": "string"},
                                         },
@@ -142,8 +140,6 @@ def _resolve_character(
         "asset_tags",
         "appearance_description",
         "presence",
-        "visibility",
-        "reason",
         "image_url",
     ):
         if key in normalized_character:

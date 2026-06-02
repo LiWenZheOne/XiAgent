@@ -312,11 +312,12 @@ def test_existing_workflows_still_load(test_settings) -> None:
     # Must not raise — all refs used by this workflow are registered.
     validate_workflow_contract(contract, registry)
 
-    # Spot-check: new storyboard generation starts from episode metadata and
-    # keeps the final V1 RunningHub image generation node.
+    # Spot-check: storyboard generation starts from episode metadata and
+    # delegates final image generation to the storyboard panel interaction.
     node_refs = {n["ref"] for n in contract["nodes"]}
     assert "tool.episode_metadata_from_asset.v1" in node_refs
-    assert "ai.runninghub_image_to_image.v1" in node_refs
+    review_node = next(n for n in contract["nodes"] if n["id"] == "review_storyboard_image")
+    assert review_node["ui"]["controls"]["interaction"]["control_id"] == "ui.interaction.storyboard_panel_cards.v1"
 
 
 def test_storyboard_from_sketch_uses_v3(test_settings) -> None:

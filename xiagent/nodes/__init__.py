@@ -52,6 +52,9 @@ from xiagent.nodes.tools.prepare_asset_semantic_match import PrepareAssetSemanti
 from xiagent.nodes.tools.prepare_storyboard_panel_cards import (
     PrepareStoryboardPanelCardsNode,
 )
+from xiagent.nodes.tools.prepare_storyboard_asset_index import (
+    PrepareStoryboardAssetIndexNode,
+)
 from xiagent.nodes.tools.complete_asset_images import CompleteAssetImagesNode
 from xiagent.nodes.tools.enrich_characters import EnrichCharactersNode
 from xiagent.nodes.tools.episode_metadata import (
@@ -146,6 +149,7 @@ def build_node_registry(settings: Settings) -> NodeRegistry:
     registry.register(PrepareSegmentStoryboardInputsNode())
     registry.register(PrepareAssetSemanticMatchNode())
     registry.register(PrepareStoryboardPanelCardsNode())
+    registry.register(PrepareStoryboardAssetIndexNode())
     registry.register(CompleteAssetImagesNode())
     registry.register(ScriptSplitNode())
     registry.register(AssembleSegmentContextNode())
