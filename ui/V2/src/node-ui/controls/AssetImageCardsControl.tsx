@@ -1,4 +1,4 @@
-import { type ChangeEvent, type DragEvent, useEffect, useMemo, useState } from "react";
+import { type ChangeEvent, type DragEvent, type PointerEvent, type WheelEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { createAssetTag, generateAssetImage, listAssetTags, listAssetTagsForAsset, searchAssets, uploadAsset } from "../../api/assets";
 import { ApiError } from "../../api/client";
@@ -48,6 +48,8 @@ type ImageMetaState = Record<string, Record<string, string>>;
 type UploadState = Record<string, string>;
 type MatchState = Record<string, AssetMatch | null>;
 type CardEditsState = Record<string, CardEditState>;
+type GenerationStatus = "waiting" | "generating" | "success" | "failed";
+type GenerationStatusState = Record<string, GenerationStatus>;
 type GenerationErrorState = Record<string, string>;
 type TabKey = "character" | "scene" | "prop" | "other";
 
@@ -56,10 +58,19 @@ interface AssetNameConflictDialog {
   scopeLabel: string;
 }
 
+interface AssetImagePreview {
+  name: string;
+  url: string;
+}
+
 interface GenerationProgress {
   total: number;
   completed: number;
   running: boolean;
+}
+
+interface GenerationJob {
+  card: AssetImageCard;
 }
 
 interface AssetIdentity {
@@ -85,6 +96,8 @@ const groupLabels: Record<string, string> = {
   prop: "道具",
   other: "其他",
 };
+const GENERATION_CONCURRENCY = 2;
+
 export function AssetImageCardsControl({
   busy,
   config,
@@ -98,12 +111,21 @@ export function AssetImageCardsControl({
   const cards = useMemo(() => buildAssetCards(source), [source]);
   const [images, setImages] = useState<ImageState>(() => readonlyImages(readonly ? node.output_snapshot : node.input_snapshot));
   const [imageMeta, setImageMeta] = useState<ImageMetaState>({});
+  const imagesRef = useRef(images);
+  const imageMetaRef = useRef(imageMeta);
+  const draftPersistQueueRef = useRef<Promise<void>>(Promise.resolve());
   const [matches, setMatches] = useState<MatchState>(() => initialMatches(cards));
   const [edits, setEdits] = useState<CardEditsState>(() => initialCardEdits(cards));
+  const matchesRef = useRef(matches);
+  const editsRef = useRef(edits);
   const [uploading, setUploading] = useState<UploadState>({});
-  const [generating, setGenerating] = useState<UploadState>({});
+  const [generationStatuses, setGenerationStatuses] = useState<GenerationStatusState>({});
   const [generationErrors, setGenerationErrors] = useState<GenerationErrorState>({});
   const [generationProgress, setGenerationProgress] = useState<GenerationProgress | null>(null);
+  const generationStatusesRef = useRef(generationStatuses);
+  const generationQueueRef = useRef<GenerationJob[]>([]);
+  const activeGenerationCountRef = useRef(0);
+  const generationSummaryRef = useRef({ succeeded: 0, failed: 0 });
   const [brokenImageUrls, setBrokenImageUrls] = useState<Record<string, string>>({});
   const [activeTab, setActiveTab] = useState<TabKey>("character");
   const [draggingKey, setDraggingKey] = useState("");
@@ -113,9 +135,10 @@ export function AssetImageCardsControl({
   const [libraryBusy, setLibraryBusy] = useState(false);
   const [missingImageDialogOpen, setMissingImageDialogOpen] = useState(false);
   const [assetNameConflictDialog, setAssetNameConflictDialog] = useState<AssetNameConflictDialog | null>(null);
+  const [previewImage, setPreviewImage] = useState<AssetImagePreview | null>(null);
   const tabs = useMemo(() => buildTabs(cards), [cards]);
   const selectedTab = tabs.some((tab) => tab.key === activeTab) ? activeTab : tabs[0]?.key ?? "character";
-  const generatingCount = Object.keys(generating).length;
+  const generatingCount = Object.values(generationStatuses).filter((status) => status === "waiting" || status === "generating").length;
   const generationProgressPercent = generationProgress?.total
     ? Math.round((generationProgress.completed / generationProgress.total) * 100)
     : 0;
@@ -128,6 +151,26 @@ export function AssetImageCardsControl({
     setMatches((current) => ({ ...initialMatches(cards), ...current }));
     setEdits((current) => ({ ...initialCardEdits(cards), ...current }));
   }, [cards]);
+
+  useEffect(() => {
+    imagesRef.current = images;
+  }, [images]);
+
+  useEffect(() => {
+    imageMetaRef.current = imageMeta;
+  }, [imageMeta]);
+
+  useEffect(() => {
+    matchesRef.current = matches;
+  }, [matches]);
+
+  useEffect(() => {
+    editsRef.current = edits;
+  }, [edits]);
+
+  useEffect(() => {
+    generationStatusesRef.current = generationStatuses;
+  }, [generationStatuses]);
 
   useEffect(() => {
     if (readonly || !cards.length || !Object.keys(defaultReferenceTemplates).length) return;
@@ -175,7 +218,11 @@ export function AssetImageCardsControl({
     nextEdits: CardEditsState = edits,
   ) {
     if (readonly || !onDraft) return;
-    await onDraft(interactionPayload("generate_missing", "", nextImages, nextImageMeta, nextMatches, nextEdits));
+    const payload = interactionPayload("generate_missing", "", nextImages, nextImageMeta, nextMatches, nextEdits);
+    const persist = () => onDraft(payload);
+    const nextPersist = draftPersistQueueRef.current.then(persist, persist);
+    draftPersistQueueRef.current = nextPersist.catch(() => undefined);
+    await nextPersist;
   }
 
   function interactionPayload(
@@ -330,92 +377,136 @@ export function AssetImageCardsControl({
 
   async function generateCards(target?: AssetImageCard) {
     if (readonly || busy) return;
-    const targetCards = target ? [target] : cards.filter((card) => !images[card.assetKey]);
-    if (!targetCards.length) {
+    const targetCards = target ? [target] : cards.filter((card) => !imagesRef.current[card.assetKey]);
+    const queuedCards = targetCards.filter((card) => {
+      const status = generationStatusesRef.current[card.assetKey];
+      return status !== "waiting" && status !== "generating";
+    });
+    if (!queuedCards.length) {
       setError("当前没有需要生成的缺图资产。");
       return;
     }
     setError("");
     setGenerationErrors((current) => {
       const next = { ...current };
-      for (const card of targetCards) delete next[card.assetKey];
+      for (const card of queuedCards) delete next[card.assetKey];
       return next;
     });
-    setGenerationProgress({ total: targetCards.length, completed: 0, running: true });
-    for (const card of targetCards) {
-      setGenerating((current) => ({ ...current, [card.assetKey]: "生成中" }));
+    const startingNewRun = activeGenerationCountRef.current === 0 && generationQueueRef.current.length === 0;
+    if (startingNewRun) {
+      generationSummaryRef.current = { succeeded: 0, failed: 0 };
     }
-    try {
-      const settledResults = await Promise.allSettled(targetCards.map(async (card) => {
-        const edit = edits[card.assetKey] ?? cardEditFromCard(card);
-        const activeMatch = activeMatchForCard(matches, card);
-        const promptResult = editedPromptResult(card, edit, activeMatch);
-        const promptText = assetPromptText(card, config.options, activeMatch);
-        try {
-          const generated = await generateAssetImage({
-            project_id: projectId,
-            prompt_result: promptResult,
-            prompt_prefix: promptText.prefix,
-            prompt_suffix: promptText.suffix,
-            aspect_ratio: tabKeyForAssetType(card.assetType) === "scene" ? "16:9" : "1:1",
-            resolution: "2k",
-          });
-          return {
-            card,
-            imageUrl: generated.image_url,
-            meta: {
-              source: generated.source || "ai_generated",
-              ...(generated.asset_id ? { asset_id: generated.asset_id } : {}),
-              ...(generated.runninghub_task_id ? { runninghub_task_id: generated.runninghub_task_id } : {}),
-              ...(generated.variant ? { variant: generated.variant } : {}),
-            },
-          };
-        } finally {
-          setGenerationProgress((current) => current ? {
-            ...current,
-            completed: Math.min(current.completed + 1, current.total),
-          } : current);
+    generationQueueRef.current = [
+      ...generationQueueRef.current,
+      ...queuedCards.map((card) => ({ card })),
+    ];
+    setGenerationStatuses((current) => {
+      const next = { ...current };
+      for (const card of queuedCards) next[card.assetKey] = "waiting";
+      generationStatusesRef.current = next;
+      return next;
+    });
+    setGenerationProgress((current) => ({
+      total: (current?.running ? current.total : 0) + queuedCards.length,
+      completed: current?.running ? current.completed : 0,
+      running: true,
+    }));
+    processGenerationQueue();
+  }
+
+  function processGenerationQueue() {
+    while (activeGenerationCountRef.current < GENERATION_CONCURRENCY && generationQueueRef.current.length) {
+      const job = generationQueueRef.current.shift();
+      if (!job) return;
+      activeGenerationCountRef.current += 1;
+      void runGenerationJob(job).finally(() => {
+        activeGenerationCountRef.current = Math.max(0, activeGenerationCountRef.current - 1);
+        setGenerationProgress((current) => {
+          if (!current) return current;
+          const completed = Math.min(current.completed + 1, current.total);
+          const running = activeGenerationCountRef.current > 0 || generationQueueRef.current.length > 0;
+          return { ...current, completed, running };
+        });
+        if (activeGenerationCountRef.current === 0 && generationQueueRef.current.length === 0) {
+          const summary = generationSummaryRef.current;
+          if (summary.failed) {
+            setError(`已生成 ${summary.succeeded} 张资产图像，${summary.failed} 张生成失败。`);
+          } else {
+            setError(`已生成 ${summary.succeeded} 张资产图像。`);
+          }
         }
-      }));
-      const results = settledResults.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
-      const nextGenerationErrors: GenerationErrorState = {};
-      settledResults.forEach((result, index) => {
-        if (result.status === "rejected") {
-          nextGenerationErrors[targetCards[index].assetKey] = readableGenerationError(result.reason);
-        }
+        processGenerationQueue();
       });
-      const nextImages = { ...images };
-      const nextImageMeta = { ...imageMeta };
-      for (const result of results) {
-        if (result.imageUrl) nextImages[result.card.assetKey] = result.imageUrl;
-        if (result.imageUrl) nextImageMeta[result.card.assetKey] = result.meta;
-      }
+    }
+  }
+
+  async function runGenerationJob({ card }: GenerationJob) {
+    setGenerationStatuses((current) => {
+      const next = { ...current, [card.assetKey]: "generating" as GenerationStatus };
+      generationStatusesRef.current = next;
+      return next;
+    });
+    try {
+      const edit = editsRef.current[card.assetKey] ?? cardEditFromCard(card);
+      const activeMatch = activeMatchForCard(matchesRef.current, card);
+      const promptResult = editedPromptResult(card, edit, activeMatch);
+      const promptText = assetPromptText(card, config.options, activeMatch);
+      const generated = await generateAssetImage({
+        project_id: projectId,
+        prompt_result: promptResult,
+        prompt_prefix: promptText.prefix,
+        prompt_suffix: promptText.suffix,
+        aspect_ratio: tabKeyForAssetType(card.assetType) === "scene" ? "16:9" : "1:1",
+        resolution: "2k",
+      });
+      const nextImages = { ...imagesRef.current, [card.assetKey]: generated.image_url };
+      const nextImageMeta = {
+        ...imageMetaRef.current,
+        [card.assetKey]: {
+          source: generated.source || "ai_generated",
+          ...(generated.asset_id ? { asset_id: generated.asset_id } : {}),
+          ...(generated.runninghub_task_id ? { runninghub_task_id: generated.runninghub_task_id } : {}),
+          ...(generated.variant ? { variant: generated.variant } : {}),
+        },
+      };
+      imagesRef.current = nextImages;
+      imageMetaRef.current = nextImageMeta;
       setImages(nextImages);
       setImageMeta(nextImageMeta);
-      setGenerationErrors((current) => ({ ...current, ...nextGenerationErrors }));
+      setGenerationErrors((current) => {
+        const next = { ...current };
+        delete next[card.assetKey];
+        return next;
+      });
       setBrokenImageUrls((current) => {
         const next = { ...current };
-        for (const result of results) {
-          if (result.imageUrl) delete next[result.card.assetKey];
-        }
+        delete next[card.assetKey];
         return next;
       });
-      if (results.length) await persistDraft(nextImages, nextImageMeta);
-      const failedCount = Object.keys(nextGenerationErrors).length;
-      if (failedCount) {
-        setError(`已生成 ${results.length} 张资产图像，${failedCount} 张生成失败。`);
-      } else {
-        setError(`已生成 ${results.length} 张资产图像。`);
-      }
-    } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "资产图像生成失败。");
-    } finally {
-      setGenerationProgress((current) => current ? { ...current, running: false } : current);
-      setGenerating((current) => {
-        const next = { ...current };
-        for (const card of targetCards) delete next[card.assetKey];
+      setGenerationStatuses((current) => {
+        const next = { ...current, [card.assetKey]: "success" as GenerationStatus };
+        generationStatusesRef.current = next;
         return next;
       });
+      generationSummaryRef.current = {
+        ...generationSummaryRef.current,
+        succeeded: generationSummaryRef.current.succeeded + 1,
+      };
+      await persistDraft(nextImages, nextImageMeta, matchesRef.current, editsRef.current);
+    } catch (generationError) {
+      setGenerationErrors((current) => ({
+        ...current,
+        [card.assetKey]: readableGenerationError(generationError),
+      }));
+      setGenerationStatuses((current) => {
+        const next = { ...current, [card.assetKey]: "failed" as GenerationStatus };
+        generationStatusesRef.current = next;
+        return next;
+      });
+      generationSummaryRef.current = {
+        ...generationSummaryRef.current,
+        failed: generationSummaryRef.current.failed + 1,
+      };
     }
   }
 
@@ -512,8 +603,8 @@ export function AssetImageCardsControl({
         </div>
         {!readonly ? (
           <div className="asset-image-cards-actions">
-            <button className="secondary-button" disabled={busy || Boolean(generatingCount)} type="button" onClick={() => void generateCards()}>
-              {generatingCount ? `生成中 ${generationProgress?.completed ?? 0}/${generationProgress?.total ?? generatingCount}` : "资产生成"}
+            <button className="secondary-button" disabled={busy} type="button" onClick={() => void generateCards()}>
+              {generatingCount ? `生成队列 ${generationProgress?.completed ?? 0}/${generationProgress?.total ?? generatingCount}` : "资产生成"}
             </button>
             <button className="primary-button" disabled={busy || libraryBusy} type="button" onClick={saveCardsToLibrary}>
               一键入库
@@ -531,7 +622,7 @@ export function AssetImageCardsControl({
       {generationProgress ? (
         <div className={generationProgress.running ? "asset-generation-progress running" : "asset-generation-progress"} role="status" aria-live="polite">
           <div>
-            <strong>{generationProgress.running ? "正在并行生成资产图像" : "资产图像生成完成"}</strong>
+            <strong>{generationProgress.running ? `正在生成资产图像（并发 ${GENERATION_CONCURRENCY}）` : "资产图像生成完成"}</strong>
             <span>{generationProgress.completed}/{generationProgress.total}</span>
           </div>
           <div className="asset-generation-progress-bar" aria-hidden="true">
@@ -566,8 +657,9 @@ export function AssetImageCardsControl({
         edits={edits}
         readonly={readonly}
         uploading={uploading}
-        generating={generating}
+        generationStatuses={generationStatuses}
         generationErrors={generationErrors}
+        onPreview={(image) => setPreviewImage(image)}
         onDragState={setDraggingKey}
         onDrop={dropCardImage}
         onEdit={(card, patch) => {
@@ -581,6 +673,9 @@ export function AssetImageCardsControl({
         onUpload={uploadCardImage}
       />
       {error ? <p className="form-error">{error}</p> : null}
+      {previewImage ? (
+        <AssetImageFullscreenViewer image={previewImage} onClose={() => setPreviewImage(null)} />
+      ) : null}
       {missingImageDialogOpen ? (
         <div className="confirm-backdrop" role="presentation">
           <section className="confirm-dialog asset-missing-image-dialog" role="dialog" aria-modal="true" aria-label="缺少资产图像">
@@ -595,7 +690,7 @@ export function AssetImageCardsControl({
               </button>
               <button
                 className="primary-button"
-                disabled={busy || Boolean(generatingCount)}
+                disabled={busy}
                 type="button"
                 onClick={() => {
                   setMissingImageDialogOpen(false);
@@ -660,8 +755,9 @@ function AssetCardGroup({
   readonly,
   busy,
   uploading,
-  generating,
+  generationStatuses,
   generationErrors,
+  onPreview,
   draggingKey,
   onUpload,
   onDrop,
@@ -680,8 +776,9 @@ function AssetCardGroup({
   readonly: boolean;
   busy: boolean;
   uploading: UploadState;
-  generating: UploadState;
+  generationStatuses: GenerationStatusState;
   generationErrors: GenerationErrorState;
+  onPreview: (image: AssetImagePreview) => void;
   draggingKey: string;
   onUpload: (card: AssetImageCard, event: ChangeEvent<HTMLInputElement>) => void;
   onDrop: (card: AssetImageCard, event: DragEvent<HTMLElement>) => void;
@@ -710,6 +807,7 @@ function AssetCardGroup({
           const match = activeMatchForCard(matches, card);
           const edit = edits[card.assetKey] ?? cardEditFromCard(card);
           const finalImageUrl = images[card.assetKey] ?? "";
+          const generationStatus = generationStatuses[card.assetKey] ?? "";
           const generationError = generationErrors[card.assetKey] ?? "";
           const imageUrl = finalImageUrl || match?.imageUrl || "";
           const previewImageUrl = brokenImageUrls[card.assetKey] === imageUrl ? "" : imageUrl;
@@ -747,8 +845,8 @@ function AssetCardGroup({
                   <small>{match ? `关联：${matchDisplayName}` : "无资产关联"}</small>
                 </div>
                 {!readonly ? (
-                  <button className="secondary-button" disabled={busy || Boolean(generating[card.assetKey])} type="button" onClick={() => onGenerate(card)}>
-                    {generating[card.assetKey] ? "生成中" : finalImageUrl ? "重新生成" : "生成"}
+                  <button className="secondary-button" disabled={busy || generationStatus === "waiting" || generationStatus === "generating"} type="button" onClick={() => onGenerate(card)}>
+                    {generationStatus === "waiting" ? "等待中" : generationStatus === "generating" ? "生成中" : finalImageUrl ? "重新生成" : "生成"}
                   </button>
                 ) : <span>{previewImageUrl ? "已上传" : "未上传"}</span>}
               </header>
@@ -762,6 +860,21 @@ function AssetCardGroup({
                     }}
                   />
                 ) : <span>点击选择<br />拖拽上传</span>}
+                {previewImageUrl ? (
+                  <button
+                    aria-label="全屏查看图像"
+                    className="asset-zoom-button"
+                    title="全屏查看"
+                    type="button"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      onPreview({ name: displayName, url: previewImageUrl });
+                    }}
+                  >
+                    ⛶
+                  </button>
+                ) : null}
                 {previewImageUrl ? (
                   <button
                     aria-label={`下载${displayName}图像`}
@@ -822,7 +935,7 @@ function AssetCardGroup({
                 {!readonly ? (
                   <div className="asset-image-card-actions">
                     {uploading[card.assetKey] ? <span>{uploading[card.assetKey]}</span> : null}
-                    {generating[card.assetKey] ? <span>{generating[card.assetKey]}</span> : null}
+                    {generationStatus ? <span className={`asset-image-card-status ${generationStatus}`}>{generationStatusLabel(generationStatus)}</span> : null}
                     {generationError ? <span className="asset-image-card-error">{generationError}</span> : null}
                   </div>
                 ) : null}
@@ -843,6 +956,109 @@ function downloadImage(url: string, name: string) {
   document.body.appendChild(link);
   link.click();
   link.remove();
+}
+
+function generationStatusLabel(status: GenerationStatus): string {
+  if (status === "waiting") return "等待中";
+  if (status === "generating") return "生成中";
+  if (status === "success") return "成功";
+  return "失败";
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
+function AssetImageFullscreenViewer({ image, onClose }: { image: AssetImagePreview; onClose: () => void }) {
+  const [scale, setScale] = useState(1);
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const [dragging, setDragging] = useState(false);
+  const dragRef = useRef({ pointerId: -1, startX: 0, startY: 0, originX: 0, originY: 0 });
+
+  useEffect(() => {
+    setScale(1);
+    setOffset({ x: 0, y: 0 });
+  }, [image.url]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  function handleWheel(event: WheelEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setScale((current) => clamp(current * (event.deltaY < 0 ? 1.12 : 0.88), 0.2, 8));
+  }
+
+  function handlePointerDown(event: PointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: offset.x,
+      originY: offset.y,
+    };
+    setDragging(true);
+  }
+
+  function handlePointerMove(event: PointerEvent<HTMLDivElement>) {
+    if (!dragging || dragRef.current.pointerId !== event.pointerId) return;
+    setOffset({
+      x: dragRef.current.originX + event.clientX - dragRef.current.startX,
+      y: dragRef.current.originY + event.clientY - dragRef.current.startY,
+    });
+  }
+
+  function handlePointerEnd(event: PointerEvent<HTMLDivElement>) {
+    if (dragRef.current.pointerId === event.pointerId) {
+      setDragging(false);
+      dragRef.current.pointerId = -1;
+    }
+  }
+
+  return (
+    <div aria-label={`全屏查看 ${image.name}`} aria-modal="true" className="asset-fullscreen-viewer" role="dialog" onMouseDown={(event) => {
+      if (event.target === event.currentTarget) onClose();
+    }}>
+      <div className="asset-fullscreen-toolbar" onMouseDown={(event) => event.stopPropagation()}>
+        <strong>{image.name}</strong>
+        <span>{Math.round(scale * 100)}%</span>
+        <button className="secondary-button" type="button" onClick={() => {
+          setScale(1);
+          setOffset({ x: 0, y: 0 });
+        }}>
+          100%
+        </button>
+        <button className="secondary-button" type="button" onClick={onClose}>
+          关闭
+        </button>
+      </div>
+      <div
+        className={dragging ? "asset-fullscreen-stage dragging" : "asset-fullscreen-stage"}
+        onMouseDown={(event) => {
+          if (event.target === event.currentTarget) onClose();
+          event.stopPropagation();
+        }}
+        onPointerCancel={handlePointerEnd}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerEnd}
+        onWheel={handleWheel}
+      >
+        <img
+          alt={image.name}
+          draggable={false}
+          src={image.url}
+          style={{ transform: `translate3d(${offset.x}px, ${offset.y}px, 0) scale(${scale})` }}
+        />
+      </div>
+    </div>
+  );
 }
 
 function buildAssetCards(source: Record<string, unknown> | null): AssetImageCard[] {
@@ -1328,6 +1544,7 @@ function assetScopeLabel(scope: string): string {
 
 function readableGenerationError(error: unknown): string {
   const message = error instanceof Error ? error.message : "";
+  if (message.includes("NOT_ENOUGH_BALANCE")) return "生成失败：余额不足，请充值后重试。";
   return message ? `生成失败：${message}` : "生成失败，请重试";
 }
 

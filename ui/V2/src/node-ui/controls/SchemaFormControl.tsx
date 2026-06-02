@@ -113,9 +113,9 @@ export function SchemaFormControl({ busy, config, node, nodeSpec, projectId, sna
           <div className="schema-form-primary-row">
             <div className="schema-form-primary-picker">
               {renderField(dropdownAssetField)}
-            </div>
-            <div className="schema-form-switch-group" role="group" aria-label="分镜生成选项">
-              {compactSwitchFields.map((field) => renderField(field))}
+              <div className="schema-form-switch-group" role="group" aria-label="分镜生成选项">
+                {compactSwitchFields.map((field) => renderField(field))}
+              </div>
             </div>
           </div>
         ) : null}

@@ -1151,6 +1151,91 @@ describe("node-ui controls", () => {
     ]));
   });
 
+  it("queues batch generation with two concurrent cards and visible per-card statuses", async () => {
+    const statusResolvers = new Map<string, (response: Response) => void>();
+    const response = (body: unknown) => new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/assets/generate-image") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+        const promptResult = body.prompt_result as Record<string, unknown>;
+        const assetName = String(promptResult.asset_name ?? "");
+        return jsonResponse({
+          generation_id: `image-generation-${assetName}`,
+          status: "queued",
+        });
+      }
+      if (url.startsWith("/api/assets/generate-image/")) {
+        const generationId = decodeURIComponent(url.split("/").pop() ?? "");
+        return new Promise<Response>((resolve) => {
+          statusResolvers.set(generationId, resolve);
+        });
+      }
+      return jsonResponse({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <AssetImageCardsControl
+        config={{ control_id: "ui.interaction.asset_image_cards.v1", variant: "grouped_cards", mode: "interactive" }}
+        node={{
+          node_execution_id: "exec-card-queue",
+          node_id: "upload_images",
+          node_ref: "system.human_approval.v1",
+          status: "waiting",
+          input_snapshot: {
+            approved_assets: {
+              characters: [
+                { name: "林冲", prompt: "囚服毡笠" },
+                { name: "鲁智深", prompt: "粗眉僧衣" },
+                { name: "武松", prompt: "行者装束" },
+              ],
+            },
+            prompt_results: [
+              { asset_type: "character", asset_name: "林冲", prompt: "囚服毡笠", reference_image_ref: { kind: "asset", asset_id: "asset-lin", role: "reference" } },
+              { asset_type: "character", asset_name: "鲁智深", prompt: "粗眉僧衣", reference_image_ref: { kind: "asset", asset_id: "asset-lu", role: "reference" } },
+              { asset_type: "character", asset_name: "武松", prompt: "行者装束", reference_image_ref: { kind: "asset", asset_id: "asset-wu", role: "reference" } },
+            ],
+          },
+        }}
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "资产生成" }));
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.filter(([url]) => String(url) === "/api/assets/generate-image").length).toBe(2);
+    });
+    expect(screen.getAllByText("生成中").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText("等待中").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByRole("status")).toHaveTextContent("0/3");
+
+    statusResolvers.get("image-generation-林冲")?.(response({
+      generation_id: "image-generation-林冲",
+      status: "succeeded",
+      result: { image_url: "https://cdn.example.com/generated-lin.png", source: "ai_generated" },
+    }));
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.filter(([url]) => String(url) === "/api/assets/generate-image").length).toBe(3);
+    });
+    expect(await screen.findByText("成功")).toBeInTheDocument();
+    expect(screen.getAllByText("生成中").length).toBeGreaterThanOrEqual(2);
+    statusResolvers.get("image-generation-鲁智深")?.(response({
+      generation_id: "image-generation-鲁智深",
+      status: "succeeded",
+      result: { image_url: "https://cdn.example.com/generated-lu.png", source: "ai_generated" },
+    }));
+    statusResolvers.get("image-generation-武松")?.(response({
+      generation_id: "image-generation-武松",
+      status: "succeeded",
+      result: { image_url: "https://cdn.example.com/generated-wu.png", source: "ai_generated" },
+    }));
+  });
+
   it("keeps successful generated images when one asset image generation fails", async () => {
     const onDraft = vi.fn();
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -1159,7 +1244,7 @@ describe("node-ui controls", () => {
         const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
         const promptResult = body.prompt_result as Record<string, unknown>;
         const assetType = String(promptResult.asset_type ?? "");
-        if (assetType === "scene") throw new Error("RunningHub image request timed out");
+        if (assetType === "scene") throw new Error("NOT_ENOUGH_BALANCE");
         return jsonResponse({
           generation_id: `image-generation-${assetType}`,
           status: "queued",
@@ -1209,10 +1294,18 @@ describe("node-ui controls", () => {
     await userEvent.click(screen.getByRole("button", { name: "资产生成" }));
 
     expect(await screen.findByRole("img", { name: "鲁智深 图像" })).toHaveAttribute("src", "https://cdn.example.com/generated-character.png");
+    await userEvent.click(screen.getByRole("button", { name: "全屏查看图像" }));
+    const preview = await screen.findByRole("dialog", { name: "全屏查看 角色_鲁智深_默认" });
+    expect(within(preview).getByAltText("角色_鲁智深_默认")).toHaveAttribute("src", "https://cdn.example.com/generated-character.png");
+    fireEvent.wheel(within(preview).getByAltText("角色_鲁智深_默认").parentElement as HTMLElement, { deltaY: -120 });
+    expect(await within(preview).findByText("112%")).toBeInTheDocument();
+    fireEvent.mouseDown(preview);
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "全屏查看 角色_鲁智深_默认" })).not.toBeInTheDocument());
     await userEvent.click(screen.getByRole("tab", { name: /道具/ }));
     expect(await screen.findByRole("img", { name: "花枪 图像" })).toHaveAttribute("src", "https://cdn.example.com/generated-prop.png");
     await userEvent.click(screen.getByRole("tab", { name: /地点/ }));
-    expect(screen.getByText("生成失败：RunningHub image request timed out")).toBeInTheDocument();
+    expect(screen.getByText("生成失败：余额不足，请充值后重试。")).toBeInTheDocument();
+    expect(screen.queryByText(/NOT_ENOUGH_BALANCE/)).not.toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("资产图像生成完成");
     expect(screen.getByRole("status")).toHaveTextContent("3/3");
     expect(screen.getByText("已生成 2 张资产图像，1 张生成失败。")).toBeInTheDocument();
@@ -1223,6 +1316,96 @@ describe("node-ui controls", () => {
         expect.objectContaining({ asset_name: "花枪", image_url: "https://cdn.example.com/generated-prop.png" }),
       ]),
     }));
+  });
+
+  it("merges concurrent single-card generation results without losing earlier images", async () => {
+    const onDraft = vi.fn(() => Promise.resolve());
+    const statusResolvers = new Map<string, (response: Response) => void>();
+    const response = (body: unknown) => new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+    const generationIdForName = (name: string) => name.includes("鲁智深") ? "image-generation-lu" : "image-generation-lin";
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/assets/generate-image") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+        const promptResult = body.prompt_result as Record<string, unknown>;
+        const assetName = String(promptResult.asset_name ?? "");
+        return jsonResponse({
+          generation_id: generationIdForName(assetName),
+          status: "queued",
+        });
+      }
+      if (url.startsWith("/api/assets/generate-image/")) {
+        const generationId = decodeURIComponent(url.split("/").pop() ?? "");
+        return new Promise<Response>((resolve) => {
+          statusResolvers.set(generationId, resolve);
+        });
+      }
+      return jsonResponse({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <AssetImageCardsControl
+        config={{ control_id: "ui.interaction.asset_image_cards.v1", variant: "grouped_cards", mode: "interactive" }}
+        node={{
+          node_execution_id: "exec-card-concurrent-single",
+          node_id: "upload_images",
+          node_ref: "system.human_approval.v1",
+          status: "waiting",
+          input_snapshot: {
+            approved_assets: {
+              characters: [
+                { name: "林冲", prompt: "囚服毡笠" },
+                { name: "鲁智深", prompt: "粗眉僧衣" },
+              ],
+            },
+            prompt_results: [
+              { asset_type: "character", asset_name: "林冲", prompt: "囚服毡笠", reference_image_ref: { kind: "asset", asset_id: "asset-lin", role: "reference" } },
+              { asset_type: "character", asset_name: "鲁智深", prompt: "粗眉僧衣", reference_image_ref: { kind: "asset", asset_id: "asset-lu", role: "reference" } },
+            ],
+          },
+        }}
+        onDraft={onDraft}
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    const generateButtons = screen.getAllByRole("button", { name: "生成" });
+    await userEvent.click(generateButtons[0]);
+    await userEvent.click(generateButtons[1]);
+
+    await waitFor(() => expect(statusResolvers.size).toBe(2));
+    statusResolvers.get("image-generation-lu")?.(response({
+      generation_id: "image-generation-lu",
+      status: "succeeded",
+      result: {
+        image_url: "https://cdn.example.com/generated-lu.png",
+        source: "ai_generated",
+      },
+    }));
+    expect(await screen.findByRole("img", { name: "鲁智深 图像" })).toHaveAttribute("src", "https://cdn.example.com/generated-lu.png");
+
+    statusResolvers.get("image-generation-lin")?.(response({
+      generation_id: "image-generation-lin",
+      status: "succeeded",
+      result: {
+        image_url: "https://cdn.example.com/generated-lin.png",
+        source: "ai_generated",
+      },
+    }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("img", { name: "林冲 图像" })).toHaveAttribute("src", "https://cdn.example.com/generated-lin.png");
+      expect(screen.getByRole("img", { name: "鲁智深 图像" })).toHaveAttribute("src", "https://cdn.example.com/generated-lu.png");
+      expect(onDraft).toHaveBeenLastCalledWith(expect.objectContaining({
+        asset_images: expect.arrayContaining([
+          expect.objectContaining({ asset_name: "林冲", image_url: "https://cdn.example.com/generated-lin.png" }),
+          expect.objectContaining({ asset_name: "鲁智深", image_url: "https://cdn.example.com/generated-lu.png" }),
+        ]),
+      }));
+    });
   });
 
   it("renders the P3 asset summary table with tabs and submitted image rows", async () => {
@@ -2194,7 +2377,9 @@ describe("node-ui controls", () => {
 
     const picker = await screen.findByRole("combobox", { name: "集信息资产" });
     expect(picker.closest(".schema-form-primary-row")).toBeInTheDocument();
-    expect(screen.getByRole("group", { name: "分镜生成选项" })).toBeInTheDocument();
+    const primaryPicker = picker.closest(".schema-form-primary-picker");
+    const switchGroup = screen.getByRole("group", { name: "分镜生成选项" });
+    expect(primaryPicker).toContainElement(switchGroup);
     const noMaterialSwitch = screen.getByLabelText("禁止材质区分");
     const enrichDescriptionSwitch = screen.getByLabelText("丰富画面描述");
     expect(noMaterialSwitch.closest(".check-field")).toHaveClass("check-field");

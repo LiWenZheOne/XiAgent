@@ -805,23 +805,22 @@ dd {
 }
 
 .schema-form-primary-row {
-  display: grid;
-  grid-template-columns: minmax(260px, 1fr) minmax(220px, max-content);
-  gap: 10px;
-  align-items: start;
+  display: block;
 }
 
 .schema-form-primary-picker {
+  display: grid;
+  gap: 10px;
+  width: min(100%, 560px);
   min-width: 0;
 }
 
 .schema-form-switch-group {
   display: flex;
   flex-wrap: wrap;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 8px;
   min-width: 0;
-  padding-top: 25px;
 }
 
 .asset-picker-dropdown-field {
@@ -856,17 +855,6 @@ dd {
 .schema-form-primary-row .asset-picker-dropdown-field {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-}
-
-@media (max-width: 760px) {
-  .schema-form-primary-row {
-    grid-template-columns: 1fr;
-  }
-
-  .schema-form-switch-group {
-    justify-content: flex-start;
-    padding-top: 0;
-  }
 }
 
 .asset-picker-episode-preview .episode-context-control {
@@ -4210,6 +4198,8 @@ textarea.asset-summary-cell-input {
 
 .asset-card:hover .asset-zoom-button,
 .asset-card:focus-within .asset-zoom-button,
+.asset-image-preview:hover .asset-zoom-button,
+.asset-image-preview:focus-within .asset-zoom-button,
 .asset-zoom-button:focus-visible {
   opacity: 1;
   transform: translateY(0);
