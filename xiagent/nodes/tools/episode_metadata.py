@@ -159,6 +159,8 @@ class EpisodeMetadataFromAssetNode(BaseNode):
                 "required": ["episode_asset_id"],
                 "properties": {
                     "episode_asset_id": {"type": "string", "minLength": 1},
+                    "no_material": {"type": "boolean"},
+                    "enrich_description": {"type": "boolean"},
                 },
                 "additionalProperties": False,
             },
@@ -191,6 +193,10 @@ class EpisodeMetadataFromAssetNode(BaseNode):
             "background": _text(payload.get("background")),
             "asset_catalog": _object(payload.get("asset_catalog")),
             "episode_asset_id": episode_asset_id,
+            "storyboard_options": {
+                "no_material": _bool(inputs.get("no_material")),
+                "enrich_description": _bool(inputs.get("enrich_description")),
+            },
         }
         if not output["source_script"]:
             raise ValidationError(
@@ -217,6 +223,14 @@ def _episode_output_schema() -> dict[str, Any]:
             "asset_catalog": {"type": "object", "additionalProperties": True},
             "asset_images": {"type": "array", "items": {"type": "object"}},
             "episode_asset_id": {"type": "string", "minLength": 1},
+            "storyboard_options": {
+                "type": "object",
+                "properties": {
+                    "no_material": {"type": "boolean"},
+                    "enrich_description": {"type": "boolean"},
+                },
+                "additionalProperties": False,
+            },
         },
         "additionalProperties": False,
     }
@@ -267,6 +281,10 @@ def _optional_text(value: Any) -> str:
 
 def _text(value: Any) -> str:
     return value.strip() if isinstance(value, str) and value.strip() else ""
+
+
+def _bool(value: Any) -> bool:
+    return value is True
 
 
 def _object(value: Any) -> dict[str, Any]:

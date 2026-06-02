@@ -98,6 +98,22 @@ nodes:
           type: string
           minLength: 1
           title: 集信息资产
+      no_material:
+        from_user: true
+        required: false
+        schema:
+          type: boolean
+          title: 禁止材质区分
+          default: false
+          description: 启用后，分镜画面描述不区分粗糙、丝滑、生锈等材质质感。
+      enrich_description:
+        from_user: true
+        required: false
+        schema:
+          type: boolean
+          title: 丰富画面描述
+          default: false
+          description: 启用后，在分镜设计中追加空间深度、物理反馈、建筑陈设、颗粒介质和琐碎叙事细节审查。
     outputs:
       type: object
       required: ["episode_name", "episode_summary", "source_script", "asset_catalog", "episode_asset_id"]
@@ -122,6 +138,14 @@ nodes:
         episode_asset_id:
           type: string
           minLength: 1
+        storyboard_options:
+          type: object
+          properties:
+            no_material:
+              type: boolean
+            enrich_description:
+              type: boolean
+          additionalProperties: false
       additionalProperties: false
     config:
       title: 选择集信息资产
@@ -215,10 +239,18 @@ nodes:
           - segment_index：段落索引
           - location：本段主要地点，没有则空字符串
           - time：本段时间，没有则空字符串
-          - characters：本段实际出现角色数组，每个包含 asset_type、asset_name、asset_tags，可选 asset_id、image_url
+          - characters：本段角色数组，每个包含 asset_type、asset_name、asset_tags、presence、visibility、reason，可选 asset_id、image_url
           - key_props：关键道具数组
 
-          只判断哪些资产实际出现在本段，不要拼接 image_ref；asset_tags 只写稳定服装、造型、配件标签，不写"角色/地点/道具"或角色名；后续工具节点会根据资产目录补全结构化图像引用。
+          角色判断规则：
+          - presence 表示物理在场状态，取值 present、mentioned_only、absent、uncertain。
+          - visibility 表示是否建议入画，取值 in_frame、off_frame、background、reference_only。
+          - 角色在上一段进入同一场景、本段未离开，即使本段没有再次点名，也可以判断为 present；是否入画由本段镜头需要决定。
+          - 仅在对话中被提及、命令中被派遣、计划或回忆中出现的角色，presence=mentioned_only，不得设为 in_frame。
+          - 物理在场不等于必须入画；可根据叙事需要设为 off_frame、background 或 reference_only。
+          - reason 必须简洁说明在场/入画判断依据。
+          - asset_tags 只写稳定服装、造型、配件标签，不写"角色/地点/道具"或角色名。
+          - 不要拼接 image_ref；后续工具节点会根据资产目录补全结构化图像引用和外观描述。
         vars:
           segments:
             from: "$nodes.split_script.output.segments"
@@ -249,7 +281,7 @@ nodes:
                 type: array
                 items:
                   type: object
-                  required: ["asset_type", "asset_name"]
+                  required: ["asset_type", "asset_name", "asset_tags", "presence", "visibility", "reason"]
                   properties:
                     asset_type:
                       type: string
@@ -261,6 +293,15 @@ nodes:
                       type: array
                       items:
                         type: string
+                    presence:
+                      type: string
+                      enum: ["present", "mentioned_only", "absent", "uncertain"]
+                    visibility:
+                      type: string
+                      enum: ["in_frame", "off_frame", "background", "reference_only"]
+                    reason:
+                      type: string
+                      minLength: 1
                     asset_id:
                       type: string
                       minLength: 1
@@ -316,6 +357,16 @@ nodes:
                       type: array
                       items:
                         type: string
+                    appearance_description:
+                      type: string
+                    presence:
+                      type: string
+                      enum: ["present", "mentioned_only", "absent", "uncertain"]
+                    visibility:
+                      type: string
+                      enum: ["in_frame", "off_frame", "background", "reference_only"]
+                    reason:
+                      type: string
                     image_ref:
                       type: object
                       required: ["kind"]
@@ -353,6 +404,8 @@ nodes:
         from: "$nodes.split_script.output.segments"
       segment_assignments:
         from: "$nodes.resolve_segment_image_refs.output.segment_assignments"
+      storyboard_options:
+        from: "$nodes.select_episode_metadata.output.storyboard_options"
     outputs:
       type: object
       required: ["items", "shared_context"]
@@ -361,7 +414,7 @@ nodes:
           type: array
           items:
             type: object
-            required: ["index", "current_segment", "neighbor_segments", "segment_assignment"]
+            required: ["index", "current_segment", "segment_assignment"]
             properties:
               index:
                 type: integer
@@ -369,27 +422,25 @@ nodes:
               current_segment:
                 type: object
                 additionalProperties: true
-              neighbor_segments:
-                type: array
-                items:
-                  type: object
-                  additionalProperties: true
               segment_assignment:
                 type: object
                 additionalProperties: true
             additionalProperties: false
         shared_context:
           type: object
-          required: ["full_script", "all_segments"]
+          required: ["full_script"]
           properties:
             full_script:
               type: string
               minLength: 1
-            all_segments:
-              type: array
-              items:
-                type: object
-                additionalProperties: true
+            storyboard_options:
+              type: object
+              properties:
+                no_material:
+                  type: boolean
+                enrich_description:
+                  type: boolean
+              additionalProperties: false
           additionalProperties: false
       additionalProperties: false
 
@@ -400,7 +451,12 @@ nodes:
       system:
         value: |
           仅返回合法 JSON。你是漫画分镜导演。每次只为当前 item 中的 current_segment 设计分镜画面。
-          必须参考 full_script 理解完整剧情连续性，参考 all_segments 和 neighbor_segments 理解前后承接，参考 segment_assignment 保持角色、地点、道具和参考图一致。
+          必须参考 full_script 理解完整剧情连续性，参考 current_segment 设计当前段落，参考 segment_assignment 保持角色、地点、道具和外观描述一致。
+          必须读取 shared_context.storyboard_options：
+          - no_material=true 时，画面描述、thinking、style、constraints 均不得区分或强调材质、质地、面料、纹理、金属锈蚀、丝滑、粗糙等材质信息；只能描述结构、形状、颜色、光影、空间、动作和陈设功能。
+          - no_material=false 时，可以描述对画面叙事必要的材质和表面质感，但不要堆砌材质词。
+          - enrich_description=true 时，thinking 必须额外审查空间深度、物理反馈、建筑陈设复杂度、颗粒感介质和琐碎叙事细节，并把有效结果自然写入 panel.description。
+          - enrich_description=false 时，保持描述清晰克制，不追加额外密度审查。
           不要输出其他段落，不要返回数组，不要包含 Markdown 或解释文字。
       items:
         from: "$nodes.prepare_segment_storyboard_inputs.output.items"
@@ -413,15 +469,30 @@ nodes:
           输入 item JSON：
           {item}
 
+          分镜设计要求：
+          - 只生成分镜描述，不生成图像；描述从宏观到微观，保证镜头整体性和合理性。
+          - 当前段落可设计为一页漫画中的多个分格；分格大小不要平均，布局应有节奏和设计感。
+          - 必须根据 item.current_segment.panel_count_min 和 panel_count_max 决定 panels 数量：二者相等时 panels 数量必须等于该值；二者不同则 panels 数量必须落在范围内，并在 thinking 中说明选择该数量的理由。
+          - 描述中不写对话，不写角色服装和外貌细节，不出现腿部、脚部、鞋履相关描写。
+          - segment_assignment.characters 中只提供当前段相关角色的 asset_name、asset_tags、appearance_description、presence、visibility、reason；只允许 visibility 为 in_frame 或 background 的角色入画。
+          - visibility 为 off_frame 或 reference_only 的角色只能作为剧情连续性和参考图一致性信息，不得画进画面。
+          - 如果出现复数次要角色，先确定数量并给每个次要角色编号，再分别描述动作。
+          - 先读情绪，再定镜头：根据水浒传剧情、当前段落情绪和前后段承接，选择最能放大情绪的镜头语言。
+          - 禁止默认构图：不得无理由使用正中平视、角色左右对称或平面布局；每格必须有明确视觉意图。
+          - 每格必须标注机位、角度、景别、构图、光影和氛围；多使用仰视、俯视、倾斜、大透视、前景遮挡和前中后景分层。
+          - thinking 至少回答：前景/中景/背景的深度层级；环境中用于叙事的物件；光线如何刻画冲突；动作定格在哪个瞬间；镜头角度的情绪潜台词。
+          - 当 shared_context.storyboard_options.no_material=true 时，删除所有材质和质感审查，只保留空间、结构、色彩、光影、功能和动作信息。
+          - 当 shared_context.storyboard_options.enrich_description=true 时，额外回答并落实：能否增加遮挡物强化窥视感和空间深度；动作是否造成飘动、飞溅、散落、震动等物理反馈；建筑结构和陈设是否足够具体；空气中是否有尘、雪、烟、雾、火星等颗粒介质；是否有能暗示身份、地位或心境的细小物件。
+
           输出一个 JSON 对象，必须包含：
           - index：当前段落索引，必须等于 item.index
           - segment_title：当前段落标题
-          - thinking：一句话说明分镜设计依据
+          - thinking：按上述审查项简洁说明分镜设计依据
           - panels：当前段落的分格数组
 
           每个 panel 必须包含 description、style、constraints，可选 character_focus、environment_details、shot_type、camera_angle、composition、lighting、mood、action、key_props、continuity_notes。
       prompt_fields:
-        value: ["index", "current_segment", "neighbor_segments", "segment_assignment"]
+        value: ["index", "current_segment", "segment_assignment"]
       max_attempts:
         value: 2
     outputs:
@@ -560,12 +631,13 @@ nodes:
         from: "$nodes.prepare_segment_storyboard_inputs.output.shared_context"
       generation_rules:
         value: |
-          风格指令：参考《罗小黑战记》的线条、色彩逻辑和视觉质感生成高质量漫画。
-          角色一致性：保持参考图人物比例、武器和关键服饰一致。
-          时代背景：中国古代，以水浒传为背景。
-          透视与构图：强纵深、前中后景分层、漫画分格画面。
+          风格指令：参考《罗小黑战记》的线条、色彩逻辑和视觉质感生成高质量、细节丰富、富有张力的漫画；线条采用干净流畅的矢量图风格，轮廓线利落，边缘锐利，阴影较浅且偏冷色调，色彩干净鲜明，无复杂渐变。
+          角色一致性：严格参考输入图片中的人物比例、武器、关键服饰和识别特征，所有角色保持胶囊形、达摩式、蛋形或不倒翁体型；上半身为正常卡通比例，下半身为圆润饱满的半球形底部，完全没有腿部、膝盖、脚踝、脚部或鞋履。
+          时代背景：中国古代，以水浒传为背景；根据当前情景设计环境、建筑、陈设和物件，使场景细节丰富，并与角色风格一致。
+          透视与构图：严格遵守近大远小，使用强透视、明显纵深、前景遮挡、前中后景分层和统一消失点；多分格页面采用不规则梯形与矩形组合排版，打破平均分割和正中平视。
+          画面风格关键词：strict perspective with foreshortening, near objects large far objects small, strong depth of field, layered foreground-midground-background composition, digital illustration, chibi style, children's book art style, manhwa style, clean lineart, soft cel shading, vibrant colors, dynamic action atmosphere, masterpiece, best quality.
       negative_prompt:
-        value: low quality, bad anatomy, worst quality, text, watermark, signature, realistic, legs, feet, shoes
+        value: low quality, bad anatomy, worst quality, text, watermark, signature, ugly, bad proportions, deformed, realistic, gradient shading, complex textures, red lines, guidelines, nose, legs, feet, ankles, knees, thighs, calves, toes, footwear, shoes, boots, sandals, photorealistic, flat composition, no depth
       aspect_ratio:
         value: "16:9"
       resolution:

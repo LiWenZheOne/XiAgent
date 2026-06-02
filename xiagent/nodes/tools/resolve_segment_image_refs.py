@@ -56,6 +56,10 @@ class ResolveSegmentImageRefsNode(BaseNode):
                                                 "type": "array",
                                                 "items": {"type": "string"},
                                             },
+                                            "appearance_description": {"type": "string"},
+                                            "presence": {"type": "string"},
+                                            "visibility": {"type": "string"},
+                                            "reason": {"type": "string"},
                                             "image_ref": _image_ref_schema(),
                                             "image_url": {"type": "string"},
                                         },
@@ -126,22 +130,41 @@ def _copy_assignment(assignment: Mapping[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _resolve_character(character: Mapping[str, Any], lookup: Mapping[tuple[str, str], list[dict[str, Any]]]) -> dict[str, Any]:
+def _resolve_character(
+    character: Mapping[str, Any],
+    lookup: Mapping[tuple[str, str], list[dict[str, Any]]],
+) -> dict[str, Any]:
     normalized_character = normalize_asset_record(character, default_asset_type="character")
     result: dict[str, Any] = {}
-    for key in ("asset_type", "asset_name", "asset_tags", "image_url"):
+    for key in (
+        "asset_type",
+        "asset_name",
+        "asset_tags",
+        "appearance_description",
+        "presence",
+        "visibility",
+        "reason",
+        "image_url",
+    ):
         if key in normalized_character:
             result[key] = normalized_character[key]
-
-    existing_ref = _clean_image_ref(character.get("image_ref"))
-    if existing_ref is not None:
-        result["image_ref"] = existing_ref
-        return result
 
     asset_type = _text(normalized_character.get("asset_type")) or "character"
     name = _text(normalized_character.get("asset_name"))
     asset_tags = _string_list(normalized_character.get("asset_tags"))
     catalog_item = _best_catalog_item(lookup.get((asset_type, name), []), asset_tags)
+    appearance_description = _appearance_description(catalog_item) or _appearance_description(character)
+    if appearance_description:
+        result["appearance_description"] = appearance_description
+
+    existing_ref = _clean_image_ref(character.get("image_ref"))
+    if existing_ref is not None:
+        result["image_ref"] = existing_ref
+        image_url = _image_url_from_item(character)
+        if image_url:
+            result["image_url"] = image_url
+        return result
+
     image_ref = _image_ref_from_item(catalog_item) if catalog_item is not None else None
     if image_ref is None:
         image_ref = _image_ref_from_item(character)
@@ -223,6 +246,16 @@ def _image_url_from_item(item: Mapping[str, Any] | None) -> str:
     if item is None:
         return ""
     return _text(item.get("image_url")) or _text(item.get("public_url")) or _text(item.get("storage_uri"))
+
+
+def _appearance_description(item: Mapping[str, Any] | None) -> str:
+    if item is None:
+        return ""
+    for key in ("appearance_description", "variant_description", "visual_description", "description"):
+        value = _text(item.get(key))
+        if value:
+            return value
+    return ""
 
 
 def _clean_image_ref(value: Any) -> dict[str, str] | None:

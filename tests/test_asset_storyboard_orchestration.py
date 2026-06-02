@@ -106,6 +106,10 @@ def test_select_episode_node_loads_and_displays_episode_context(test_settings) -
 
     select_node = nodes_by_id["select_episode_metadata"]
     assert select_node["inputs"]["episode_asset_id"]["from_user"] is True
+    assert select_node["inputs"]["no_material"]["from_user"] is True
+    assert select_node["inputs"]["no_material"]["required"] is False
+    assert select_node["inputs"]["enrich_description"]["from_user"] is True
+    assert select_node["inputs"]["enrich_description"]["required"] is False
     select_ui = nodes_by_id["select_episode_metadata"]["ui"]["controls"]["input"]
     assert select_ui["options"]["fields"]["episode_asset_id"] == {
         "control_id": "ui.input.asset_picker.v1",
@@ -122,6 +126,10 @@ def test_select_episode_node_loads_and_displays_episode_context(test_settings) -
     assert select_sections["events"]["visible"] is False
     assert "source_script" in select_node["outputs"]["required"]
     assert "asset_catalog" in select_node["outputs"]["required"]
+    assert select_node["outputs"]["properties"]["storyboard_options"]["properties"] == {
+        "no_material": {"type": "boolean"},
+        "enrich_description": {"type": "boolean"},
+    }
     assert "output" not in select_node["ui"]["controls"]
 
     validate_workflow_contract(contract, build_node_registry(test_settings))
@@ -169,11 +177,14 @@ def test_episode_context_drives_segment_asset_assignment(test_settings) -> None:
     assert prepare_node["inputs"]["segment_assignments"] == {
         "from": "$nodes.resolve_segment_image_refs.output.segment_assignments",
     }
+    assert prepare_node["inputs"]["storyboard_options"] == {
+        "from": "$nodes.select_episode_metadata.output.storyboard_options",
+    }
 
     validate_workflow_contract(contract, build_node_registry(test_settings))
 
 
-def test_select_episode_metadata_schema_only_requires_episode_asset(
+def test_select_episode_metadata_schema_collects_optional_storyboard_switches(
     test_settings,
 ) -> None:
     contract = load_workflow_file(ORCHESTRATION_WORKFLOW_PATH)
@@ -181,6 +192,10 @@ def test_select_episode_metadata_schema_only_requires_episode_asset(
     input_schema = input_specs["episode_asset_id"]["schema"]
 
     validate_json_value(input_schema, "asset_episode_001")
+    validate_json_value(input_specs["no_material"]["schema"], True)
+    validate_json_value(input_specs["enrich_description"]["schema"], False)
+    assert input_specs["no_material"]["required"] is False
+    assert input_specs["enrich_description"]["required"] is False
     assert "storyboard_target" not in _select_episode_outputs(contract)["properties"]
 
     with pytest.raises(ValidationError):
@@ -206,6 +221,9 @@ def test_assign_assets_to_segments_output_schema(test_settings) -> None:
                             "asset_type": "character",
                             "asset_name": "林冲",
                             "asset_tags": ["囚服雪地"],
+                            "presence": "present",
+                            "visibility": "in_frame",
+                            "reason": "本段正面描写林冲踏雪。",
                             "asset_id": "asset-linchong",
                         }
                     ],
@@ -250,6 +268,10 @@ def test_resolve_segment_image_refs_output_schema(test_settings) -> None:
                                 "role": "reference",
                             },
                             "asset_tags": ["囚服雪地"],
+                            "appearance_description": "戴毡笠、穿囚服。",
+                            "presence": "present",
+                            "visibility": "in_frame",
+                            "reason": "本段正面描写林冲踏雪。",
                         }
                     ],
                     "key_props": ["花枪"],
@@ -282,17 +304,25 @@ def test_prepare_segment_storyboard_inputs_output_schema(test_settings) -> None:
                 {
                     "index": 0,
                     "current_segment": {"index": 0, "text": "林冲踏雪而来。"},
-                    "neighbor_segments": [],
                     "segment_assignment": {
                         "segment_index": 0,
-                        "characters": [{"asset_type": "character", "asset_name": "林冲"}],
+                        "characters": [
+                            {
+                                "asset_name": "林冲",
+                                "asset_tags": ["囚服雪地"],
+                                "appearance_description": "戴毡笠、穿囚服。",
+                                "presence": "present",
+                                "visibility": "in_frame",
+                                "reason": "本段正面描写林冲踏雪。",
+                            }
+                        ],
                         "key_props": [],
                     },
                 }
             ],
             "shared_context": {
                 "full_script": "完整剧本",
-                "all_segments": [{"index": 0, "text": "林冲踏雪而来。"}],
+                "storyboard_options": {"no_material": True, "enrich_description": True},
             },
         },
     )
@@ -317,12 +347,21 @@ def test_describe_panels_uses_parallel_segment_items(test_settings) -> None:
     }
     assert "{item}" in describe_node["inputs"]["prompt_template"]["value"]
     assert "每次只为当前 item" in describe_node["inputs"]["system"]["value"]
+    assert "shared_context.storyboard_options" in describe_node["inputs"]["system"]["value"]
+    assert "no_material=true" in describe_node["inputs"]["system"]["value"]
+    assert "enrich_description=true" in describe_node["inputs"]["system"]["value"]
+    assert "空间深度、物理反馈、建筑陈设复杂度、颗粒感介质和琐碎叙事细节" in describe_node["inputs"]["system"]["value"]
+    assert "当 shared_context.storyboard_options.no_material=true" in describe_node["inputs"]["prompt_template"]["value"]
+    assert "当 shared_context.storyboard_options.enrich_description=true" in describe_node["inputs"]["prompt_template"]["value"]
     assert describe_node["inputs"]["prompt_fields"]["value"] == [
         "index",
         "current_segment",
-        "neighbor_segments",
         "segment_assignment",
     ]
+    assert "neighbor_segments" not in describe_node["inputs"]["prompt_template"]["value"]
+    assert "all_segments" not in describe_node["inputs"]["system"]["value"]
+    assert "panel_count_min 和 panel_count_max" in describe_node["inputs"]["prompt_template"]["value"]
+    assert "visibility 为 off_frame 或 reference_only" in describe_node["inputs"]["prompt_template"]["value"]
     assert describe_node["outputs"]["required"] == ["results"]
 
     validate_json_value(

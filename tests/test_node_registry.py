@@ -280,6 +280,54 @@ def test_resolve_segment_image_refs_descriptor() -> None:
     assert descriptor.output_schema["required"] == ["segment_assignments"]
 
 
+async def test_resolve_segment_image_refs_preserves_presence_and_fills_appearance() -> None:
+    node = ResolveSegmentImageRefsNode()
+
+    result = await node.run(
+        None,
+        {
+            "segment_assignments": [
+                {
+                    "segment_index": 0,
+                    "characters": [
+                        {
+                            "asset_type": "character",
+                            "asset_name": "林冲",
+                            "asset_tags": ["囚服", "毡笠"],
+                            "presence": "present",
+                            "visibility": "in_frame",
+                            "reason": "本段正面描写林冲踏雪。",
+                            "image_ref": {"kind": "asset", "asset_id": "input-ref", "role": "reference"},
+                        }
+                    ],
+                    "key_props": ["花枪"],
+                }
+            ],
+            "asset_catalog": {
+                "approved_assets": {
+                    "characters": [
+                        {
+                            "asset_type": "character",
+                            "asset_name": "林冲",
+                            "asset_tags": ["囚服", "毡笠"],
+                            "variant_description": "戴毡笠、穿囚服。",
+                            "asset_id": "catalog-ref",
+                        }
+                    ]
+                }
+            },
+        },
+    )
+
+    character = result.output["segment_assignments"][0]["characters"][0]
+    assert character["asset_tags"] == ["囚服", "毡笠"]
+    assert character["appearance_description"] == "戴毡笠、穿囚服。"
+    assert character["presence"] == "present"
+    assert character["visibility"] == "in_frame"
+    assert character["reason"] == "本段正面描写林冲踏雪。"
+    assert character["image_ref"] == {"kind": "asset", "asset_id": "input-ref", "role": "reference"}
+
+
 def test_segment_storyboard_tool_descriptors() -> None:
     prepare_descriptor = PrepareSegmentStoryboardInputsNode().describe()
     merge_descriptor = MergeSegmentStoryboardDescriptionsNode().describe()
@@ -292,6 +340,21 @@ def test_segment_storyboard_tool_descriptors() -> None:
         "segments",
         "segment_assignments",
     ]
+    assert prepare_descriptor.input_schema["properties"]["storyboard_options"]["properties"] == {
+        "no_material": {"type": "boolean"},
+        "enrich_description": {"type": "boolean"},
+    }
+    assert prepare_descriptor.output_schema["properties"]["shared_context"]["properties"]["storyboard_options"][
+        "properties"
+    ] == {
+        "no_material": {"type": "boolean"},
+        "enrich_description": {"type": "boolean"},
+    }
+    assert "all_segments" not in prepare_descriptor.output_schema["properties"]["shared_context"]["properties"]
+    assert (
+        "neighbor_segments"
+        not in prepare_descriptor.output_schema["properties"]["items"]["items"]["properties"]
+    )
     assert merge_descriptor.ref == "tool.merge_segment_storyboard_descriptions.v1"
     assert merge_descriptor.kind == "tool"
     assert merge_descriptor.output_schema["required"] == ["segment_descriptions"]
@@ -336,7 +399,10 @@ async def test_prepare_storyboard_panel_cards_builds_cards() -> None:
                 }
             ],
             "storyboard_items": [{"index": 0, "current_segment": {"text": "林冲踏雪。"}}],
-            "shared_context": {"full_script": "完整剧本", "all_segments": []},
+            "shared_context": {
+                "full_script": "完整剧本",
+                "storyboard_options": {"no_material": False, "enrich_description": False},
+            },
         },
     )
 
@@ -502,13 +568,14 @@ async def test_episode_metadata_nodes_roundtrip_payload() -> None:
     )
     loaded = await EpisodeMetadataFromAssetNode().run(
         ctx,
-        {"episode_asset_id": result.output["episode_asset_id"]},
+        {"episode_asset_id": result.output["episode_asset_id"], "no_material": True, "enrich_description": True},
     )
 
     assert service.created["asset-episode"].metadata["type"] == "episode_metadata"
     assert "tags" not in service.created["asset-episode"].metadata
     assert loaded.output["episode_name"] == "23、私放晁天王"
     assert loaded.output["source_script"] == "宋江见了晁盖。"
+    assert loaded.output["storyboard_options"] == {"no_material": True, "enrich_description": True}
     assert result.output["asset_images"] == [
         {"asset_type": "character", "asset_name": "宋江", "asset_id": "asset-songjiang"}
     ]
