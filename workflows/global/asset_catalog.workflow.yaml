@@ -1945,8 +1945,8 @@ nodes:
                 prefix:
                 suffix: 保持画风和角色体型不变，改变原图中的所有角色特征，根据描述和水浒传的时代背景设计全新的形象，平涂，赛璐璐风格，具有清晰的色块，流畅干净的线条和锐利的边缘。
               scene:
-                prefix:
-                suffix: 保持画风不变，根据描述和水浒传的时代背景选择合适的构图，视角，空间关系，生成全新的场景，平涂，赛璐璐风格，具有清晰的色块，流畅干净的线条和锐利的边缘，digital illustration,  children's book art style, manhwa style, clean lineart, soft cel shading, vibrant colors, dynamic action atmosphere, masterpiece, best quality, 8k。
+                prefix: 参考《罗小黑战记》的线条、色彩逻辑和视觉质感生成高质量、细节丰富、富有张力的冷灰色色调漫画场景，
+                suffix: 根据描述和水浒传的时代背景选择合适的构图，视角，空间关系，生成全新的场景，平涂，赛璐璐风格，具有清晰的色块，流畅干净的线条和锐利的边缘，digital illustration,  children's book art style, manhwa style, clean lineart, soft cel shading, vibrant colors, dynamic action atmosphere, masterpiece, best quality, 8k。
               prop:
                 prefix:
                 suffix: 保持画风不变，改变原图中的所有造型和颜色设计，并根据描述和水浒传的时代背景设计新的造型和颜色，平涂，赛璐璐风格，具有清晰的色块，流畅干净的线条和锐利的边缘，digital illustration, chibi style, children's book art style, manhwa style, clean lineart, soft cel shading, vibrant colors, dynamic action atmosphere, masterpiece, best quality, 8k。。
