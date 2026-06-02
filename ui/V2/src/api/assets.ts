@@ -201,7 +201,7 @@ export async function createTextAsset(input: {
 
 export interface DraftAssetFromDescriptionInput {
   project_id?: string;
-  asset_type?: "auto" | "character" | "location" | "prop";
+  asset_type?: "auto" | "character" | "scene" | "prop";
   description: string;
   script?: string;
   background?: string;
@@ -368,5 +368,16 @@ export async function downloadAssetContent(assetId: string, projectId?: string):
   const query = params.toString();
   const response = await fetch(`/api/assets/${encodeURIComponent(assetId)}/content${query ? `?${query}` : ""}`, { headers });
   if (!response.ok) throw new ApiError(`资产下载失败，状态码 ${response.status}`, response.status, await response.text());
+  return response.blob();
+}
+
+export async function downloadAssetThumbnail(assetId: string, projectId?: string, size = 256): Promise<Blob> {
+  const params = new URLSearchParams({ size: String(size) });
+  if (projectId) params.set("project_id", projectId);
+  const token = getAccessToken();
+  const headers = new Headers({ Accept: "image/png" });
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  const response = await fetch(`/api/assets/${encodeURIComponent(assetId)}/thumbnail?${params.toString()}`, { headers });
+  if (!response.ok) throw new ApiError(`资产缩略图加载失败，状态码 ${response.status}`, response.status, await response.text());
   return response.blob();
 }

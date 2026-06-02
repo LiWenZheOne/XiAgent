@@ -324,6 +324,18 @@ function mockFetch() {
     if (url.startsWith("/api/assets/search")) {
       return jsonResponse({ items: assetRecords });
     }
+    if (url.startsWith("/api/assets/") && url.includes("/thumbnail")) {
+      return Promise.resolve(new Response(new Uint8Array([137, 80, 78, 71]), {
+        status: 200,
+        headers: { "Content-Type": "image/png", "X-Asset-Thumbnail-Cache": "miss" },
+      }));
+    }
+    if (url.startsWith("/api/assets/") && url.includes("/content")) {
+      return Promise.resolve(new Response(new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]), {
+        status: 200,
+        headers: { "Content-Type": "image/png" },
+      }));
+    }
     if (url === "/api/assets/files" && method === "POST") {
       uploadedAssetForms.push(init?.body as FormData);
       const form = init?.body as FormData;
@@ -1180,6 +1192,8 @@ describe("XiAgent V2 app", () => {
   });
 
   it("keeps asset filtering in search and tags without exposing directories", async () => {
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:asset-thumbnail") });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
     render(<App />);
     await login();
@@ -1189,14 +1203,59 @@ describe("XiAgent V2 app", () => {
     expect(screen.queryByRole("tree", { name: "资产目录" })).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox", { name: "资产目录" })).not.toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "集元数据" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(([url]) =>
+          String(url).startsWith("/api/assets/asset-1/thumbnail?")
+          && String(url).includes("project_id=global")
+          && String(url).includes("size=256"),
+        ),
+      ).toBe(true);
+    });
     await userEvent.click(screen.getByRole("button", { name: "角色" }));
 
     await waitFor(() => {
       expect(
         fetchMock.mock.calls.some(([url]) =>
-          url === "/api/assets/search?scope=combined&project_id=global&tag_ids=tag-character",
+          String(url).startsWith("/api/assets/search?")
+          && String(url).includes("scope=combined")
+          && String(url).includes("project_id=global")
+          && String(url).includes("tag_ids=tag-character")
+          && String(url).includes("limit=72")
+          && String(url).includes("offset=0"),
         ),
       ).toBe(true);
+    });
+  });
+
+  it("opens asset images in a fullscreen zoom viewer", async () => {
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:asset-fullscreen") });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    render(<App />);
+    await login();
+
+    await userEvent.click(screen.getByRole("button", { name: "资产库" }));
+    const card = await screen.findByRole("button", { name: "参考图" });
+    await userEvent.click(within(card).getByRole("button", { name: "全屏查看图像" }));
+
+    const viewer = await screen.findByRole("dialog", { name: "全屏查看 参考图" });
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(([url]) =>
+          String(url).startsWith("/api/assets/asset-1/content?")
+          && String(url).includes("project_id=global"),
+        ),
+      ).toBe(true);
+    });
+    expect(within(viewer).getAllByText("100%").length).toBeGreaterThan(0);
+
+    fireEvent.wheel(within(viewer).getByAltText("参考图").parentElement as HTMLElement, { deltaY: -120 });
+    expect(await within(viewer).findByText("112%")).toBeInTheDocument();
+
+    fireEvent.mouseDown(viewer);
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "全屏查看 参考图" })).not.toBeInTheDocument();
     });
   });
 
@@ -1219,7 +1278,13 @@ describe("XiAgent V2 app", () => {
 
     await waitFor(() => {
       expect(
-        fetchMock.mock.calls.some(([url]) => url === "/api/assets/search?scope=project&project_id=global"),
+        fetchMock.mock.calls.some(([url]) =>
+          String(url).startsWith("/api/assets/search?")
+          && String(url).includes("scope=project")
+          && String(url).includes("project_id=global")
+          && String(url).includes("limit=72")
+          && String(url).includes("offset=0"),
+        ),
       ).toBe(true);
       expect(projectButton).toHaveClass("active-control");
       expect(combinedButton).not.toHaveClass("active-control");
@@ -1238,7 +1303,13 @@ describe("XiAgent V2 app", () => {
 
     await waitFor(() => {
       expect(
-        fetchMock.mock.calls.some(([url]) => url === "/api/assets/search?scope=combined&project_id=project-2"),
+        fetchMock.mock.calls.some(([url]) =>
+          String(url).startsWith("/api/assets/search?")
+          && String(url).includes("scope=combined")
+          && String(url).includes("project_id=project-2")
+          && String(url).includes("limit=72")
+          && String(url).includes("offset=0"),
+        ),
       ).toBe(true);
     });
 
@@ -1247,7 +1318,12 @@ describe("XiAgent V2 app", () => {
     await waitFor(() => {
       expect(
         fetchMock.mock.calls.some(([url]) =>
-          String(url).includes("/api/assets/search?scope=combined&project_id=project-2") && String(url).includes("tag_ids=tag-character"),
+          String(url).startsWith("/api/assets/search?")
+          && String(url).includes("scope=combined")
+          && String(url).includes("project_id=project-2")
+          && String(url).includes("tag_ids=tag-character")
+          && String(url).includes("limit=72")
+          && String(url).includes("offset=0"),
         ),
       ).toBe(true);
     });

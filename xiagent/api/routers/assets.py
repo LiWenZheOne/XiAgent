@@ -841,6 +841,27 @@ async def replace_asset_file(
     return asdict(asset)
 
 
+@router.get("/{asset_id}/thumbnail")
+async def get_asset_thumbnail(
+    asset_id: str,
+    services: Annotated[ApiServices, Depends(get_services)],
+    current_user: Annotated[UserRecord, Depends(get_current_user)],
+    project_id: str | None = None,
+    size: int = 256,
+) -> Response:
+    thumbnail = await services.assets.get_asset_thumbnail(
+        user_id=current_user.user_id,
+        asset_id=asset_id,
+        project_id=project_id,
+        size=size,
+    )
+    return Response(
+        thumbnail.bytes_content or b"",
+        media_type=thumbnail.content_type or "image/png",
+        headers={"X-Asset-Thumbnail-Cache": "hit" if thumbnail.cache_hit else "miss"},
+    )
+
+
 @router.get("/{asset_id}/content")
 async def get_asset_content(
     asset_id: str,

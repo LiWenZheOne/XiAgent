@@ -30,6 +30,7 @@ class AssetContent:
     content_type: str | None
     bytes_content: bytes | None = None
     text_content: str | None = None
+    cache_hit: bool = False
 
 
 @dataclass(frozen=True, slots=True)

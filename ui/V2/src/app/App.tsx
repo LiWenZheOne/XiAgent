@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, type PointerEvent, type WheelEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   attachAssetTag,
@@ -7,6 +7,7 @@ import {
   deleteAssetTag,
   detachAssetTag,
   downloadAssetContent,
+  downloadAssetThumbnail,
   listAssetTags,
   listAssetTagsForAsset,
   replaceAssetFile,
@@ -1865,6 +1866,7 @@ function ProjectsPage({
 
 type TagAction = "create" | "delete" | null;
 type AssetLibraryScope = "combined" | "project" | "global";
+const ASSET_LIBRARY_PAGE_SIZE = 72;
 
 function AssetLibraryPage({
   projects,
@@ -1891,6 +1893,8 @@ function AssetLibraryPage({
   const [uploadAssetType, setUploadAssetType] = useState<"character" | "location" | "prop">("character");
   const [smartUploading, setSmartUploading] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [loadingMoreAssets, setLoadingMoreAssets] = useState(false);
+  const [hasMoreAssets, setHasMoreAssets] = useState(false);
   const [message, setMessage] = useState("");
   const [assetRenameOpen, setAssetRenameOpen] = useState(false);
   const [assetRenameName, setAssetRenameName] = useState("");
@@ -1903,25 +1907,30 @@ function AssetLibraryPage({
   const [assetTagFilter, setAssetTagFilter] = useState("");
   const [assetTagSavingId, setAssetTagSavingId] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
-  const [assetPreviewUrls, setAssetPreviewUrls] = useState<Record<string, string>>({});
   const [assetDraft, setAssetDraft] = useState<AssetEditorDraft | null>(null);
   const [replacingAssetId, setReplacingAssetId] = useState("");
+  const [fullscreenAsset, setFullscreenAsset] = useState<AssetRecord | null>(null);
+  const selectedAsset = assets.find((asset) => asset.asset_id === selectedAssetId) ?? null;
 
   useEffect(() => {
     if (scope !== "global" && !project) return;
     let active = true;
     const projectId = scope === "global" ? undefined : project?.project_id;
     setLoading(true);
+    setHasMoreAssets(false);
     setMessage("");
     searchAssets({
       scope,
       project_id: projectId,
       keyword: keyword.trim() || undefined,
       tag_ids: selectedTagIds,
+      limit: ASSET_LIBRARY_PAGE_SIZE,
+      offset: 0,
     })
       .then((items) => {
         if (!active) return;
         setAssets(items);
+        setHasMoreAssets(items.length === ASSET_LIBRARY_PAGE_SIZE);
         setSelectedAssetId((current) => (items.some((asset) => asset.asset_id === current) ? current : items[0]?.asset_id ?? ""));
       })
       .catch((error) => {
@@ -1934,46 +1943,6 @@ function AssetLibraryPage({
       active = false;
     };
   }, [keyword, project, reloadKey, scope, selectedTagIds]);
-
-  useEffect(() => {
-    const canCreateObjectUrl = typeof URL.createObjectURL === "function";
-    const imageAssets = assets.filter((asset) => asset.mime_type?.startsWith("image/"));
-    if (!canCreateObjectUrl || !imageAssets.length) {
-      setAssetPreviewUrls({});
-      return;
-    }
-
-    let active = true;
-    const objectUrls: string[] = [];
-    setAssetPreviewUrls({});
-
-    Promise.all(
-      imageAssets.map(async (asset) => {
-        try {
-          const blob = await downloadAssetContent(
-            asset.asset_id,
-            asset.scope === "project" ? asset.project_id ?? project?.project_id : undefined,
-          );
-          const url = URL.createObjectURL(blob);
-          objectUrls.push(url);
-          return [asset.asset_id, url] as const;
-        } catch {
-          return null;
-        }
-      }),
-    ).then((entries) => {
-      if (!active) {
-        objectUrls.forEach((url) => URL.revokeObjectURL(url));
-        return;
-      }
-      setAssetPreviewUrls(Object.fromEntries(entries.filter((entry): entry is readonly [string, string] => Boolean(entry))));
-    });
-
-    return () => {
-      active = false;
-      objectUrls.forEach((url) => URL.revokeObjectURL(url));
-    };
-  }, [assets, project?.project_id]);
 
   useEffect(() => {
     if (scope !== "global" && !project) return;
@@ -1998,7 +1967,6 @@ function AssetLibraryPage({
     setTagName("");
   }, [project?.project_id, scope]);
 
-  const selectedAsset = assets.find((asset) => asset.asset_id === selectedAssetId) ?? null;
   const selectedEditableTag = selectedTagIds.length === 1 ? tags.find((tag) => tag.tag_id === selectedTagIds[0]) ?? null : null;
   const selectedEditableTagIsEmpty = selectedEditableTag ? (selectedEditableTag.asset_count ?? 0) === 0 : false;
   const tagWriteScope = scope === "global" ? "global" : "project";
@@ -2013,7 +1981,7 @@ function AssetLibraryPage({
     if (!keyword) return compatibleTags;
     return compatibleTags.filter((tag) => tag.name.toLowerCase().includes(keyword));
   }, [assetTagFilter, selectedAsset, tags]);
-  const selectedAssetPreviewUrl = selectedAsset ? assetPreviewUrls[selectedAsset.asset_id] ?? assetPublicUrl(selectedAsset) : "";
+  const selectedAssetPublicUrl = selectedAsset ? assetPublicUrl(selectedAsset) : "";
   const selectedTagNames = selectedTagIds
     .map((tagId) => tags.find((tag) => tag.tag_id === tagId)?.name)
     .filter((name): name is string => Boolean(name));
@@ -2066,6 +2034,37 @@ function AssetLibraryPage({
     setFile(null);
     setUploadName("");
     setReloadKey((current) => current + 1);
+  }
+
+  async function handleLoadMoreAssets() {
+    if (loading || loadingMoreAssets) return;
+    if (scope !== "global" && !project) {
+      onProjectRequired();
+      return;
+    }
+    setLoadingMoreAssets(true);
+    setMessage("");
+    try {
+      const projectId = scope === "global" ? undefined : project?.project_id;
+      const nextItems = await searchAssets({
+        scope,
+        project_id: projectId,
+        keyword: keyword.trim() || undefined,
+        tag_ids: selectedTagIds,
+        limit: ASSET_LIBRARY_PAGE_SIZE,
+        offset: assets.length,
+      });
+      setAssets((current) => {
+        const knownIds = new Set(current.map((asset) => asset.asset_id));
+        const appended = nextItems.filter((asset) => !knownIds.has(asset.asset_id));
+        return [...current, ...appended];
+      });
+      setHasMoreAssets(nextItems.length === ASSET_LIBRARY_PAGE_SIZE);
+    } catch (error) {
+      setMessage(readableError(error, "加载更多资产失败，请稍后重试。"));
+    } finally {
+      setLoadingMoreAssets(false);
+    }
   }
 
   async function handleSmartUpload() {
@@ -2527,7 +2526,7 @@ function AssetLibraryPage({
             <div className="asset-list-title-row">
               <div>
                 <h2>资产列表</h2>
-                <p>{loading ? "正在加载资产..." : `共 ${assets.length} 个资产`} · {activeFilterText}</p>
+                <p>{loading ? "正在加载资产..." : `已加载 ${assets.length} 个资产`} · {activeFilterText}</p>
               </div>
               {quickTypeTags.length ? (
                 <div className="asset-quick-filter-row" aria-label="类型快速筛选">
@@ -2550,17 +2549,52 @@ function AssetLibraryPage({
           </div>
           {loading ? <p className="muted">正在加载资产...</p> : null}
           {!loading && !assets.length ? <p className="empty-box">暂无资产，可以上传文件。</p> : null}
-          <div className="asset-grid">
-            {assets.map((asset) => {
-              const previewUrl = assetPreviewUrls[asset.asset_id] ?? assetPublicUrl(asset);
-              return (
-                <button className={asset.asset_id === selectedAssetId ? "asset-card active" : "asset-card"} key={asset.asset_id} type="button" onClick={() => setSelectedAssetId(asset.asset_id)}>
-                  {previewUrl ? <img src={previewUrl} alt={asset.name} /> : <span className="asset-icon">{asset.asset_type === "text" ? "文" : asset.mime_type?.startsWith("image/") ? "图" : "档"}</span>}
-                  <strong>{asset.name}</strong>
-                  <small>{asset.scope === "global" ? "全局资产" : "项目资产"} · {formatBytes(asset.size_bytes)}</small>
-                </button>
-              );
-            })}
+          <div className="asset-list-scroll">
+            <div className="asset-grid">
+              {assets.map((asset) => {
+                return (
+                  <article
+                    aria-label={asset.name}
+                    className={asset.asset_id === selectedAssetId ? "asset-card active" : "asset-card"}
+                    key={asset.asset_id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setSelectedAssetId(asset.asset_id)}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" && event.key !== " ") return;
+                      event.preventDefault();
+                      setSelectedAssetId(asset.asset_id);
+                    }}
+                  >
+                    <span className="asset-card-preview-shell">
+                      <AssetPreviewImage asset={asset} projectId={project?.project_id} />
+                      {asset.mime_type?.startsWith("image/") ? (
+                        <button
+                          aria-label="全屏查看图像"
+                          className="asset-zoom-button"
+                          title="全屏查看"
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setSelectedAssetId(asset.asset_id);
+                            setFullscreenAsset(asset);
+                          }}
+                        >
+                          ⛶
+                        </button>
+                      ) : null}
+                    </span>
+                    <strong>{asset.name}</strong>
+                    <small>{asset.scope === "global" ? "全局资产" : "项目资产"} · {formatBytes(asset.size_bytes)}</small>
+                  </article>
+                );
+              })}
+            </div>
+            {hasMoreAssets ? (
+              <button className="secondary-button asset-load-more-button" disabled={loadingMoreAssets} type="button" onClick={() => void handleLoadMoreAssets()}>
+                {loadingMoreAssets ? "正在加载..." : "加载更多资产"}
+              </button>
+            ) : null}
           </div>
         </section>
         <aside className="panel asset-detail-panel">
@@ -2588,7 +2622,7 @@ function AssetLibraryPage({
                       event.currentTarget.value = "";
                     }}
                   />
-                  {selectedAssetPreviewUrl ? <img src={selectedAssetPreviewUrl} alt={selectedAsset.name} /> : <span className="asset-icon">{selectedAsset.asset_type === "text" ? "文" : selectedAsset.mime_type?.startsWith("image/") ? "图" : "档"}</span>}
+                  <AssetPreviewImage asset={selectedAsset} projectId={project?.project_id} eager />
                   <span className="asset-detail-replace-hint">{replacingAssetId === selectedAsset.asset_id ? "替换中..." : "点击或拖拽替换"}</span>
                 </label>
                 <div>
@@ -2602,9 +2636,9 @@ function AssetLibraryPage({
                 </div>
               </div>
               <div className="asset-detail-actions" role="group" aria-label="资产操作">
-                {selectedAssetPreviewUrl || selectedAsset.metadata.public_url ? (
+                {selectedAssetPublicUrl ? (
                   <>
-                    <a className="secondary-button asset-action-button" href={selectedAssetPreviewUrl || selectedAsset.metadata.public_url} target="_blank" rel="noreferrer">
+                    <a className="secondary-button asset-action-button" href={selectedAssetPublicUrl} target="_blank" rel="noreferrer">
                       预览资产
                     </a>
                     <button className="secondary-button asset-action-button" type="button" onClick={() => void handleCopyAssetUrl(selectedAsset)}>
@@ -2733,7 +2767,266 @@ function AssetLibraryPage({
           )}
         </aside>
       </div>
+      {fullscreenAsset ? (
+        <AssetFullscreenViewer
+          asset={fullscreenAsset}
+          projectId={project?.project_id}
+          onClose={() => setFullscreenAsset(null)}
+        />
+      ) : null}
     </main>
+  );
+}
+
+function AssetFullscreenViewer({ asset, projectId, onClose }: { asset: AssetRecord; projectId?: string; onClose: () => void }) {
+  const [imageUrl, setImageUrl] = useState("");
+  const [objectUrl, setObjectUrl] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [scale, setScale] = useState(1);
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const [dragging, setDragging] = useState(false);
+  const dragRef = useRef({ pointerId: -1, startX: 0, startY: 0, originX: 0, originY: 0 });
+  const publicUrl = assetPublicUrl(asset);
+
+  useEffect(() => {
+    setScale(1);
+    setOffset({ x: 0, y: 0 });
+    setImageUrl("");
+    setObjectUrl("");
+    setError("");
+    setLoading(true);
+    let active = true;
+    downloadAssetContent(asset.asset_id, asset.scope === "project" ? asset.project_id ?? projectId : undefined)
+      .then((blob) => {
+        const nextUrl = URL.createObjectURL(blob);
+        if (!active) {
+          URL.revokeObjectURL(nextUrl);
+          return;
+        }
+        setObjectUrl(nextUrl);
+        setImageUrl(nextUrl);
+        setLoading(false);
+      })
+      .catch(() => {
+        if (!active) return;
+        if (publicUrl) {
+          setImageUrl(publicUrl);
+          setLoading(false);
+          return;
+        }
+        setError("无法加载原图");
+        setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [asset.asset_id, asset.project_id, asset.scope, projectId, publicUrl]);
+
+  useEffect(() => {
+    return () => {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [objectUrl]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  function handleWheel(event: WheelEvent<HTMLDivElement>) {
+    event.preventDefault();
+    const nextScale = clamp(scale * (event.deltaY < 0 ? 1.12 : 0.88), 0.2, 8);
+    setScale(nextScale);
+  }
+
+  function handlePointerDown(event: PointerEvent<HTMLDivElement>) {
+    if (!imageUrl || event.button !== 0) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: offset.x,
+      originY: offset.y,
+    };
+    setDragging(true);
+  }
+
+  function handlePointerMove(event: PointerEvent<HTMLDivElement>) {
+    if (!dragging || dragRef.current.pointerId !== event.pointerId) return;
+    setOffset({
+      x: dragRef.current.originX + event.clientX - dragRef.current.startX,
+      y: dragRef.current.originY + event.clientY - dragRef.current.startY,
+    });
+  }
+
+  function handlePointerEnd(event: PointerEvent<HTMLDivElement>) {
+    if (dragRef.current.pointerId === event.pointerId) {
+      setDragging(false);
+      dragRef.current.pointerId = -1;
+    }
+  }
+
+  return (
+    <div
+      aria-label={`全屏查看 ${asset.name}`}
+      aria-modal="true"
+      className="asset-fullscreen-viewer"
+      role="dialog"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div className="asset-fullscreen-toolbar" onMouseDown={(event) => event.stopPropagation()}>
+        <strong>{asset.name}</strong>
+        <span>{Math.round(scale * 100)}%</span>
+        <button className="secondary-button" type="button" onClick={() => {
+          setScale(1);
+          setOffset({ x: 0, y: 0 });
+        }}>
+          100%
+        </button>
+        <button className="secondary-button" type="button" onClick={onClose}>
+          关闭
+        </button>
+      </div>
+      <div
+        className={dragging ? "asset-fullscreen-stage dragging" : "asset-fullscreen-stage"}
+        onMouseDown={(event) => {
+          if (event.target === event.currentTarget) onClose();
+          event.stopPropagation();
+        }}
+        onPointerCancel={handlePointerEnd}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerEnd}
+        onWheel={handleWheel}
+      >
+        {loading ? <p>正在加载原图...</p> : null}
+        {error ? <p>{error}</p> : null}
+        {imageUrl ? (
+          <img
+            alt={asset.name}
+            draggable={false}
+            src={imageUrl}
+            style={{ transform: `translate3d(${offset.x}px, ${offset.y}px, 0) scale(${scale})` }}
+          />
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function AssetPreviewImage({ asset, projectId, eager = false }: { asset: AssetRecord; projectId?: string; eager?: boolean }) {
+  const frameRef = useRef<HTMLSpanElement | null>(null);
+  const [canLoadFallback, setCanLoadFallback] = useState(eager);
+  const [thumbnailFailed, setThumbnailFailed] = useState(false);
+  const [contentFailed, setContentFailed] = useState(false);
+  const [publicUrlFailed, setPublicUrlFailed] = useState(false);
+  const [objectUrl, setObjectUrl] = useState("");
+  const publicUrl = assetPublicUrl(asset);
+  const isImage = Boolean(asset.mime_type?.startsWith("image/"));
+  const shouldLoadThumbnail = isImage && canLoadFallback && !thumbnailFailed && !objectUrl;
+  const shouldLoadContent = isImage && canLoadFallback && thumbnailFailed && !contentFailed && !objectUrl;
+
+  useEffect(() => {
+    setThumbnailFailed(false);
+    setContentFailed(false);
+    setPublicUrlFailed(false);
+    setObjectUrl("");
+    setCanLoadFallback(eager);
+  }, [asset.asset_id, eager, publicUrl]);
+
+  useEffect(() => {
+    return () => {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [objectUrl]);
+
+  useEffect(() => {
+    if (canLoadFallback) return;
+    const element = frameRef.current;
+    if (!element) return;
+    if (typeof IntersectionObserver === "undefined") {
+      setCanLoadFallback(true);
+      return;
+    }
+    const observer = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return;
+      setCanLoadFallback(true);
+      observer.disconnect();
+    }, { rootMargin: "240px" });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [asset.asset_id, canLoadFallback]);
+
+  useEffect(() => {
+    if (!shouldLoadThumbnail || typeof URL.createObjectURL !== "function") return;
+    let active = true;
+    downloadAssetThumbnail(asset.asset_id, asset.scope === "project" ? asset.project_id ?? projectId : undefined)
+      .then((blob) => {
+        const nextUrl = URL.createObjectURL(blob);
+        if (!active) {
+          URL.revokeObjectURL(nextUrl);
+          return;
+        }
+        setObjectUrl(nextUrl);
+      })
+      .catch(() => {
+        if (active) setThumbnailFailed(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, [asset.asset_id, asset.project_id, asset.scope, projectId, shouldLoadThumbnail]);
+
+  useEffect(() => {
+    if (!shouldLoadContent || typeof URL.createObjectURL !== "function") return;
+    let active = true;
+    downloadAssetContent(asset.asset_id, asset.scope === "project" ? asset.project_id ?? projectId : undefined)
+      .then((blob) => {
+        const nextUrl = URL.createObjectURL(blob);
+        if (!active) {
+          URL.revokeObjectURL(nextUrl);
+          return;
+        }
+        setObjectUrl(nextUrl);
+      })
+      .catch(() => {
+        if (active) setContentFailed(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, [asset.asset_id, asset.project_id, asset.scope, projectId, shouldLoadContent]);
+
+  const imageUrl = objectUrl || (publicUrlFailed ? "" : publicUrl);
+  const icon = asset.asset_type === "text" ? "文" : isImage ? "图" : "档";
+
+  return (
+    <span className="asset-preview-frame" ref={frameRef}>
+      {imageUrl ? (
+        <img
+          alt={asset.name}
+          decoding="async"
+          loading={eager ? "eager" : "lazy"}
+          src={imageUrl}
+          onError={() => {
+            if (publicUrl && !objectUrl) setPublicUrlFailed(true);
+          }}
+        />
+      ) : (
+        <span className="asset-icon">{icon}</span>
+      )}
+    </span>
   );
 }
 

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-import json
 from dataclasses import asdict
 from datetime import UTC, datetime
+from io import BytesIO
+import json
 from pathlib import Path
+import shutil
 from typing import Any
 
 import aiosqlite
+from PIL import Image, UnidentifiedImageError
 
 from xiagent.assets.local_storage import LocalAssetStorage
 from xiagent.assets.models import (
@@ -33,6 +36,7 @@ class SqliteAssetService(AssetService):
     ) -> None:
         self._database_path = database_path
         self._storage = LocalAssetStorage(storage_dir)
+        self._thumbnail_dir = (storage_dir / "_thumbnails").resolve()
         self._user_service = user_service
         self._object_storage = object_storage
 
@@ -757,6 +761,55 @@ class SqliteAssetService(AssetService):
             bytes_content=self._storage.read_bytes(asset.storage_uri),
         )
 
+    async def get_asset_thumbnail(
+        self,
+        *,
+        user_id: str,
+        asset_id: str,
+        project_id: str | None = None,
+        size: int = 256,
+    ) -> AssetContent:
+        target_size = _thumbnail_size(size)
+        asset = await self.get_asset(user_id=user_id, asset_id=asset_id, project_id=project_id)
+        if not asset.mime_type or not asset.mime_type.startswith("image/"):
+            raise ValidationError(
+                "asset_thumbnail_unsupported",
+                "Only image assets can have thumbnails",
+                {"asset_id": asset_id, "mime_type": asset.mime_type},
+            )
+        if asset.storage_uri is None or asset.content_hash is None:
+            raise NotFoundError(
+                "asset_not_found",
+                "Asset content was not found",
+                {"asset_id": asset_id},
+            )
+
+        cache_path = self._thumbnail_path(
+            asset_id=asset.asset_id,
+            content_hash=asset.content_hash,
+            size=target_size,
+        )
+        if cache_path.exists():
+            return AssetContent(
+                asset_id=asset.asset_id,
+                asset_type=asset.asset_type,
+                content_type="image/png",
+                bytes_content=cache_path.read_bytes(),
+                cache_hit=True,
+            )
+
+        source = self._storage.read_bytes(asset.storage_uri)
+        thumbnail = _make_png_thumbnail(source, size=target_size)
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_bytes(thumbnail)
+        return AssetContent(
+            asset_id=asset.asset_id,
+            asset_type=asset.asset_type,
+            content_type="image/png",
+            bytes_content=thumbnail,
+            cache_hit=False,
+        )
+
     async def update_asset_metadata(
         self,
         *,
@@ -1027,7 +1080,29 @@ class SqliteAssetService(AssetService):
 
         if row is None:
             raise NotFoundError("asset_not_found", "Asset was not found", {"asset_id": asset_id})
+        self._clear_asset_thumbnail_cache(asset_id)
         return _asset_from_row(row)
+
+    def _thumbnail_path(self, *, asset_id: str, content_hash: str, size: int) -> Path:
+        safe_asset_id = _safe_cache_segment(asset_id)
+        safe_hash = _safe_cache_segment(content_hash)
+        target = (self._thumbnail_dir / safe_asset_id / f"{safe_hash}-{size}.png").resolve()
+        if not target.is_relative_to(self._thumbnail_dir):
+            raise ValidationError(
+                "invalid_thumbnail_cache_path",
+                "Thumbnail cache path must stay inside asset storage root",
+            )
+        return target
+
+    def _clear_asset_thumbnail_cache(self, asset_id: str) -> None:
+        target = (self._thumbnail_dir / _safe_cache_segment(asset_id)).resolve()
+        if not target.is_relative_to(self._thumbnail_dir):
+            raise ValidationError(
+                "invalid_thumbnail_cache_path",
+                "Thumbnail cache path must stay inside asset storage root",
+            )
+        if target.exists():
+            shutil.rmtree(target)
 
     async def delete_asset(self, *, user_id: str, asset_id: str) -> None:
         asset = await self.get_asset(user_id=user_id, asset_id=asset_id)
@@ -1622,6 +1697,36 @@ async def _fetch_asset_tag_rows(db: aiosqlite.Connection, *, asset_id: str) -> l
         return await cursor.fetchall()
     finally:
         await cursor.close()
+
+
+def _thumbnail_size(size: int) -> int:
+    if size < 32 or size > 1024:
+        raise ValidationError(
+            "asset_thumbnail_size_invalid",
+            "Thumbnail size must be between 32 and 1024",
+            {"size": size},
+        )
+    return size
+
+
+def _make_png_thumbnail(content: bytes, *, size: int) -> bytes:
+    try:
+        with Image.open(BytesIO(content)) as image:
+            image.thumbnail((size, size))
+            if image.mode not in ("RGB", "RGBA"):
+                image = image.convert("RGBA")
+            output = BytesIO()
+            image.save(output, format="PNG", optimize=True)
+            return output.getvalue()
+    except UnidentifiedImageError as exc:
+        raise ValidationError(
+            "asset_thumbnail_unsupported",
+            "Asset content is not a readable image",
+        ) from exc
+
+
+def _safe_cache_segment(value: str) -> str:
+    return "".join(char for char in value if char.isalnum() or char in ("-", "_")) or "unknown"
 
 
 def _asset_from_row(row: aiosqlite.Row) -> AssetRecord:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import sqlite3
 
 import aiosqlite
@@ -49,6 +50,11 @@ class FailingObjectStorage(ObjectStorageService):
 
     async def delete_object(self, *, key: str) -> None:
         return None
+
+
+PNG_1X1 = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+)
 
 
 async def test_create_text_asset_and_search_project_scope(test_settings) -> None:
@@ -486,6 +492,57 @@ async def test_file_asset_content_can_be_replaced_without_changing_identity(test
     assert replaced.metadata["appearance_description"] == "旧图描述"
     assert content.bytes_content == b"new image"
     assert content.content_type == "image/jpeg"
+
+
+async def test_image_thumbnail_is_generated_cached_and_invalidated(test_settings) -> None:
+    await migrate(test_settings.database_path)
+    users = SqliteUserService(test_settings.database_path)
+    user = await users.create_user(username="thumb-user", password="secret-123")
+    assets = SqliteAssetService(
+        database_path=test_settings.database_path,
+        storage_dir=test_settings.asset_storage_dir,
+        user_service=users,
+    )
+    asset = await assets.import_file_asset(
+        user_id=user.user_id,
+        scope="global",
+        project_id=None,
+        file_name="source.png",
+        content_type="image/png",
+        content=PNG_1X1,
+        metadata={},
+    )
+
+    first = await assets.get_asset_thumbnail(
+        user_id=user.user_id,
+        asset_id=asset.asset_id,
+        size=128,
+    )
+    second = await assets.get_asset_thumbnail(
+        user_id=user.user_id,
+        asset_id=asset.asset_id,
+        size=128,
+    )
+    await assets.replace_asset_file(
+        user_id=user.user_id,
+        asset_id=asset.asset_id,
+        file_name="replacement.png",
+        content_type="image/png",
+        content=PNG_1X1,
+    )
+    third = await assets.get_asset_thumbnail(
+        user_id=user.user_id,
+        asset_id=asset.asset_id,
+        size=128,
+    )
+
+    assert first.content_type == "image/png"
+    assert first.bytes_content and first.bytes_content.startswith(b"\x89PNG")
+    assert first.cache_hit is False
+    assert second.bytes_content == first.bytes_content
+    assert second.cache_hit is True
+    assert third.bytes_content and third.bytes_content.startswith(b"\x89PNG")
+    assert third.cache_hit is False
 
 
 async def test_get_project_asset_rejects_mismatched_project_context(test_settings) -> None:

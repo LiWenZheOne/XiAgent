@@ -26,6 +26,17 @@ class AssetService(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def get_asset_thumbnail(
+        self,
+        *,
+        user_id: str,
+        asset_id: str,
+        project_id: str | None = None,
+        size: int = 256,
+    ) -> Any:
+        raise NotImplementedError
+
+    @abstractmethod
     async def search_assets(
         self,
         *,
