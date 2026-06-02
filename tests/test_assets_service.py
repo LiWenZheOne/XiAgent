@@ -467,7 +467,7 @@ async def test_file_asset_content_can_be_replaced_without_changing_identity(test
         file_name="source-file.png",
         content_type="image/png",
         content=b"old image",
-        metadata={"type": "character", "variant_description": "旧图描述"},
+        metadata={"type": "character", "appearance_description": "旧图描述"},
     )
 
     replaced = await assets.replace_asset_file(
@@ -483,7 +483,7 @@ async def test_file_asset_content_can_be_replaced_without_changing_identity(test
     assert replaced.name == "source-file.png"
     assert replaced.mime_type == "image/jpeg"
     assert replaced.size_bytes == len(b"new image")
-    assert replaced.metadata["variant_description"] == "旧图描述"
+    assert replaced.metadata["appearance_description"] == "旧图描述"
     assert content.bytes_content == b"new image"
     assert content.content_type == "image/jpeg"
 

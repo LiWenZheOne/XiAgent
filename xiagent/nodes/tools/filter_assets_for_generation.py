@@ -185,11 +185,7 @@ def _asset_appearance_description(asset: Any) -> str | None:
         metadata = getattr(asset, "metadata", None)
     if not isinstance(metadata, Mapping):
         return None
-    for key in ("variant_description", "description", "appearance_description"):
-        value = _optional_text(metadata.get(key))
-        if value:
-            return value
-    return None
+    return _optional_text(metadata.get("appearance_description"))
 
 
 def _optional_text(value: Any) -> str | None:

@@ -31,21 +31,21 @@ async def test_asset_draft_node_builds_prompt_and_returns_multiple_typed_assets(
             {
                 "assets": [
                     {
-                        "type": "character",
-                        "name": "官兵",
+                        "asset_type": "character",
+                        "asset_name": "官兵",
+                        "asset_tags": ["官兵服", "佩刀"],
                         "matched": False,
                         "matched_asset_id": None,
                         "matched_asset_name": "",
                         "aliases": "",
                         "summary": "船上的官府兵丁。",
                         "character_status": "押送途中",
-                        "variant_name": "官兵服",
-                        "variant_description": "官兵制服，束发，持械。",
-                        "accessories": "刀",
+                        "appearance_description": "官兵制服，束发，持械。",
                     },
                     {
-                        "type": "location",
-                        "name": "官兵船",
+                        "asset_type": "location",
+                        "asset_name": "官兵船",
+                        "asset_tags": [],
                         "matched": False,
                         "matched_asset_id": None,
                         "matched_asset_name": "",
@@ -54,8 +54,9 @@ async def test_asset_draft_node_builds_prompt_and_returns_multiple_typed_assets(
                         "time_of_day": "",
                     },
                     {
-                        "type": "prop",
-                        "name": "官兵刀",
+                        "asset_type": "prop",
+                        "asset_name": "官兵刀",
+                        "asset_tags": [],
                         "matched": False,
                         "matched_asset_id": None,
                         "matched_asset_name": "",
@@ -88,7 +89,7 @@ async def test_asset_draft_node_builds_prompt_and_returns_multiple_typed_assets(
     )
 
     assert result.status == "succeeded"
-    assert [item["type"] for item in result.output["assets"]] == ["character", "location", "prop"]
+    assert [item["asset_type"] for item in result.output["assets"]] == ["character", "location", "prop"]
     request = router.requests[0]
     prompt_text = "\n".join(str(message.content) for message in request.messages)
     assert "用户描述的新资产需求" in prompt_text
@@ -111,8 +112,9 @@ async def test_asset_draft_node_rejects_invalid_asset_type_from_model() -> None:
             {
                 "assets": [
                     {
-                        "type": "scene",
-                        "name": "官兵船",
+                        "asset_type": "scene",
+                        "asset_name": "官兵船",
+                        "asset_tags": [],
                         "matched": False,
                         "matched_asset_id": None,
                         "matched_asset_name": "",

@@ -251,11 +251,7 @@ def _image_url_from_item(item: Mapping[str, Any] | None) -> str:
 def _appearance_description(item: Mapping[str, Any] | None) -> str:
     if item is None:
         return ""
-    for key in ("appearance_description", "variant_description", "visual_description", "description"):
-        value = _text(item.get(key))
-        if value:
-            return value
-    return ""
+    return _text(item.get("appearance_description"))
 
 
 def _clean_image_ref(value: Any) -> dict[str, str] | None:

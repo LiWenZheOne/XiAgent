@@ -257,12 +257,12 @@ async def test_parallel_node_filters_prompt_fields_and_passthroughs_program_fiel
             "items": [
                 {
                         "asset_name": "村民",
-                    "variant_description": "黑灰短发，眉眼锋利。",
+                    "appearance_description": "黑灰短发，眉眼锋利。",
                     "reference_image_ref": {"kind": "asset", "asset_id": "template-character"},
                 }
             ],
             "prompt_template": "Process: {item}",
-                "prompt_fields": ["asset_name", "variant_description"],
+                "prompt_fields": ["asset_name", "appearance_description"],
                 "passthrough_fields": ["asset_name", "reference_image_ref"],
             "max_attempts": 1,
         },
@@ -280,7 +280,7 @@ async def test_parallel_node_filters_prompt_fields_and_passthroughs_program_fiel
     assert "full_name" not in schema_prompt
     assert "reference_image_ref" not in user_prompt
     assert "reference_image_ref" not in schema_prompt
-    assert "variant_description" in user_prompt
+    assert "appearance_description" in user_prompt
 
 
 @pytest.mark.asyncio

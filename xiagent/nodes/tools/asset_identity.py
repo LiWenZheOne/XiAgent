@@ -81,16 +81,16 @@ def asset_name_from_record(value: Mapping[str, Any]) -> str:
     if explicit:
         return explicit
 
-    tags = _string_list(value.get("tags"))
-    if len(tags) >= 2 and tags[0] in ASSET_TAG_TYPES:
-        return tags[1]
-
     raw = _text(value.get("name"))
     if raw:
         parts = _split_composite_name(raw)
         if len(parts) >= 2 and parts[0] in ASSET_TAG_TYPES:
             return parts[1]
         return raw
+
+    tags = _string_list(value.get("tags"))
+    if len(tags) >= 2 and tags[0] in ASSET_TAG_TYPES:
+        return tags[1]
     return ""
 
 
@@ -104,14 +104,14 @@ def asset_tags_from_record(
     if tags:
         return _clean_tags(tags, asset_type=asset_type, asset_name=asset_name)
 
-    library_tags = _string_list(value.get("tags"))
-    if library_tags:
-        return _clean_tags(library_tags, asset_type=asset_type, asset_name=asset_name)
-
     name = _text(value.get("name"))
     parts = _split_composite_name(name)
     if len(parts) >= 2 and parts[0] in ASSET_TAG_TYPES:
         return _clean_tags(parts[2:], asset_type=asset_type, asset_name=asset_name)
+
+    library_tags = _string_list(value.get("tags"))
+    if library_tags:
+        return _clean_tags(library_tags, asset_type=asset_type, asset_name=asset_name)
 
     return []
 

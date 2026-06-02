@@ -211,16 +211,14 @@ def _asset_tags(asset: Mapping[str, Any]) -> list[str]:
 
 
 def _appearance_description(variant: Mapping[str, Any]) -> str:
-    for key in ("appearance_description", "visual_description", "variant_description", "description", "prompt"):
-        value = _text(variant.get(key))
-        if value:
-            return value
+    value = _text(variant.get("appearance_description"))
+    if value:
+        return value
     metadata = variant.get("metadata")
     if isinstance(metadata, Mapping):
-        for key in ("appearance_description", "visual_description", "variant_description", "description", "prompt"):
-            value = _text(metadata.get(key))
-            if value:
-                return value
+        value = _text(metadata.get("appearance_description"))
+        if value:
+            return value
     return ""
 
 

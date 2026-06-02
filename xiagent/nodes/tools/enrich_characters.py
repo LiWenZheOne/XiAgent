@@ -67,7 +67,8 @@ class EnrichCharactersNode(BaseNode):
 
         # Build lookup maps
         name_to_asset: dict[str, dict[str, Any]] = {}
-        identity_to_asset: dict[tuple[str, str, tuple[str, ...]], dict[str, Any]] = {}
+        typed_name_to_asset: dict[tuple[str, str], dict[str, Any]] = {}
+        typed_name_to_assets: dict[tuple[str, str], list[dict[str, Any]]] = {}
         for asset in matched_by_name:
             if not isinstance(asset, dict):
                 continue
@@ -77,9 +78,11 @@ class EnrichCharactersNode(BaseNode):
             asset_name = _text(normalized_asset.get("asset_name"))
             if asset_name:
                 name_to_asset.setdefault(asset_name, asset)
-            identity_key = _asset_identity_key(normalized_asset)
-            if identity_key is not None:
-                identity_to_asset.setdefault(identity_key, asset)
+                asset_type = _text(normalized_asset.get("asset_type"))
+                if asset_type:
+                    typed_name = (_normalize(asset_type), _normalize(asset_name))
+                    typed_name_to_asset.setdefault(typed_name, asset)
+                    typed_name_to_assets.setdefault(typed_name, []).append(asset)
 
         name_to_semantic: dict[str, dict[str, Any]] = {}
         for match in semantic_matches:
@@ -96,13 +99,15 @@ class EnrichCharactersNode(BaseNode):
                 continue
             metadata = asset.get("metadata") if isinstance(asset.get("metadata"), dict) else {}
             normalized_asset = normalize_asset_record(asset)
-            identity_key = _asset_identity_key(normalized_asset)
-            if identity_key is not None:
-                identity_to_asset.setdefault(identity_key, asset)
             tags = _asset_tags(normalized_asset)
             char_name = _text(normalized_asset.get("asset_name"))
             if not char_name:
                 continue
+            asset_type = _text(normalized_asset.get("asset_type"))
+            if asset_type:
+                typed_name = (_normalize(asset_type), _normalize(char_name))
+                typed_name_to_asset.setdefault(typed_name, asset)
+                typed_name_to_assets.setdefault(typed_name, []).append(asset)
             if tags:
                 variant_info: dict[str, Any] = {
                     "asset_id": asset.get("asset_id"),
@@ -130,9 +135,14 @@ class EnrichCharactersNode(BaseNode):
             if not isinstance(asset_name, str) or not asset_name.strip():
                 continue
 
-            # 1. Exact match by canonical identity, then by plain asset name.
-            identity_key = _asset_identity_key(result)
-            asset = identity_to_asset.get(identity_key) if identity_key is not None else None
+            # 1. Match by fixed type/name and unordered tags, then by plain asset name.
+            asset = None
+            asset_type = _text(result.get("asset_type"))
+            if asset_type:
+                typed_name = (_normalize(asset_type), _normalize(asset_name))
+                asset = _find_asset_by_tags(typed_name_to_assets.get(typed_name, []), _asset_tags(result))
+                if asset is None and not _asset_tags(result):
+                    asset = typed_name_to_asset.get(typed_name)
             if asset is None:
                 asset = name_to_asset.get(asset_name)
             if asset is not None:
@@ -201,9 +211,6 @@ def _asset_tags(asset: Mapping[str, Any]) -> list[str]:
     asset_tags = asset.get("asset_tags")
     if isinstance(asset_tags, list):
         return [tag.strip() for tag in asset_tags if isinstance(tag, str) and tag.strip()]
-    tags = asset.get("tags")
-    if isinstance(tags, list):
-        return [tag.strip() for tag in tags if isinstance(tag, str) and tag.strip()]
     return []
 
 
@@ -220,16 +227,31 @@ def _infer_default_asset_type(*asset_groups: Any) -> str | None:
     return None
 
 
-def _asset_identity_key(asset: Mapping[str, Any]) -> tuple[str, str, tuple[str, ...]] | None:
-    asset_type = _text(asset.get("asset_type"))
-    asset_name = _text(asset.get("asset_name"))
-    if not asset_type or not asset_name:
+def _find_asset_by_tags(assets: list[dict[str, Any]], target_tags: list[str]) -> dict[str, Any] | None:
+    if not assets:
         return None
-    return (
-        _normalize(asset_type),
-        _normalize(asset_name),
-        tuple(_normalize(tag) for tag in _asset_tags(asset)),
-    )
+    if not target_tags:
+        return assets[0]
+
+    target = _tag_atoms(target_tags)
+    if not target:
+        return assets[0]
+
+    for asset in assets:
+        candidate = _tag_atoms(_asset_tags(normalize_asset_record(asset)))
+        if target.issubset(candidate):
+            return asset
+    return None
+
+
+def _tag_atoms(tags: list[str]) -> set[str]:
+    result: set[str] = set()
+    for tag in tags:
+        for part in tag.replace("，", "、").replace(",", "、").replace("/", "、").split("、"):
+            clean = _normalize(part)
+            if clean:
+                result.add(clean)
+    return result
 
 
 def _asset_image_ref(asset: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -240,30 +262,15 @@ def _asset_image_ref(asset: Mapping[str, Any]) -> dict[str, Any] | None:
 
 
 def _asset_appearance_description(asset: Mapping[str, Any]) -> str | None:
-    for key in (
-        "appearance_description",
-        "visual_description",
-        "variant_description",
-        "description",
-        "prompt",
-        "text_content",
-    ):
-        value = asset.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
+    value = asset.get("appearance_description")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
 
     metadata = asset.get("metadata")
     if isinstance(metadata, Mapping):
-        for key in (
-            "appearance_description",
-            "visual_description",
-            "variant_description",
-            "description",
-            "prompt",
-        ):
-            value = metadata.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
+        value = metadata.get("appearance_description")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
 
     return None
 

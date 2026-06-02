@@ -102,13 +102,13 @@ class FakeRouter(ChatModelRouter):
                     "reasoning": "剧本为风雪山神庙场景，林冲是唯一出场角色。",
                     "characters": [
                         {
-                            "full_name": "林冲",
+                            "asset_type": "character",
+                            "asset_name": "林冲",
+                            "asset_tags": ["囚服", "旧毡笠"],
                             "aliases": ["林教头"],
                             "summary": "八十万禁军教头，被发配后的落难英雄。",
                             "character_status": "囚犯装束，头戴旧毡笠，手持花枪，在风雪中蓄势待发。",
-                            "variant_name": "囚服旧毡笠",
-                            "variant_description": "身着囚服，头戴旧毡笠，保留林冲的稳定体貌和身份识别特征。",
-                            "accessories": [],
+                            "appearance_description": "身着囚服，头戴旧毡笠，保留林冲的稳定体貌和身份识别特征。",
                         }
                     ],
                     "character_names": ["林冲"],
@@ -145,26 +145,29 @@ class FakeRouter(ChatModelRouter):
         elif "为以下已提取角色变体匹配已有资产" in prompt_text:
             text = json.dumps(
                 {
-                    "full_name": "林冲",
-                    "accessories": [],
-                    "matched_variant": "",
-                    "matched_variant_id": None,
+                    "asset_type": "character",
+                    "asset_name": "林冲",
+                    "asset_tags": ["囚服", "旧毡笠"],
+                    "matched_asset_id": None,
+                    "matched_asset_name": "",
+                    "matched_asset_ref": None,
                     "is_new_variant": True,
-                    "new_variant_name": "林冲_默认",
-                    "default_variant_status": "囚犯装束，头戴旧毡笠，手持花枪",
-                    "default_variant_storage_uri": "",
+                    "default_asset_status": "囚犯装束，头戴旧毡笠，手持花枪",
+                    "default_asset_storage_uri": "",
                     "reason": "无已有变体匹配",
                 },
                 ensure_ascii=False,
             )
-        elif "检查以下角色的配件状态" in prompt_text:
+        elif "检查以下角色的资产标签状态" in prompt_text:
             text = json.dumps(
                 {
-                    "full_name": "林冲",
-                    "has_new_accessories": False,
-                    "new_accessories": [],
-                    "existing_accessories": [],
-                    "reason": "无配件",
+                    "asset_type": "character",
+                    "asset_name": "林冲",
+                    "asset_tags": ["囚服", "旧毡笠"],
+                    "has_new_asset_tags": False,
+                    "new_asset_tags": [],
+                    "existing_asset_tags": ["囚服", "旧毡笠"],
+                    "reason": "标签已覆盖",
                 },
                 ensure_ascii=False,
             )
@@ -344,7 +347,8 @@ async def test_workflow_full_pipeline_with_mocks(tmp_path: Path, monkeypatch) ->
             json.dumps(  # upload_images → asset_images (JSON array)
                 [
                     {
-                        "full_name": "林冲",
+                        "asset_name": "林冲",
+                        "asset_tags": ["囚服", "旧毡笠"],
                         "image_url": "https://example.com/linchong.png",
                         "source": "manual_upload",
                     }

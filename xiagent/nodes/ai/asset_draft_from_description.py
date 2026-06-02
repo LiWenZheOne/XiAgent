@@ -175,10 +175,10 @@ def _asset_draft_output_schema(asset_type: str) -> dict[str, Any]:
                     "aliases": {"type": "string"},
                     "summary": {"type": "string"},
                     "character_status": {"type": "string"},
-                    "variant_description": {"type": "string"},
+                    "appearance_description": {"type": "string"},
                 }
             )
-            required.extend(["aliases", "summary", "character_status", "variant_description"])
+            required.extend(["aliases", "summary", "character_status", "appearance_description"])
         elif type_name == "location":
             asset_properties.update(
                 {
@@ -233,7 +233,7 @@ def _asset_draft_system_prompt(asset_type: str) -> str:
 1. 用户要求新增几个资产？如果一句描述中包含多个独立资产，必须拆成多项。
 2. 每个新增资产分别是什么类型：character、location 还是 prop？用户没有明说类型时，根据资产本体判断，不要使用 scene/asset 等类型名。
 3. 每个新增资产能从“用户描述的新资产需求”“原始剧本文本”“世界背景”中确认哪些事实？严格区分这些输入分区，不要把当前已确认资产列表或资产库匹配字段当作新资产事实来源。
-4. 每个新增资产应该按对应提取规则补全哪些字段？角色按角色提取规则补 asset_type、asset_name、asset_tags、aliases、summary、character_status、variant_description；地点按地点提取规则补 asset_type、asset_name、description、location_type、time_of_day；道具按道具提取规则补 asset_type、asset_name、description、category、related_character。
+4. 每个新增资产应该按对应提取规则补全哪些字段？角色按角色提取规则补 asset_type、asset_name、asset_tags、aliases、summary、character_status、appearance_description；地点按地点提取规则补 asset_type、asset_name、description、location_type、time_of_day；道具按道具提取规则补 asset_type、asset_name、description、category、related_character。
 5. 哪些字段无法确认？无法确认的字段返回空字符串，不要编造具体情节、身份、地点或关联关系。
 6. 新增资产默认 matched=false、matched_asset_id=null、matched_asset_name=""，输出字段必须适合继续进入后续图像提示词和入库流程。
 
@@ -242,7 +242,7 @@ def _asset_draft_system_prompt(asset_type: str) -> str:
 - 补全角色标签时，先根据用户描述、原始剧本、世界背景、角色身份、职业/阶层、地点和剧情阶段推断当前情景下最合理的稳定服装、稳定造型和稳定配件，再写入 asset_tags。
 - 不要把“原文没有直接写衣服”当成“默认”。必须从身份、职业/阶层、时代、地点和当前情景推导一个具体稳定造型名，如“官兵装束”“渔民短打”“道士服”“僧衣”“旅人布衣”“水军装束”“囚服”“夜行衣”。
 - asset_tags 必须直接使用服装名、稳定造型名或稳定配件名；不要包含角色名，不要用被绑、受伤、押送等剧情状态命名；禁止填“默认”“基础”“普通”“无特殊造型”等空泛标签，信息有限时也必须根据情景推导身份/职业/处境造型标签。
-- variant_description 必须比 asset_tags 更详细，至少 40 字，只描述图像中角色可见的外貌特征和稳定造型，按头部/发型、上身、下装、鞋履、颜色搭配、身份识别特征、稳定配件描述；不要写用途、生成目的、剧情作用；不要描述任何材质、布料质感、纹理或面料工艺。禁止输出“默认装束，无特殊造型描述”这类空泛描述。
+- appearance_description 必须比 asset_tags 更详细，至少 40 字，只描述图像中角色可见的外貌特征和稳定造型，按头部/发型、上身、下装、鞋履、颜色搭配、身份识别特征、稳定配件描述；不要写用途、生成目的、剧情作用；不要描述任何材质、布料质感、纹理或面料工艺。禁止输出“默认装束，无特殊造型描述”这类空泛描述。
 - 被绑、受伤、奔跑、打斗、表情、姿态、镜头动作、地点、天气、光照、临时剧情处境都不是变体。
 - summary 只描述角色的生平背景、身份定位或原作人物背景，不描述当前剧情状态。
 - character_status 只描述当前剧情阶段的身份、处境或状态，不描述生平背景，且不得反推成 asset_tags。
@@ -253,7 +253,7 @@ def _asset_draft_system_prompt(asset_type: str) -> str:
 
 道具规则：
 - 描述实体道具本身，不要把角色动作写成道具。
-- 衣服、服装、鞋帽、披风、围巾、面巾、斗笠、斗篷等穿戴类外观元素不作为 prop；它们属于角色稳定标签，应写入 character 的 asset_tags 或 variant_description。
+- 衣服、服装、鞋帽、披风、围巾、面巾、斗笠、斗篷等穿戴类外观元素不作为 prop；它们属于角色稳定标签，应写入 character 的 asset_tags 或 appearance_description。
 - 只有可从角色身上独立拿取、使用、赠予、争夺或作为剧情实体流转的物件才可作为 prop；普通穿着状态不能作为 prop。
 - related_character 是可选字段，只有用户描述或原文明确关联角色时才填写。
 """.strip()
@@ -290,8 +290,8 @@ def _asset_draft_user_prompt(
 - reasoning：一句话说明生成依据
 
 每个 asset.asset_type 必须是 character、location 或 prop。不要输出 scene/asset/角色/地点/道具等其他类型名。
-character 字段：asset_type, asset_name, asset_tags, matched, matched_asset_id, matched_asset_name, aliases, summary, character_status, variant_description。
-角色 asset_tags 必须先根据当前情景和身份/职业推断服装/稳定造型/稳定配件，再直接写标签；禁止写“默认”“基础”“普通”“无特殊造型”等空泛标签；variant_description 写至少 40 字的详细稳定视觉设定，禁止“默认装束，无特殊造型描述”。
+character 字段：asset_type, asset_name, asset_tags, matched, matched_asset_id, matched_asset_name, aliases, summary, character_status, appearance_description。
+角色 asset_tags 必须先根据当前情景和身份/职业推断服装/稳定造型/稳定配件，再直接写标签；禁止写“默认”“基础”“普通”“无特殊造型”等空泛标签；appearance_description 写至少 40 字的详细稳定视觉设定，禁止“默认装束，无特殊造型描述”。
 location 字段：asset_type, asset_name, asset_tags, matched, matched_asset_id, matched_asset_name, description, location_type, time_of_day。
 prop 字段：asset_type, asset_name, asset_tags, matched, matched_asset_id, matched_asset_name, description, category, related_character。
 新增资产默认 matched=false、matched_asset_id=null、matched_asset_name=""。

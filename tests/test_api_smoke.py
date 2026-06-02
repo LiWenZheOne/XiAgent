@@ -284,24 +284,24 @@ def test_asset_draft_endpoint_uses_structured_llm_with_user_context(test_setting
             return ChatResponse(
                 text=json.dumps(
                     {
-                        "assets": [
-                            {
-                                "type": "character",
-                                "name": "武松",
-                                "matched": False,
-                                "matched_asset_id": None,
+                            "assets": [
+                                {
+                                    "asset_type": "character",
+                                    "asset_name": "武松",
+                                    "matched": False,
+                                    "matched_asset_id": None,
                                 "matched_asset_name": "",
                                 "aliases": "行者",
                                 "summary": "梁山好汉",
                                 "character_status": "途经景阳冈",
-                                "variant_name": "默认",
-                                "variant_description": "劲装短打",
-                                "accessories": "哨棒",
-                            },
-                            {
-                                "type": "location",
-                                "name": "官兵船",
-                                "matched": False,
+                                "asset_tags": ["劲装短打", "哨棒"],
+                                "appearance_description": "劲装短打，手持哨棒。",
+                                },
+                                {
+                                    "asset_type": "location",
+                                    "asset_name": "官兵船",
+                                    "asset_tags": [],
+                                    "matched": False,
                                 "matched_asset_id": None,
                                 "matched_asset_name": "",
                                 "description": "官兵在水上使用的船只。",
@@ -342,8 +342,8 @@ def test_asset_draft_endpoint_uses_structured_llm_with_user_context(test_setting
 
     assert response.status_code == 200
     body = response.json()
-    assert body["assets"][0]["name"] == "武松"
-    assert body["assets"][1]["type"] == "location"
+    assert body["assets"][0]["asset_name"] == "武松"
+    assert body["assets"][1]["asset_type"] == "location"
     assert body["assets"][0]["matched"] is False
     assert fake_router.requests
     prompt = "\n".join(str(message.content) for message in fake_router.requests[0].messages)
@@ -368,9 +368,8 @@ def test_intelligent_asset_upload_enriches_metadata_and_type_tag(test_settings) 
                             "summary": "八十万禁军教头，后因奸臣陷害走上梁山。",
                             "relationships": "与鲁智深、柴进等梁山人物有交集。",
                             "character_status": "流落江湖阶段。",
-                            "variant_name": "教头常服",
-                            "variant_description": "头戴软巾，上身整洁短袍，腰间束带，神态沉稳，带有武官气质。",
-                            "accessories": "长枪",
+                            "asset_tags": ["教头常服", "长枪"],
+                            "appearance_description": "头戴软巾，上身整洁短袍，腰间束带，神态沉稳，带有武官气质。",
                             "description": "沉稳威严的武人形象。",
                             "location_type": "",
                             "time_of_day": "",
@@ -966,7 +965,7 @@ def test_asset_file_can_be_replaced(test_settings) -> None:
             data={
                 "scope": "global",
                 "name": "template.png",
-                "metadata_json": '{"variant_description": "旧图描述"}',
+                "metadata_json": '{"appearance_description": "旧图描述"}',
                 "publish": "false",
             },
             files={"file": ("template.png", b"old image", "image/png")},
@@ -989,7 +988,7 @@ def test_asset_file_can_be_replaced(test_settings) -> None:
     assert replace_response.json()["asset_id"] == asset["asset_id"]
     assert replace_response.json()["name"] == "template.png"
     assert replace_response.json()["mime_type"] == "image/jpeg"
-    assert replace_response.json()["metadata"]["variant_description"] == "旧图描述"
+    assert replace_response.json()["metadata"]["appearance_description"] == "旧图描述"
     assert content_response.status_code == 200
     assert content_response.content == b"new image"
     assert content_response.headers["content-type"].startswith("image/jpeg")

@@ -253,7 +253,7 @@ def test_asset_catalog_extract_characters_output_schema(test_settings) -> None:
                     "aliases": ["林教头"],
                     "summary": "八十万禁军教头，武艺高强。",
                     "character_status": "被发配沧州途中，身着囚服，面带风霜。",
-                    "variant_description": "身着囚服，保留八十万禁军教头的稳定体貌和身份识别特征。",
+                    "appearance_description": "身着囚服，保留八十万禁军教头的稳定体貌和身份识别特征。",
                 }
             ],
             "character_names": ["林冲"],
@@ -501,7 +501,7 @@ def test_asset_catalog_generate_prompt_is_character_design_text() -> None:
         "asset_type",
         "asset_name",
         "asset_tags",
-        "variant_description",
+        "appearance_description",
         "description",
         "reference_appearance_description",
     ]
@@ -531,7 +531,7 @@ def test_asset_catalog_generate_prompt_is_character_design_text() -> None:
     assert "原作对应桥段" in system_prompt
     assert "必须选择一个确定方案" in prompt_template
     assert "不得包含“或”“可能”“可选”“任选”“一类”等不确定表达" in prompt_template
-    assert "variant_description 描述了哪些目标外貌" in prompt_template
+    assert "appearance_description 描述了哪些目标外貌" in prompt_template
     assert "reference_appearance_description 描述了哪些原始外貌" in prompt_template
     assert "目标外貌和参考图外貌之间的差异是什么" in prompt_template
     assert "哪些剧情、动作、状态、腿脚和鞋履信息必须排除" in prompt_template
@@ -566,7 +566,7 @@ def test_asset_catalog_extract_prompt_includes_key_instructions() -> None:
     assert "characters" in prompt_template
     assert "asset_name" in prompt_template
     assert "character_status" in prompt_template
-    assert "variant_description" in prompt_template
+    assert "appearance_description" in prompt_template
     assert "character_names" in prompt_template
     assert "reasoning" in prompt_template
     assert "请用提问式思维链步骤完成分析" in system_prompt
@@ -580,14 +580,14 @@ def test_asset_catalog_extract_prompt_includes_key_instructions() -> None:
     assert "不是资产标签依据" in system_prompt
     assert "禁止用被绑、受伤、押送、奔跑等临时状态命名" in system_prompt
     assert "不得包含服装、配件或类型前缀" in prompt_template
-    assert "这个变体的稳定视觉设定是什么" in system_prompt
+    assert "这个角色的稳定视觉设定是什么" in system_prompt
     assert "至少 40 字" in system_prompt
     assert "不要描述任何材质、布料质感、纹理或面料工艺" in system_prompt
     assert "不得包含服装、配件或类型前缀" in prompt_template
     assert "按 system 中 12 个问题整理" in prompt_template
     assert "asset_tags" in prompt_template
     assert "不得包含服装、配件或类型前缀" in prompt_template
-    assert "回答\"这个变体的稳定视觉设定是什么？\"" in prompt_template
+    assert "回答\"这个角色的稳定视觉设定是什么？\"" in prompt_template
     assert "束缚用绳索" in system_prompt
     assert "summary 只写长期身份" in system_prompt
     assert "character_status 只写此刻" in system_prompt
@@ -630,7 +630,7 @@ def test_asset_catalog_variant_matching_only_matches_extracted_variants() -> Non
     assert "资产库角色变体匹配器" in match_system
     assert "提取到的角色变体资产" in match_system
     assert "变体是否存在已经由上游 extract_characters 决定" in match_system
-    assert "asset_name、asset_tags、variant_description" in match_system
+    assert "asset_name、asset_tags、appearance_description" in match_system
     assert "被绑起来" in match_system
     assert "临时状态必须忽略" in match_system
     assert "## A. 提取到的角色变体资产" in match_prompt
@@ -876,7 +876,7 @@ class FakeAssetCatalogRouter(ChatModelRouter):
                 '"asset_tags": ["囚服"], "aliases": ["林教头"], '
                 '"summary": "八十万禁军教头，武艺高强。", '
                 '"character_status": "被发配沧州途中，身着囚服，面带风霜。", '
-                '"variant_description": "身着囚服，保留八十万禁军教头的稳定体貌和身份识别特征。"'
+                '"appearance_description": "身着囚服，保留八十万禁军教头的稳定体貌和身份识别特征。"'
                 '}], '
                 '"character_names": ["林冲"]}'
             ),
@@ -917,7 +917,7 @@ class FakeAssetCatalogRouter(ChatModelRouter):
                 '"matched": false, "matched_asset_id": null, "matched_asset_name": "", '
                 '"aliases": "林教头", "summary": "八十万禁军教头，武艺高强。", '
                 '"character_status": "被发配沧州途中，身着囚服，面带风霜。", '
-                '"variant_description": "身着囚服，保留八十万禁军教头的稳定体貌和身份识别特征。", '
+                '"appearance_description": "身着囚服，保留八十万禁军教头的稳定体貌和身份识别特征。", '
                 '"reference_appearance_description": "官服参考图，头戴幞头，身穿深色官袍。"}], "assets": [], "props": []}, '
                 '"added_assets": [], "reasoning": "无新增资产描述，沿用审核列表。"}'
             ),
@@ -1043,7 +1043,7 @@ async def _seed_file_asset(
             (
                 asset_id, "global", None, "file", name, "image/png", None,
                 0, storage_uri, None,
-                '{"variant_description": "官服参考图，头戴幞头，身穿深色官袍。"}',
+                '{"appearance_description": "官服参考图，头戴幞头，身穿深色官袍。"}',
                 user_id,
                 now, now, None,
             ),

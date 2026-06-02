@@ -310,7 +310,7 @@ async def test_resolve_segment_image_refs_preserves_presence_and_fills_appearanc
                             "asset_type": "character",
                             "asset_name": "林冲",
                             "asset_tags": ["囚服", "毡笠"],
-                            "variant_description": "戴毡笠、穿囚服。",
+                            "appearance_description": "戴毡笠、穿囚服。",
                             "asset_id": "catalog-ref",
                         }
                     ]
@@ -739,7 +739,7 @@ async def test_enrich_characters_matches_existing_asset_by_identity_name() -> No
                     "asset_type": "character",
                     "asset_name": "众公差",
                     "asset_tags": ["公差皂衣"],
-                    "variant_description": "穿皂衣的押解公差。",
+                    "appearance_description": "穿皂衣的押解公差。",
                 }
             ],
             "matched_by_name": [],
@@ -766,6 +766,38 @@ async def test_enrich_characters_matches_existing_asset_by_identity_name() -> No
         "role": "reference",
     }
     assert character["reference_appearance_description"] == "一名穿皂衣、戴公差帽的押解公差。"
+
+
+async def test_enrich_characters_matches_character_tags_without_order() -> None:
+    node = EnrichCharactersNode()
+
+    result = await node.run(
+        None,
+        {
+            "characters": [
+                {
+                    "asset_type": "character",
+                    "asset_name": "何涛",
+                    "asset_tags": ["佩刀", "官帽"],
+                    "appearance_description": "佩刀官员。",
+                }
+            ],
+            "matched_by_name": [],
+            "existing_assets": [
+                {
+                    "asset_id": "asset_hetao",
+                    "name": "角色_何涛_官兵装束_官帽、佩刀、革带",
+                    "tags": ["角色", "官帽、佩刀、革带", "何涛", "官兵装束"],
+                    "metadata": {"public_url": "https://cdn.test/hetao.png"},
+                }
+            ],
+        },
+    )
+
+    character = result.output["characters"][0]
+    assert character["matched"] is True
+    assert character["matched_asset_id"] == "asset_hetao"
+    assert character["matched_asset_name"] == "角色_何涛_官兵装束_官帽、佩刀、革带"
 
 
 async def test_enrich_characters_matches_scene_name_with_existing_scene_asset() -> None:
@@ -835,6 +867,38 @@ async def test_enrich_characters_matches_prop_identity_with_existing_prop_asset(
     assert prop["matched"] is True
     assert prop["matched_asset_id"] == "asset_prop_spear"
     assert prop["matched_asset_name"] == "道具_花枪"
+
+
+async def test_enrich_characters_matches_tagless_prop_by_typed_name() -> None:
+    node = EnrichCharactersNode()
+
+    result = await node.run(
+        None,
+        {
+            "characters": [
+                {
+                    "asset_type": "prop",
+                    "asset_name": "钢叉",
+                    "description": "铁制三股钢叉。",
+                    "category": "武器",
+                }
+            ],
+            "matched_by_name": [],
+            "existing_assets": [
+                {
+                    "asset_id": "asset_prop_fork",
+                    "name": "道具_钢叉_武器_公差",
+                    "tags": ["道具", "公差", "钢叉", "武器"],
+                    "metadata": {"public_url": "https://cdn.test/fork.png"},
+                }
+            ],
+        },
+    )
+
+    prop = result.output["characters"][0]
+    assert prop["matched"] is True
+    assert prop["matched_asset_id"] == "asset_prop_fork"
+    assert prop["matched_asset_name"] == "道具_钢叉_武器_公差"
 
 
 async def test_complete_asset_images_merges_manual_and_generated_images() -> None:

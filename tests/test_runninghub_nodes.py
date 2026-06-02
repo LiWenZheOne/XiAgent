@@ -237,7 +237,9 @@ async def test_image_to_image_v2_wraps_prompt_with_fixed_prefix_and_suffix() -> 
         inputs={
             "prompt_results": [
                 {
-                    "full_name": "林冲_囚服",
+                    "asset_type": "character",
+                    "asset_name": "林冲",
+                    "asset_tags": ["囚服"],
                     "prompt": "深灰粗布囚服，旧毡笠，面部轮廓清晰，保留八十万禁军教头的挺拔体态",
                     "reference_image_ref": {"kind": "data_uri", "data": "data:image/png;base64,aW1hZ2UtYnl0ZXM="},
                 }
@@ -247,7 +249,8 @@ async def test_image_to_image_v2_wraps_prompt_with_fixed_prefix_and_suffix() -> 
         },
     )
 
-    assert result.output["asset_images"][0]["full_name"] == "林冲_囚服"
+    assert result.output["asset_images"][0]["asset_name"] == "林冲"
+    assert result.output["asset_images"][0]["asset_tags"] == ["囚服"]
     assert router.requests[0].messages[0].content == (
         "将图中角色改成深灰粗布囚服，旧毡笠，面部轮廓清晰，保留八十万禁军教头的挺拔体态，保持风格和其它特征不变"
     )
@@ -302,7 +305,9 @@ async def test_image_to_image_v2_converts_asset_reference_to_base64_image() -> N
         inputs={
             "prompt_results": [
                 {
-                    "full_name": "林冲_囚服",
+                    "asset_type": "character",
+                    "asset_name": "林冲",
+                    "asset_tags": ["囚服"],
                     "prompt": "深灰粗布囚服。",
                     "reference_image_ref": {"kind": "asset", "asset_id": "asset-ref"},
                 }
@@ -332,7 +337,9 @@ async def test_image_to_image_v2_rejects_unresolved_reference_url() -> None:
             inputs={
                 "prompt_results": [
                     {
-                        "full_name": "林冲_囚服",
+                        "asset_type": "character",
+                        "asset_name": "林冲",
+                        "asset_tags": ["囚服"],
                         "prompt": "深灰粗布囚服。",
                         "reference_image_ref": "https://runninghub.test/linchong.png",
                     }
