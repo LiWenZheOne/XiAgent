@@ -40,27 +40,27 @@ async def test_asset_draft_node_builds_prompt_and_returns_multiple_typed_assets(
                         "aliases": "",
                         "summary": "船上的官府兵丁。",
                         "character_status": "押送途中",
-                        "appearance_description": "官兵制服，束发，持械。",
+                        "appearance_description": "头戴官兵软巾，上身深色短袍束带，腰侧佩刀，神态警觉，保留押送兵丁的稳定识别特征。",
                     },
                     {
-                        "asset_type": "location",
+                        "asset_type": "scene",
                         "asset_name": "官兵船",
-                        "asset_tags": [],
+                        "asset_tags": ["水上", "官船"],
                         "matched": False,
                         "matched_asset_id": None,
                         "matched_asset_name": "",
-                        "description": "官兵在水上押送使用的船只。",
+                        "description": "官兵在水上押送使用的船只，甲板可供多人停留，设低矮船舱、桅杆、缆绳和官府旗号。",
                         "location_type": "水上",
                         "time_of_day": "",
                     },
                     {
                         "asset_type": "prop",
                         "asset_name": "官兵刀",
-                        "asset_tags": [],
+                        "asset_tags": ["武器", "官兵"],
                         "matched": False,
                         "matched_asset_id": None,
                         "matched_asset_name": "",
-                        "description": "官兵携带的制式兵器。",
+                        "description": "官兵押送犯人时随身携带的制式短刀，直背窄身，深色刀柄配铜色护手，刀鞘有磨损，便于近身戒备。",
                         "category": "武器",
                         "related_character": "官兵",
                     },
@@ -89,12 +89,13 @@ async def test_asset_draft_node_builds_prompt_and_returns_multiple_typed_assets(
     )
 
     assert result.status == "succeeded"
-    assert [item["asset_type"] for item in result.output["assets"]] == ["character", "location", "prop"]
+    assert [item["asset_type"] for item in result.output["assets"]] == ["character", "scene", "prop"]
     request = router.requests[0]
     prompt_text = "\n".join(str(message.content) for message in request.messages)
     assert "用户描述的新资产需求" in prompt_text
     assert "用户要求新增几个资产" in prompt_text
-    assert "每个新增资产分别是什么类型：character、location 还是 prop" in prompt_text
+    assert "每个新增资产分别是什么类型：character、scene 还是 prop" in prompt_text
+    assert "地点统一输出 scene" in prompt_text
     assert "按对应提取规则补全哪些字段" in prompt_text
     assert "先根据用户描述、原始剧本、世界背景、角色身份、职业/阶层、地点和剧情阶段推断" in prompt_text
     assert "必须从身份、职业/阶层、时代、地点和当前情景推导一个具体稳定造型名" in prompt_text
@@ -103,6 +104,9 @@ async def test_asset_draft_node_builds_prompt_and_returns_multiple_typed_assets(
     assert "不要描述任何材质、布料质感、纹理或面料工艺" in prompt_text
     assert "禁止“默认装束，无特殊造型描述”" in prompt_text
     assert "穿戴类外观元素不作为 prop" in prompt_text
+    assert "大型载具、建筑、场所或可供角色进入/停留的空间，应归入 scene" in prompt_text
+    assert "道具 description 必须同时包含两类信息" in prompt_text
+    assert "整体形制、尺寸比例、材质、颜色、装饰、磨损痕迹、用途和可见特征" in prompt_text
     assert "官兵押着犯人上船" in prompt_text
 
 

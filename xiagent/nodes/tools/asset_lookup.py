@@ -5,6 +5,7 @@ from typing import Any
 
 from xiagent.core.errors import ValidationError
 from xiagent.nodes.base import BaseNode, NodeContext, NodeDescriptor, NodeResult
+from xiagent.nodes.tools.asset_identity import ASSET_TAG_TYPES, normalize_asset_record
 
 
 class AssetLookupNode(BaseNode):
@@ -25,6 +26,22 @@ class AssetLookupNode(BaseNode):
                     "names": {
                         "type": "array",
                         "items": {"type": "string"},
+                    },
+                    "identity_filters": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "asset_type": {"type": "string"},
+                                "asset_name": {"type": "string"},
+                                "asset_tags": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                },
+                            },
+                            "required": ["asset_type", "asset_name"],
+                            "additionalProperties": True,
+                        },
                     },
                     "asset_type": {"type": "string"},
                     "mime_type": {"type": "string"},
@@ -90,6 +107,8 @@ class AssetLookupNode(BaseNode):
         elif names is not None:
             names = [n.strip() for n in names]
 
+        identity_filters = _identity_filters(inputs.get("identity_filters"))
+
         asset_type = inputs.get("asset_type")
         if not isinstance(asset_type, str) or not asset_type.strip():
             asset_type = None
@@ -115,7 +134,7 @@ class AssetLookupNode(BaseNode):
 
         project_id = ctx.project_id if scope in {"project", "combined"} else None
 
-        if names is not None:
+        if names is not None or identity_filters:
             keyword = None
 
         result = await ctx.asset_service.search_assets(
@@ -145,6 +164,8 @@ class AssetLookupNode(BaseNode):
         assets: list[dict[str, Any]] = []
         for item in result.items:
             item_tags = await _asset_tag_names(ctx, item)
+            if identity_filters and not _matches_any_identity(item, item_tags, identity_filters):
+                continue
             asset_dict: dict[str, Any] = {
                 "asset_id": item.asset_id,
                 "name": item.name,
@@ -165,7 +186,7 @@ class AssetLookupNode(BaseNode):
 
         return NodeResult(
             status="succeeded",
-            output={"total": result.total, "assets": assets},
+            output={"total": len(assets), "assets": assets},
         )
 
 
@@ -179,3 +200,103 @@ async def _asset_tag_names(ctx: NodeContext, asset: Any) -> list[str]:
         for tag in records
         if isinstance(getattr(tag, "name", None), str) and tag.name.strip()
     ]
+
+
+def _identity_filters(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    filters: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, Mapping):
+            continue
+        asset_type = _text(item.get("asset_type"))
+        asset_name = _text(item.get("asset_name"))
+        if not asset_type or not asset_name:
+            continue
+        filters.append({
+            "asset_type": asset_type,
+            "asset_name": asset_name,
+            "asset_tags": _tag_atoms(item.get("asset_tags")),
+        })
+    return filters
+
+
+def _matches_any_identity(asset: Any, tag_names: list[str], filters: list[dict[str, Any]]) -> bool:
+    identity = _asset_identity(asset, tag_names)
+    if not identity["asset_type"] or not identity["asset_name"]:
+        return False
+    candidate_tags = identity["asset_tags"]
+    for item in filters:
+        if identity["asset_type"] != item["asset_type"]:
+            continue
+        if identity["asset_name"] != item["asset_name"]:
+            continue
+        if not item["asset_tags"] or not candidate_tags:
+            return True
+        if "默认" in candidate_tags:
+            return True
+        if _tags_overlap(candidate_tags, item["asset_tags"]):
+            return True
+    return False
+
+
+def _asset_identity(asset: Any, tag_names: list[str]) -> dict[str, Any]:
+    metadata = getattr(asset, "metadata", None) or {}
+    metadata_record = metadata if isinstance(metadata, Mapping) else {}
+    record = normalize_asset_record({
+        "name": getattr(asset, "name", ""),
+        "asset_type": getattr(asset, "asset_type", ""),
+        "asset_name": metadata_record.get("asset_name"),
+        "asset_tags": metadata_record.get("asset_tags"),
+        "metadata": metadata_record,
+        "tags": tag_names,
+    })
+    asset_type = _text(record.get("asset_type"))
+    asset_name = _text(record.get("asset_name"))
+    asset_tags = _tag_atoms(record.get("asset_tags"))
+    if tag_names:
+        type_tag = next((tag for tag in tag_names if tag in ASSET_TAG_TYPES), "")
+        asset_tags = [
+            tag
+            for tag in asset_tags
+            if tag != type_tag and tag != asset_name
+        ]
+    return {
+        "asset_type": asset_type,
+        "asset_name": asset_name,
+        "asset_tags": asset_tags,
+    }
+
+
+def _tag_atoms(value: Any) -> list[str]:
+    if isinstance(value, str):
+        raw_items = [value]
+    elif isinstance(value, list):
+        raw_items = [item for item in value if isinstance(item, str)]
+    else:
+        raw_items = []
+    tags: list[str] = []
+    for item in raw_items:
+        normalized = (
+            item.replace("，", "、")
+            .replace(",", "、")
+            .replace("/", "、")
+            .replace("／", "、")
+        )
+        for part in normalized.split("、"):
+            tag = part.strip()
+            if tag and tag not in tags:
+                tags.append(tag)
+    return tags
+
+
+def _tags_overlap(candidate_tags: list[str], target_tags: list[str]) -> bool:
+    for candidate in candidate_tags:
+        for target in target_tags:
+            if candidate == target or candidate in target or target in candidate:
+                return True
+    return False
+
+
+def _text(value: Any) -> str:
+    return value.strip() if isinstance(value, str) and value.strip() else ""

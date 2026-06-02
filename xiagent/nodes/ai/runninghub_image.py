@@ -210,8 +210,15 @@ class RunningHubImageToImageNodeV2(BaseNode):
 
         async def generate_one(item: Mapping[str, Any]) -> dict[str, Any]:
             normalized_item = normalize_asset_record(item)
-            _required_text(normalized_item, "asset_type", "runninghub_asset_type_required")
-            _required_text(normalized_item, "asset_name", "runninghub_asset_name_required")
+            legacy_full_name = _optional_text(item, "full_name")
+            asset_name = _optional_text(normalized_item, "asset_name") or legacy_full_name
+            if asset_name is None:
+                raise ValidationError(
+                    "RunningHub prompt result requires asset_name.",
+                    code="runninghub_asset_name_required",
+                )
+            if "asset_name" not in normalized_item:
+                normalized_item["asset_name"] = asset_name
             prompt = _image_to_image_prompt(
                 _required_text(item, "prompt", "runninghub_prompt_required"),
                 inputs,
@@ -245,6 +252,8 @@ class RunningHubImageToImageNodeV2(BaseNode):
             asset_id = response.metadata.get("asset_id")
             if isinstance(asset_id, str):
                 asset_result["asset_id"] = asset_id
+            if legacy_full_name is not None:
+                asset_result["full_name"] = legacy_full_name
 
             return asset_result
 
@@ -278,7 +287,13 @@ def _image_to_image_prompt(prompt: str, inputs: Mapping[str, Any]) -> str:
     prefix = _optional_text(inputs, "prompt_prefix") or ""
     suffix = _optional_text(inputs, "prompt_suffix") or ""
     body = f"{prefix.strip()}{prompt.strip()}" if prefix else prompt.strip()
-    return f"{body}，{suffix.strip()}" if suffix else body
+    body = _strip_trailing_prompt_punctuation(body)
+    suffix = _strip_trailing_prompt_punctuation(suffix)
+    return f"{body}，{suffix}" if suffix else body
+
+
+def _strip_trailing_prompt_punctuation(value: str) -> str:
+    return value.strip().rstrip("。．.，,、；;：:")
 
 
 async def _metadata_with_resolved_images(

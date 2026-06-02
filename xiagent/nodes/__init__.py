@@ -48,6 +48,7 @@ from xiagent.nodes.tools.merge_segment_storyboard_descriptions import (
 from xiagent.nodes.tools.prepare_segment_storyboard_inputs import (
     PrepareSegmentStoryboardInputsNode,
 )
+from xiagent.nodes.tools.prepare_asset_semantic_match import PrepareAssetSemanticMatchNode
 from xiagent.nodes.tools.prepare_storyboard_panel_cards import (
     PrepareStoryboardPanelCardsNode,
 )
@@ -143,6 +144,7 @@ def build_node_registry(settings: Settings) -> NodeRegistry:
     registry.register(MergeAssetImagesNode())
     registry.register(MergeSegmentStoryboardDescriptionsNode())
     registry.register(PrepareSegmentStoryboardInputsNode())
+    registry.register(PrepareAssetSemanticMatchNode())
     registry.register(PrepareStoryboardPanelCardsNode())
     registry.register(CompleteAssetImagesNode())
     registry.register(ScriptSplitNode())

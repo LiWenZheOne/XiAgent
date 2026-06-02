@@ -23,6 +23,7 @@ from xiagent.nodes.tools.merge_segment_storyboard_descriptions import (
 from xiagent.nodes.tools.prepare_segment_storyboard_inputs import (
     PrepareSegmentStoryboardInputsNode,
 )
+from xiagent.nodes.tools.prepare_asset_semantic_match import PrepareAssetSemanticMatchNode
 from xiagent.nodes.tools.prepare_storyboard_panel_cards import (
     PrepareStoryboardPanelCardsNode,
 )
@@ -91,6 +92,7 @@ def test_build_node_registry_registers_builtin_nodes(test_settings) -> None:
         "tool.storyboard_prompt_assembler.v2",
         "tool.merge_segment_storyboard_descriptions.v1",
         "tool.prepare_segment_storyboard_inputs.v1",
+        "tool.prepare_asset_semantic_match.v1",
         "tool.prepare_storyboard_panel_cards.v1",
         "ai.assign_assets_to_segments.v1",
         "ai.deepseek_chat.v1",
@@ -143,9 +145,61 @@ async def test_filter_assets_for_generation_removes_existing_assets() -> None:
     )
 
     assert result.output["asset_count"] == 3
+    assert result.output["new_asset_count"] == 3
+    assert result.output["matched_asset_count"] == 2
+    assert result.output["has_assets_to_generate"] is True
+    assert result.output["generation_summary"] == {
+        "total_asset_count": 5,
+        "new_asset_count": 3,
+        "matched_asset_count": 2,
+        "has_assets_to_generate": True,
+    }
     assert [item["name"] for item in result.output["approved_assets"]["characters"]] == ["鲁智深"]
     assert [item["name"] for item in result.output["approved_assets"]["assets"]] == ["山神庙"]
     assert [item["name"] for item in result.output["approved_assets"]["props"]] == ["水火棍"]
+
+
+async def test_filter_assets_for_generation_reports_empty_generation_branch() -> None:
+    node = FilterAssetsForGenerationNode()
+
+    result = await node.run(
+        None,
+        {
+            "approved_assets": {
+                "characters": [
+                    {
+                        "asset_type": "character",
+                        "asset_name": "林冲",
+                        "matched": True,
+                        "matched_asset_id": "asset-linchong",
+                        "matched_asset_name": "林冲",
+                    }
+                ],
+                "assets": [
+                    {
+                        "asset_type": "scene",
+                        "asset_name": "山神庙外",
+                        "matched": True,
+                        "matched_asset_id": "asset-temple",
+                        "matched_asset_name": "山神庙外",
+                    }
+                ],
+                "props": [],
+            }
+        },
+    )
+
+    assert result.output["approved_assets"] == {"characters": [], "assets": [], "props": []}
+    assert result.output["asset_count"] == 0
+    assert result.output["new_asset_count"] == 0
+    assert result.output["matched_asset_count"] == 2
+    assert result.output["has_assets_to_generate"] is False
+    assert result.output["generation_summary"] == {
+        "total_asset_count": 2,
+        "new_asset_count": 0,
+        "matched_asset_count": 2,
+        "has_assets_to_generate": False,
+    }
 
 
 async def test_filter_assets_for_generation_keeps_explicit_reference_context() -> None:
@@ -564,6 +618,12 @@ async def test_episode_metadata_nodes_roundtrip_payload() -> None:
             "asset_catalog": {"characters": [{"asset_type": "character", "asset_name": "宋江"}], "assets": [], "props": []},
             "asset_images": [{"asset_type": "character", "asset_name": "宋江", "asset_id": "asset-songjiang"}],
             "prompt_results": [],
+            "generation_summary": {
+                "total_asset_count": 1,
+                "new_asset_count": 0,
+                "matched_asset_count": 1,
+                "has_assets_to_generate": False,
+            },
         },
     )
     loaded = await EpisodeMetadataFromAssetNode().run(
@@ -579,6 +639,14 @@ async def test_episode_metadata_nodes_roundtrip_payload() -> None:
     assert result.output["asset_images"] == [
         {"asset_type": "character", "asset_name": "宋江", "asset_id": "asset-songjiang"}
     ]
+    assert result.output["generation_summary"] == {
+        "total_asset_count": 1,
+        "new_asset_count": 0,
+        "matched_asset_count": 1,
+        "has_assets_to_generate": False,
+    }
+    assert loaded.output["generation_summary"] == result.output["generation_summary"]
+    assert loaded.output["asset_catalog"]["generation_summary"] == result.output["generation_summary"]
     assert loaded.output["asset_catalog"]["approved_assets"]["characters"][0]["asset_name"] == "宋江"
     assert loaded.asset_refs[0].asset_id == "asset-episode"
 
@@ -899,6 +967,97 @@ async def test_enrich_characters_matches_tagless_prop_by_typed_name() -> None:
     assert prop["matched"] is True
     assert prop["matched_asset_id"] == "asset_prop_fork"
     assert prop["matched_asset_name"] == "道具_钢叉_武器_公差"
+
+
+async def test_enrich_characters_uses_scene_semantic_match_result() -> None:
+    node = EnrichCharactersNode()
+
+    result = await node.run(
+        None,
+        {
+            "characters": [
+                {
+                    "asset_type": "scene",
+                    "asset_name": "石碣村湖荡芦苇",
+                    "asset_tags": ["湖泊", "芦苇荡", "户外"],
+                    "description": "石碣村外水道纵横的湖荡芦苇战场。",
+                }
+            ],
+            "matched_by_name": [],
+            "semantic_matches": [
+                {
+                    "asset_type": "scene",
+                    "asset_name": "石碣村湖荡芦苇",
+                    "matched": True,
+                    "matched_asset_id": "asset_scene_reeds",
+                    "matched_asset_name": "地点_石碣村湖荡芦苇荡",
+                    "reason": "两者都指石碣村外湖荡和芦苇荡水域，是同一地点资产。",
+                }
+            ],
+        },
+    )
+
+    scene = result.output["characters"][0]
+    assert scene["matched"] is True
+    assert scene["matched_asset_id"] == "asset_scene_reeds"
+    assert scene["matched_asset_name"] == "地点_石碣村湖荡芦苇荡"
+    assert scene["matched_asset_ref"] == {
+        "kind": "asset",
+        "asset_id": "asset_scene_reeds",
+        "role": "reference",
+    }
+
+
+async def test_prepare_asset_semantic_match_keeps_only_identity_and_description() -> None:
+    node = PrepareAssetSemanticMatchNode()
+
+    result = await node.run(
+        None,
+        {
+            "default_asset_type": "scene",
+            "items": [
+                {
+                    "asset_type": "scene",
+                    "asset_name": "石碣村湖荡芦苇",
+                    "asset_tags": ["湖泊", "芦苇荡"],
+                    "description": "石碣村外水道纵横的湖荡芦苇战场。",
+                    "storage_uri": "should-not-pass",
+                }
+            ],
+            "candidates": [
+                {
+                    "asset_id": "asset_scene_reeds",
+                    "name": "地点_石碣村湖荡芦苇荡",
+                    "tags": ["地点", "石碣村湖荡芦苇荡"],
+                    "metadata": {
+                        "prompt": "广袤水域，港汊纵横，高过人的黄绿色芦苇丛密布。",
+                        "public_url": "should-not-pass",
+                    },
+                    "storage_uri": "should-not-pass",
+                }
+            ],
+        },
+    )
+
+    assert result.output == {
+        "items": [
+            {
+                "asset_type": "scene",
+                "asset_name": "石碣村湖荡芦苇",
+                "asset_tags": ["湖泊", "芦苇荡"],
+                "description": "石碣村外水道纵横的湖荡芦苇战场。",
+            }
+        ],
+        "candidates": [
+            {
+                "asset_id": "asset_scene_reeds",
+                "asset_type": "scene",
+                "asset_name": "石碣村湖荡芦苇荡",
+                "asset_tags": [],
+                "description": "广袤水域，港汊纵横，高过人的黄绿色芦苇丛密布。",
+            }
+        ],
+    }
 
 
 async def test_complete_asset_images_merges_manual_and_generated_images() -> None:

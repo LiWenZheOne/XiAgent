@@ -27,6 +27,7 @@ class EpisodeMetadataFinalizeNode(BaseNode):
                     "asset_catalog": {"type": "object"},
                     "asset_images": {"type": "array", "items": {"type": "object"}},
                     "prompt_results": {"type": "array", "items": {"type": "object"}},
+                    "generation_summary": {"type": "object"},
                     "decision": {"type": "string"},
                     "scope": {"type": "string", "enum": ["global", "project"]},
                 },
@@ -50,11 +51,13 @@ class EpisodeMetadataFinalizeNode(BaseNode):
         asset_catalog = _normalize_asset_catalog(_object(inputs.get("asset_catalog")))
         asset_images = _normalize_records(_object_list(inputs.get("asset_images")))
         prompt_results = _normalize_records(_object_list(inputs.get("prompt_results")))
+        generation_summary = _object(inputs.get("generation_summary"))
 
         complete_asset_catalog = {
             "approved_assets": asset_catalog,
             "asset_images": asset_images,
             "prompt_results": prompt_results,
+            "generation_summary": generation_summary,
         }
         background = _optional_text(inputs.get("background"))
         payload = {
@@ -86,6 +89,7 @@ class EpisodeMetadataFinalizeNode(BaseNode):
             "background": background,
             "asset_catalog": complete_asset_catalog,
             "asset_images": asset_images,
+            "generation_summary": generation_summary,
             "episode_asset_id": record.asset_id,
         }
         return NodeResult(
@@ -192,6 +196,7 @@ class EpisodeMetadataFromAssetNode(BaseNode):
             "source_script": _text(payload.get("source_script")),
             "background": _text(payload.get("background")),
             "asset_catalog": _object(payload.get("asset_catalog")),
+            "generation_summary": _object(_object(payload.get("asset_catalog")).get("generation_summary")),
             "episode_asset_id": episode_asset_id,
             "storyboard_options": {
                 "no_material": _bool(inputs.get("no_material")),
@@ -222,6 +227,7 @@ def _episode_output_schema() -> dict[str, Any]:
             "background": {"type": "string"},
             "asset_catalog": {"type": "object", "additionalProperties": True},
             "asset_images": {"type": "array", "items": {"type": "object"}},
+            "generation_summary": {"type": "object", "additionalProperties": True},
             "episode_asset_id": {"type": "string", "minLength": 1},
             "storyboard_options": {
                 "type": "object",

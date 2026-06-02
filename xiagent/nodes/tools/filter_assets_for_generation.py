@@ -27,7 +27,14 @@ class FilterAssetsForGenerationNode(BaseNode):
             },
             output_schema={
                 "type": "object",
-                "required": ["approved_assets", "asset_count"],
+                "required": [
+                    "approved_assets",
+                    "asset_count",
+                    "new_asset_count",
+                    "matched_asset_count",
+                    "has_assets_to_generate",
+                    "generation_summary",
+                ],
                 "properties": {
                     "approved_assets": {
                         "type": "object",
@@ -40,6 +47,25 @@ class FilterAssetsForGenerationNode(BaseNode):
                         "additionalProperties": True,
                     },
                     "asset_count": {"type": "integer", "minimum": 0},
+                    "new_asset_count": {"type": "integer", "minimum": 0},
+                    "matched_asset_count": {"type": "integer", "minimum": 0},
+                    "has_assets_to_generate": {"type": "boolean"},
+                    "generation_summary": {
+                        "type": "object",
+                        "required": [
+                            "total_asset_count",
+                            "new_asset_count",
+                            "matched_asset_count",
+                            "has_assets_to_generate",
+                        ],
+                        "properties": {
+                            "total_asset_count": {"type": "integer", "minimum": 0},
+                            "new_asset_count": {"type": "integer", "minimum": 0},
+                            "matched_asset_count": {"type": "integer", "minimum": 0},
+                            "has_assets_to_generate": {"type": "boolean"},
+                        },
+                        "additionalProperties": False,
+                    },
                 },
                 "additionalProperties": False,
             },
@@ -55,23 +81,41 @@ class FilterAssetsForGenerationNode(BaseNode):
             )
 
         filtered: dict[str, list[dict[str, Any]]] = {}
+        total_asset_count = 0
+        matched_asset_count = 0
         for key in ("characters", "assets", "props"):
             value = approved_assets.get(key)
             items = value if isinstance(value, list) else []
+            total_asset_count += len([item for item in items if isinstance(item, Mapping)])
             filtered_items: list[dict[str, Any]] = []
             for item in items:
-                if not isinstance(item, Mapping) or _is_existing_asset(item):
+                if not isinstance(item, Mapping):
+                    continue
+                if _is_existing_asset(item):
+                    matched_asset_count += 1
                     continue
                 filtered_items.append(
                     await _with_reference_context(ctx, dict(item))
                 )
             filtered[key] = filtered_items
 
+        new_asset_count = sum(len(items) for items in filtered.values())
+        has_assets_to_generate = new_asset_count > 0
+        generation_summary = {
+            "total_asset_count": total_asset_count,
+            "new_asset_count": new_asset_count,
+            "matched_asset_count": matched_asset_count,
+            "has_assets_to_generate": has_assets_to_generate,
+        }
         return NodeResult(
             status="succeeded",
             output={
                 "approved_assets": filtered,
-                "asset_count": sum(len(items) for items in filtered.values()),
+                "asset_count": new_asset_count,
+                "new_asset_count": new_asset_count,
+                "matched_asset_count": matched_asset_count,
+                "has_assets_to_generate": has_assets_to_generate,
+                "generation_summary": generation_summary,
             },
         )
 

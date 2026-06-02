@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 from dataclasses import replace
 
@@ -12,6 +13,11 @@ from xiagent.infrastructure.database import connect_db
 from xiagent.infrastructure.migrations import migrate
 from xiagent.models import ChatModelRouter, ChatRequest, ChatResponse
 from xiagent.runtime.models import NodeExecutionRecord
+
+
+PNG_1X1 = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+)
 
 
 def _auth_headers(
@@ -295,16 +301,16 @@ def test_asset_draft_endpoint_uses_structured_llm_with_user_context(test_setting
                                 "summary": "梁山好汉",
                                 "character_status": "途经景阳冈",
                                 "asset_tags": ["劲装短打", "哨棒"],
-                                "appearance_description": "劲装短打，手持哨棒。",
+                                    "appearance_description": "头戴软巾，上身劲装短打，腰间束带，肩背利落，手持哨棒，保留行者武人气质和稳定识别特征。",
                                 },
                                 {
-                                    "asset_type": "location",
+                                    "asset_type": "scene",
                                     "asset_name": "官兵船",
-                                    "asset_tags": [],
+                                    "asset_tags": ["水上", "官船"],
                                     "matched": False,
                                 "matched_asset_id": None,
                                 "matched_asset_name": "",
-                                "description": "官兵在水上使用的船只。",
+                                "description": "官兵在水上押送使用的船只，甲板可站人，带低矮船舱、桅杆、缆绳和官府旗号。",
                                 "location_type": "水上",
                                 "time_of_day": "",
                             }
@@ -343,7 +349,7 @@ def test_asset_draft_endpoint_uses_structured_llm_with_user_context(test_setting
     assert response.status_code == 200
     body = response.json()
     assert body["assets"][0]["asset_name"] == "武松"
-    assert body["assets"][1]["asset_type"] == "location"
+    assert body["assets"][1]["asset_type"] == "scene"
     assert body["assets"][0]["matched"] is False
     assert fake_router.requests
     prompt = "\n".join(str(message.content) for message in fake_router.requests[0].messages)
@@ -992,6 +998,47 @@ def test_asset_file_can_be_replaced(test_settings) -> None:
     assert content_response.status_code == 200
     assert content_response.content == b"new image"
     assert content_response.headers["content-type"].startswith("image/jpeg")
+
+
+def test_asset_thumbnail_endpoint_generates_cached_png(test_settings) -> None:
+    app = create_app(settings=test_settings)
+    with TestClient(app) as client:
+        client.post(
+            "/api/auth/register",
+            json={"username": "asset-thumbnailer", "password": "secret-123"},
+        )
+        headers = _auth_headers(client, username="asset-thumbnailer")
+        upload_response = client.post(
+            "/api/assets/files",
+            data={
+                "scope": "global",
+                "name": "thumbnail-source.png",
+                "publish": "false",
+            },
+            files={"file": ("thumbnail-source.png", PNG_1X1, "image/png")},
+            headers=headers,
+        )
+        asset = upload_response.json()
+
+        first_response = client.get(
+            f"/api/assets/{asset['asset_id']}/thumbnail",
+            params={"size": 128},
+            headers=headers,
+        )
+        second_response = client.get(
+            f"/api/assets/{asset['asset_id']}/thumbnail",
+            params={"size": 128},
+            headers=headers,
+        )
+
+    assert upload_response.status_code == 200
+    assert first_response.status_code == 200
+    assert first_response.headers["content-type"].startswith("image/png")
+    assert first_response.headers["x-asset-thumbnail-cache"] == "miss"
+    assert first_response.content.startswith(b"\x89PNG")
+    assert second_response.status_code == 200
+    assert second_response.headers["x-asset-thumbnail-cache"] == "hit"
+    assert second_response.content == first_response.content
 
 
 def test_task_endpoints_create_succeeded_echo_task_and_read_it(test_settings) -> None:
