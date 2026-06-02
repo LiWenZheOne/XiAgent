@@ -112,10 +112,10 @@ export function SchemaFormControl({ busy, config, node, nodeSpec, projectId, sna
         {usesCompactPrimaryRow && dropdownAssetField ? (
           <div className="schema-form-primary-row">
             <div className="schema-form-primary-picker">
-              {renderField(dropdownAssetField)}
               <div className="schema-form-switch-group" role="group" aria-label="分镜生成选项">
                 {compactSwitchFields.map((field) => renderField(field))}
               </div>
+              {renderField(dropdownAssetField)}
             </div>
           </div>
         ) : null}
@@ -690,10 +690,19 @@ function AssetPickerDropdownField({
   const [message, setMessage] = useState("");
   const [preview, setPreview] = useState<Record<string, unknown> | null>(null);
   const [previewMessage, setPreviewMessage] = useState("");
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
   const selectedAssetId = typeof value === "string" ? value : "";
   const searchScope = assetSearchScopeForProject(projectId);
   const configuredTagNamesKey = stringArrayKey(filterTagNames);
   const configuredTagNames = useMemo(() => stringArrayFromKey(configuredTagNamesKey), [configuredTagNamesKey]);
+  const selectedAsset = assets.find((asset) => asset.asset_id === selectedAssetId);
+  const filteredAssets = useMemo(() => {
+    const keyword = query.trim().toLocaleLowerCase();
+    if (!keyword || selectedAsset?.name === query) return assets;
+    return assets.filter((asset) => asset.name.toLocaleLowerCase().includes(keyword));
+  }, [assets, query, selectedAsset?.name]);
+  const listboxId = `${field.key}-asset-options`;
 
   useEffect(() => {
     let active = true;
@@ -717,13 +726,17 @@ function AssetPickerDropdownField({
   }, [assetType, configuredTagNames, searchScope.project_id, searchScope.scope]);
 
   useEffect(() => {
+    if (selectedAsset) setQuery(selectedAsset.name);
+    else if (!selectedAssetId) setQuery("");
+  }, [selectedAsset, selectedAssetId]);
+
+  useEffect(() => {
     let active = true;
     setPreview(null);
     setPreviewMessage("");
     if (previewControlId !== "ui.display.episode_context.v1" || !selectedAssetId) return () => {
       active = false;
     };
-    const selectedAsset = assets.find((asset) => asset.asset_id === selectedAssetId);
     if (!selectedAsset) return () => {
       active = false;
     };
@@ -747,24 +760,56 @@ function AssetPickerDropdownField({
     return () => {
       active = false;
     };
-  }, [assets, previewControlId, projectId, selectedAssetId]);
+  }, [previewControlId, projectId, selectedAsset, selectedAssetId]);
+
+  function selectAsset(asset: AssetRecord) {
+    setQuery(asset.name);
+    setOpen(false);
+    onChange(asset.asset_id);
+  }
 
   return (
     <fieldset className="form-field asset-picker-dropdown-field" title={field.helpText}>
       <legend>{field.label}{field.required ? " *" : ""}</legend>
-      <select
-        aria-label={field.label}
-        disabled={readonly || loading}
-        value={selectedAssetId}
-        onChange={(event) => onChange(event.target.value)}
-      >
-        <option value="">{loading ? "正在加载集信息资产..." : placeholder}</option>
-        {assets.map((asset) => (
-          <option key={asset.asset_id} value={asset.asset_id}>
-            {asset.name}
-          </option>
-        ))}
-      </select>
+      <div className="asset-picker-combobox">
+        <input
+          aria-autocomplete="list"
+          aria-controls={listboxId}
+          aria-expanded={open}
+          aria-label={field.label}
+          autoComplete="off"
+          disabled={readonly || loading}
+          placeholder={loading ? "正在加载集信息资产..." : placeholder}
+          role="combobox"
+          value={query}
+          onBlur={() => window.setTimeout(() => setOpen(false), 120)}
+          onChange={(event) => {
+            setQuery(event.target.value);
+            setOpen(true);
+            if (selectedAssetId) onChange("");
+          }}
+          onFocus={() => setOpen(true)}
+        />
+        {open && !readonly ? (
+          <div className="asset-picker-combobox-list" id={listboxId} role="listbox">
+            {filteredAssets.length ? filteredAssets.map((asset) => (
+              <button
+                aria-selected={asset.asset_id === selectedAssetId}
+                className={asset.asset_id === selectedAssetId ? "active" : ""}
+                key={asset.asset_id}
+                role="option"
+                type="button"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => selectAsset(asset)}
+              >
+                {asset.name}
+              </button>
+            )) : (
+              <span className="asset-picker-combobox-empty">没有匹配的集信息资产。</span>
+            )}
+          </div>
+        ) : null}
+      </div>
       {message ? <small className="form-error">{message}</small> : null}
       {!message && !loading && assets.length === 0 ? <small>没有找到符合条件的资产。</small> : null}
       {!message && !loading && assets.length > 0 ? <small>已加载 {assets.length} 个可用集信息资产</small> : null}

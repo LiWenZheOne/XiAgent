@@ -566,6 +566,7 @@ describe("node-ui controls", () => {
             image_url: "https://cdn.example.com/generated-linchong.png",
             source: "ai_generated",
             runninghub_task_id: "rh-1",
+            generation_summary: { total_asset_count: 2 },
           },
         });
       }
@@ -699,6 +700,8 @@ describe("node-ui controls", () => {
             }),
       ]),
     }));
+    const latestDraftPayload = onDraft.mock.calls[onDraft.mock.calls.length - 1]?.[0] as Record<string, unknown>;
+    expect(JSON.stringify(latestDraftPayload.asset_images)).not.toContain("generation_summary");
     const clickMock = vi.fn();
     const appendMock = vi.spyOn(document.body, "appendChild");
     const removeMock = vi.fn();
@@ -749,6 +752,8 @@ describe("node-ui controls", () => {
         }),
       ]),
     })));
+    const latestSubmitPayload = onSubmit.mock.calls[onSubmit.mock.calls.length - 1]?.[0] as Record<string, unknown>;
+    expect(JSON.stringify(latestSubmitPayload.asset_images)).not.toContain("generation_summary");
     const libraryUploadForms = fetchMock.mock.calls
       .filter(([url, init]) => url === "/api/assets/files" && init?.method === "POST")
       .map(([, init]) => init?.body as FormData)
@@ -1980,6 +1985,48 @@ describe("node-ui controls", () => {
     expect(screen.getByLabelText("集名称")).toHaveValue("");
   });
 
+  it("prefills empty episode name from imported script file names", async () => {
+    const onSubmit = vi.fn();
+    const inputSchema: JsonSchema = {
+      type: "object",
+      required: ["script", "episode_name", "background"],
+      properties: {
+        script: { type: "string", title: "剧本内容" },
+        episode_name: { type: "string", title: "集名称" },
+        background: { type: "string", title: "世界背景", default: "水浒传" },
+      },
+    };
+    const inputNode: TaskNodeExecution = {
+      node_execution_id: "exec-script-episode-file",
+      node_id: "collect_asset_input",
+      node_ref: "system.user_input.v1",
+      status: "waiting",
+      input_snapshot: {},
+      output_snapshot: null,
+      metadata: { input_schema: inputSchema },
+    };
+
+    render(
+      <ScriptTextInputControl
+        config={{ control_id: "ui.input.script_text.v1", variant: "default", mode: "input" }}
+        node={inputNode}
+        onSubmit={onSubmit}
+        slot="interaction"
+      />,
+    );
+
+    await userEvent.upload(screen.getByLabelText("上传 Word/TXT"), new File(["杨志卖刀"], "第12集 杨志卖刀.txt", { type: "text/plain" }));
+    expect(await screen.findByDisplayValue("第12集 杨志卖刀")).toBeInTheDocument();
+    expect(await screen.findByDisplayValue("杨志卖刀")).toBeInTheDocument();
+
+    await userEvent.clear(screen.getByLabelText("集名称"));
+    await userEvent.type(screen.getByLabelText("集名称"), "手动集名称");
+    await userEvent.upload(screen.getByLabelText("上传 Word/TXT"), new File(["宋江题反诗"], "第13集 宋江题反诗.txt", { type: "text/plain" }));
+
+    expect(screen.getByLabelText("集名称")).toHaveValue("手动集名称");
+    expect(await screen.findByDisplayValue("宋江题反诗")).toBeInTheDocument();
+  });
+
   it("imports script files by dropping them on the script field", async () => {
     const onSubmit = vi.fn();
     const inputSchema: JsonSchema = {
@@ -2380,6 +2427,7 @@ describe("node-ui controls", () => {
     const primaryPicker = picker.closest(".schema-form-primary-picker");
     const switchGroup = screen.getByRole("group", { name: "分镜生成选项" });
     expect(primaryPicker).toContainElement(switchGroup);
+    expect(primaryPicker?.firstElementChild).toBe(switchGroup);
     const noMaterialSwitch = screen.getByLabelText("禁止材质区分");
     const enrichDescriptionSwitch = screen.getByLabelText("丰富画面描述");
     expect(noMaterialSwitch.closest(".check-field")).toHaveClass("check-field");
@@ -2395,7 +2443,10 @@ describe("node-ui controls", () => {
           && called.searchParams.get("tag_names") === "集元数据";
       })).toBe(true);
     });
-    await screen.findByRole("option", { name: "23、私放晁天王" });
+    await userEvent.clear(picker);
+    await userEvent.type(picker, "私放");
+    expect(screen.getByRole("option", { name: "23、私放晁天王" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "24、夺命芦苇荡" })).not.toBeInTheDocument();
     const callsAfterInitialLoad = assetSearchCallCount();
     rerender(
       <SchemaFormControl
@@ -2406,7 +2457,7 @@ describe("node-ui controls", () => {
       />,
     );
     expect(assetSearchCallCount()).toBe(callsAfterInitialLoad);
-    await userEvent.selectOptions(picker, "asset-episode-23");
+    await userEvent.click(screen.getByRole("option", { name: "23、私放晁天王" }));
     expect(await screen.findByRole("heading", { name: "23、私放晁天王" })).toBeInTheDocument();
     expect(screen.getByText(/宋江私放晁盖/)).toBeInTheDocument();
     expect(screen.getByText("晁盖")).toBeInTheDocument();

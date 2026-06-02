@@ -249,7 +249,7 @@ export function AssetImageCardsControl({
           };
           const tags = assetTagsForEdit(edit);
           if (tags.length) payload.asset_tags = tags;
-          Object.assign(payload, imageMetaState[card.assetKey] ?? {});
+          Object.assign(payload, assetImagePayloadMeta(imageMetaState[card.assetKey]));
           if (match?.asset_id) payload.asset_id = match.asset_id;
           return payload;
         })
@@ -1676,6 +1676,15 @@ function imageRefFromValue(value: unknown): ImageRef | undefined {
     return data?.startsWith("data:image/") ? { kind: "data_uri", data, role: textValue(record.role) || "reference" } : undefined;
   }
   return undefined;
+}
+
+function assetImagePayloadMeta(meta: Record<string, string> | undefined): Record<string, string> {
+  if (!meta) return {};
+  return Object.fromEntries(
+    ["source", "asset_id", "runninghub_task_id", "variant"]
+      .map((key) => [key, meta[key]])
+      .filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].trim().length > 0),
+  );
 }
 
 function assetImageUrl(asset: unknown): string | undefined {

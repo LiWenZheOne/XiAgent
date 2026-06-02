@@ -7,6 +7,7 @@ type FormValue = string | number | Record<string, unknown>;
 
 const SCRIPT_FIELD = "script";
 const BACKGROUND_FIELD = "background";
+const EPISODE_NAME_FIELD = "episode_name";
 
 export function ScriptTextInputControl({ busy, config, node, nodeSpec, slot, value, onSubmit }: NodeUiControlProps) {
   const metadataSchema = node.metadata?.input_schema;
@@ -43,7 +44,14 @@ export function ScriptTextInputControl({ busy, config, node, nodeSpec, slot, val
     try {
       const text = await readScriptFile(file);
       if (!text.trim()) throw new Error("文件内容为空，请检查文件或直接粘贴文本。");
-      setValues((current) => ({ ...current, [SCRIPT_FIELD]: text }));
+      setValues((current) => {
+        const next: Record<string, FormValue> = { ...current, [SCRIPT_FIELD]: text };
+        if (hasField(fields, EPISODE_NAME_FIELD) && !String(current[EPISODE_NAME_FIELD] ?? "").trim()) {
+          const episodeName = episodeNameFromFileName(file.name);
+          if (episodeName) next[EPISODE_NAME_FIELD] = episodeName;
+        }
+        return next;
+      });
       setMessage(`已导入：${file.name}`);
     } catch (nextError) {
       setError(readableError(nextError, "文件读取失败，请改为粘贴文本。"));
@@ -341,6 +349,17 @@ function fieldLabel(fields: ScriptField[], key: string, fallback: string): strin
   const field = fields.find((item) => item.key === key);
   if (!field) return fallback;
   return `${field.label}${field.required ? " *" : ""}`;
+}
+
+function hasField(fields: ScriptField[], key: string): boolean {
+  return fields.some((field) => field.key === key);
+}
+
+function episodeNameFromFileName(fileName: string): string {
+  const trimmed = fileName.trim();
+  const dotIndex = trimmed.lastIndexOf(".");
+  if (dotIndex <= 0) return trimmed;
+  return trimmed.slice(0, dotIndex).trim();
 }
 
 function fallbackLabel(key: string): string {

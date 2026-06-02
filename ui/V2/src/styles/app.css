@@ -811,7 +811,7 @@ dd {
 .schema-form-primary-picker {
   display: grid;
   gap: 10px;
-  width: min(100%, 560px);
+  width: 100%;
   min-width: 0;
 }
 
@@ -831,17 +831,68 @@ dd {
   background: #f8fafc;
 }
 
-.asset-picker-dropdown-field select {
+.asset-picker-dropdown-field select,
+.asset-picker-combobox input {
   min-height: 42px;
   border-color: #b8c4d4;
   background: #ffffff;
   font-weight: 700;
 }
 
-.asset-picker-dropdown-field select:focus {
+.asset-picker-dropdown-field select:focus,
+.asset-picker-combobox input:focus {
   outline: none;
   border-color: #60a5fa;
   box-shadow: 0 0 0 3px rgb(37 99 235 / 0.14);
+}
+
+.asset-picker-combobox {
+  position: relative;
+}
+
+.asset-picker-combobox input {
+  width: 100%;
+}
+
+.asset-picker-combobox-list {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  right: 0;
+  left: 0;
+  display: grid;
+  max-height: 220px;
+  overflow: auto;
+  padding: 6px;
+  border: 1px solid #cbd7e6;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 14px 30px rgb(15 23 42 / 0.14);
+}
+
+.asset-picker-combobox-list button,
+.asset-picker-combobox-empty {
+  display: block;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-weight: 700;
+  text-align: left;
+}
+
+.asset-picker-combobox-list button:hover,
+.asset-picker-combobox-list button.active {
+  background: #eff6ff;
+  color: var(--primary);
+}
+
+.asset-picker-combobox-empty {
+  color: var(--muted);
+  font-weight: 700;
 }
 
 .asset-picker-episode-preview {
@@ -2314,8 +2365,7 @@ dd {
 
 .episode-context-header {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 16px;
+  gap: 12px;
   align-items: start;
   padding-bottom: 14px;
   border-bottom: 1px solid #e7edf5;
@@ -2341,7 +2391,7 @@ dd {
   display: grid;
   grid-template-columns: repeat(4, minmax(58px, 1fr));
   gap: 8px;
-  min-width: 280px;
+  width: 100%;
 }
 
 .episode-context-metrics div {
