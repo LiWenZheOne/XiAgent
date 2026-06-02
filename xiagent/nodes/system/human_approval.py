@@ -55,5 +55,32 @@ class HumanApprovalNode(BaseNode):
 def _output_from_schema(output_schema: Mapping[str, Any], inputs: Mapping[str, Any]) -> dict[str, Any]:
     properties = output_schema.get("properties")
     if isinstance(properties, Mapping):
-        return {name: inputs[name] for name in properties if isinstance(name, str) and name in inputs}
+        return {
+            name: _value_from_schema(inputs[name], properties.get(name, {}))
+            for name in properties
+            if isinstance(name, str) and name in inputs
+        }
     return dict(inputs)
+
+
+def _value_from_schema(value: Any, schema: Any) -> Any:
+    if not isinstance(schema, Mapping):
+        return value
+    if schema.get("type") == "array" and isinstance(value, list):
+        item_schema = schema.get("items", {})
+        return [_value_from_schema(item, item_schema) for item in value]
+    if schema.get("type") != "object" or not isinstance(value, Mapping):
+        return value
+    properties = schema.get("properties")
+    if not isinstance(properties, Mapping):
+        return dict(value)
+    output: dict[str, Any] = {
+        name: _value_from_schema(value[name], properties.get(name, {}))
+        for name in properties
+        if isinstance(name, str) and name in value
+    }
+    if schema.get("additionalProperties") is True:
+        for name, item in value.items():
+            if isinstance(name, str) and name not in output:
+                output[name] = item
+    return output

@@ -163,7 +163,16 @@ async def test_waiting_interaction_accepts_declared_output_payload_overrides(tes
                         "from_user": True,
                         "schema": {
                             "type": "array",
-                            "items": {"type": "object", "additionalProperties": True},
+                            "items": {
+                                "type": "object",
+                                "required": ["asset_name", "image_url"],
+                                "properties": {
+                                    "asset_name": {"type": "string"},
+                                    "image_url": {"type": "string"},
+                                    "source": {"type": "string"},
+                                },
+                                "additionalProperties": False,
+                            },
                         },
                     },
                     "target_asset_key": {"value": ""},
@@ -175,7 +184,16 @@ async def test_waiting_interaction_accepts_declared_output_payload_overrides(tes
                         "decision": {"type": "string"},
                         "asset_images": {
                             "type": "array",
-                            "items": {"type": "object", "additionalProperties": True},
+                            "items": {
+                                "type": "object",
+                                "required": ["asset_name", "image_url"],
+                                "properties": {
+                                    "asset_name": {"type": "string"},
+                                    "image_url": {"type": "string"},
+                                    "source": {"type": "string"},
+                                },
+                                "additionalProperties": False,
+                            },
                         },
                         "prompt_results": {
                             "type": "array",
@@ -224,6 +242,128 @@ async def test_waiting_interaction_accepts_declared_output_payload_overrides(tes
 
 
 @pytest.mark.asyncio
+async def test_waiting_interaction_resume_ignores_unchanged_non_user_draft_fields(test_settings) -> None:
+    runtime, user_id, project_id = await _runtime(test_settings)
+    runtime._node_registry.register(HumanApprovalNode())
+    contract = {
+        "workflow": {
+            "id": "approval-with-upstream-summary",
+            "version": "1.0.0",
+            "scope": "global",
+            "name": "Approval With Upstream Summary",
+            "input_schema": {"type": "object", "additionalProperties": False},
+        },
+        "nodes": [
+            {
+                "id": "review",
+                "ref": "system.human_approval.v1",
+                "inputs": {
+                    "generation_summary": {"value": {"total_asset_count": 3}},
+                    "decision": {
+                        "from_user": True,
+                        "schema": {"type": "string", "enum": ["finish", "generate_missing"]},
+                    },
+                    "asset_images": {
+                        "from_user": True,
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "required": ["asset_name", "image_url"],
+                                "properties": {
+                                    "asset_name": {"type": "string"},
+                                    "image_url": {"type": "string"},
+                                    "source": {"type": "string"},
+                                },
+                                "additionalProperties": False,
+                            },
+                        },
+                    },
+                },
+                "outputs": {
+                    "type": "object",
+                    "required": ["decision", "asset_images"],
+                    "properties": {
+                        "decision": {"type": "string"},
+                        "asset_images": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "required": ["asset_name", "image_url"],
+                                "properties": {
+                                    "asset_name": {"type": "string"},
+                                    "image_url": {"type": "string"},
+                                    "source": {"type": "string"},
+                                },
+                                "additionalProperties": False,
+                            },
+                        },
+                    },
+                    "additionalProperties": False,
+                },
+            }
+        ],
+        "edges": [{"from": "START", "to": "review"}, {"from": "review", "to": "END"}],
+    }
+
+    task = await runtime.create_task_from_contract(
+        user_id=user_id,
+        project_id=project_id,
+        contract=contract,
+        input_data={},
+    )
+    await runtime.save_waiting_node_draft(
+        user_id=user_id,
+        project_id=project_id,
+        task_id=task.task_id,
+        node_id="review",
+        input={
+            "decision": "finish",
+            "asset_images": [
+                {
+                    "asset_name": "林冲",
+                    "image_url": "https://cdn.example.com/linchong.png",
+                    "source": "ai_generated",
+                    "generation_summary": {"total_asset_count": 3},
+                }
+            ],
+        },
+    )
+    executions = await runtime.list_node_executions(
+        user_id=user_id,
+        project_id=project_id,
+        task_id=task.task_id,
+    )
+    assert executions[0].input_snapshot["generation_summary"] == {"total_asset_count": 3}
+    assert executions[0].input_snapshot["asset_images"][0]["generation_summary"] == {"total_asset_count": 3}
+
+    resumed = await runtime.resume_task(
+        user_id=user_id,
+        project_id=project_id,
+        task_id=task.task_id,
+        node_id="review",
+        input=dict(executions[0].input_snapshot),
+    )
+
+    assert resumed.status == "succeeded"
+    executions = await runtime.list_node_executions(
+        user_id=user_id,
+        project_id=project_id,
+        task_id=task.task_id,
+    )
+    assert executions[0].output_snapshot == {
+        "decision": "finish",
+        "asset_images": [
+            {
+                "asset_name": "林冲",
+                "image_url": "https://cdn.example.com/linchong.png",
+                "source": "ai_generated",
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
 async def test_waiting_interaction_rejects_undeclared_extra_payload(test_settings) -> None:
     runtime, user_id, project_id = await _runtime(test_settings)
     task = await runtime.create_task_from_contract(
@@ -243,6 +383,10 @@ async def test_waiting_interaction_rejects_undeclared_extra_payload(test_setting
         )
 
     assert exc_info.value.code == "json_value_validation_failed"
+    assert exc_info.value.details["node_id"] == "echo"
+    assert exc_info.value.details["validation_phase"] == "resume_user_input"
+    assert exc_info.value.details["schema_path"] == "input+outputs"
+    assert exc_info.value.details["payload_path"] == "$"
 
 
 async def _runtime(test_settings) -> tuple[SqliteRuntimeService, str, str]:

@@ -3671,8 +3671,23 @@ function schemaValidationDetails(body: unknown): string {
   if (typeof body !== "object" || body === null) return "";
   const details = (body as { error?: { details?: unknown } }).error?.details;
   if (typeof details !== "object" || details === null) return "";
-  const record = details as { path?: unknown; error?: unknown };
-  const path = Array.isArray(record.path) && record.path.length ? `字段 ${record.path.join(".")}` : "";
+  const record = details as {
+    error?: unknown;
+    node_id?: unknown;
+    path?: unknown;
+    payload_path?: unknown;
+    schema_path?: unknown;
+    validation_phase?: unknown;
+  };
+  const pathText = typeof record.payload_path === "string" && record.payload_path
+    ? record.payload_path
+    : Array.isArray(record.path) && record.path.length
+      ? record.path.join(".")
+      : "";
+  const path = pathText ? `字段 ${pathText}` : "";
   const error = typeof record.error === "string" ? record.error : "";
-  return [path, error].filter(Boolean).join("，");
+  const node = typeof record.node_id === "string" ? `节点 ${record.node_id}` : "";
+  const phase = typeof record.validation_phase === "string" ? `阶段 ${record.validation_phase}` : "";
+  const schema = typeof record.schema_path === "string" ? `Schema ${record.schema_path}` : "";
+  return [node, phase, schema, path, error].filter(Boolean).join("，");
 }

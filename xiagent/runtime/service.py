@@ -184,7 +184,13 @@ class SqliteRuntimeService:
                 user_input=payload,
             )
 
-        validate_json_value(node_def["outputs"], payload)
+        _validate_runtime_json_value(
+            node_def["outputs"],
+            payload,
+            phase="waiting_output_payload",
+            node_id=node_id,
+            schema_path="outputs",
+        )
         now = _utc_now()
         async with connect_db(self._database_path) as db:
             cursor = await db.execute(
@@ -626,7 +632,13 @@ class SqliteRuntimeService:
                     message="Node returned an unsupported status",
                     details={"status": result.status, "node_id": node_id},
                 )
-            validate_json_value(node_def["outputs"], result.output)
+            _validate_runtime_json_value(
+                node_def["outputs"],
+                result.output,
+                phase="node_output",
+                node_id=node_id,
+                schema_path="outputs",
+            )
             return await self._mark_node_succeeded(
                 task_id=task_id,
                 node_execution_id=node_execution_id,
@@ -662,7 +674,19 @@ class SqliteRuntimeService:
         input_schema: dict[str, Any],
         user_input: dict[str, Any],
     ) -> TaskRecord:
-        validate_json_value(_resume_user_input_schema(input_schema, node_def.get("outputs", {})), user_input)
+        resume_schema = _resume_user_input_schema(input_schema, node_def.get("outputs", {}))
+        user_input = _drop_unchanged_snapshot_only_fields(
+            user_input,
+            resume_schema,
+            waiting_execution.input_snapshot,
+        )
+        _validate_runtime_json_value(
+            resume_schema,
+            user_input,
+            phase="resume_user_input",
+            node_id=waiting_execution.node_id,
+            schema_path="input+outputs",
+        )
         node_outputs = await self._load_node_outputs(task.task_id)
         inputs = resolve_node_inputs(
             node_def.get("inputs", {}),
@@ -726,7 +750,13 @@ class SqliteRuntimeService:
                     message="Node returned an unsupported status",
                     details={"status": result.status, "node_id": waiting_execution.node_id},
                 )
-            validate_json_value(node_def["outputs"], result.output)
+            _validate_runtime_json_value(
+                node_def["outputs"],
+                result.output,
+                phase="resume_node_output",
+                node_id=waiting_execution.node_id,
+                schema_path="outputs",
+            )
             await self._mark_node_succeeded(
                 task_id=task.task_id,
                 node_execution_id=waiting_execution.node_execution_id,
@@ -1235,6 +1265,102 @@ def _resume_user_input_schema(
     schema["properties"] = properties
     schema["additionalProperties"] = False
     return schema
+
+
+def _validate_runtime_json_value(
+    schema: dict[str, Any],
+    value: Any,
+    *,
+    phase: str,
+    node_id: str,
+    schema_path: str,
+) -> None:
+    try:
+        validate_json_value(schema, value)
+    except ValidationError as exc:
+        if exc.code != "json_value_validation_failed":
+            raise
+        path = exc.details.get("path", [])
+        details = dict(exc.details)
+        details.update(
+            {
+                "validation_phase": phase,
+                "node_id": node_id,
+                "schema_path": schema_path,
+                "payload_path": _format_validation_path(path),
+                "payload_preview": _validation_value_preview(value, path),
+            }
+        )
+        raise ValidationError(code=exc.code, message=exc.message, details=details) from exc
+
+
+def _format_validation_path(path: Any) -> str:
+    if not isinstance(path, list) or not path:
+        return "$"
+    output = "$"
+    for part in path:
+        if isinstance(part, int):
+            output += f"[{part}]"
+        else:
+            output += f".{part}"
+    return output
+
+
+def _validation_value_preview(value: Any, path: Any) -> Any:
+    current = value
+    if isinstance(path, list):
+        for part in path:
+            if isinstance(part, int) and isinstance(current, list) and part < len(current):
+                current = current[part]
+                continue
+            if isinstance(part, str) and isinstance(current, Mapping) and part in current:
+                current = current[part]
+                continue
+            break
+    if isinstance(current, Mapping):
+        return {str(key): current[key] for key in list(current.keys())[:12]}
+    if isinstance(current, list):
+        return current[:3]
+    return current
+
+
+def _drop_unchanged_snapshot_only_fields(
+    user_input: dict[str, Any],
+    resume_schema: Mapping[str, Any],
+    input_snapshot: Any,
+) -> dict[str, Any]:
+    cleaned = _drop_unchanged_snapshot_value(user_input, resume_schema, input_snapshot)
+    return cleaned if isinstance(cleaned, dict) else user_input
+
+
+def _drop_unchanged_snapshot_value(value: Any, schema: Any, snapshot: Any) -> Any:
+    if not isinstance(schema, Mapping):
+        return value
+    if schema.get("type") == "array" and isinstance(value, list):
+        item_schema = schema.get("items", {})
+        snapshot_items = snapshot if isinstance(snapshot, list) else []
+        return [
+            _drop_unchanged_snapshot_value(
+                item,
+                item_schema,
+                snapshot_items[index] if index < len(snapshot_items) else None,
+            )
+            for index, item in enumerate(value)
+        ]
+    if schema.get("type") != "object" or not isinstance(value, dict):
+        return value
+    properties = schema.get("properties")
+    if not isinstance(properties, Mapping):
+        return value
+    snapshot_record = snapshot if isinstance(snapshot, Mapping) else {}
+    allowed = {name for name in properties if isinstance(name, str)}
+    cleaned: dict[str, Any] = {}
+    for name, item_value in value.items():
+        if name in allowed:
+            cleaned[name] = _drop_unchanged_snapshot_value(item_value, properties.get(name, {}), snapshot_record.get(name))
+        elif name not in snapshot_record or snapshot_record.get(name) != item_value:
+            cleaned[name] = item_value
+    return cleaned
 
 
 def _declared_output_property_names(output_schema: Any) -> list[str]:
