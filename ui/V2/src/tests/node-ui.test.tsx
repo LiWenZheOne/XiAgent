@@ -586,7 +586,9 @@ describe("node-ui controls", () => {
       input_snapshot: {
         characters: [
           {
-            full_name: "林冲",
+            asset_type: "character",
+            asset_name: "林冲",
+            asset_tags: ["默认"],
             aliases: ["林教头"],
             summary: "八十万禁军教头，武艺高强。",
             character_status: "被发配沧州途中，身着囚服，面带风霜。",
@@ -722,6 +724,9 @@ describe("node-ui controls", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "资产生成" }));
     await waitFor(() => expect(screen.getByRole("img", { name: "鲁智深 图像" })).toHaveAttribute("src", "https://cdn.example.com/generated-linchong.png"));
+    const luzhishenName = screen.getByDisplayValue("鲁智深");
+    await userEvent.clear(luzhishenName);
+    await userEvent.type(luzhishenName, "鲁智深新图");
     expect(screen.queryByRole("button", { name: "确认并继续" })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "一键入库" }));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
@@ -750,6 +755,8 @@ describe("node-ui controls", () => {
       .filter((form) => typeof form.get("metadata_json") === "string");
     expect(libraryUploadForms.length).toBeGreaterThan(0);
     expect(String(libraryUploadForms[0].get("metadata_json"))).toContain("asset_catalog_workflow");
+    expect(String(libraryUploadForms[0].get("metadata_json"))).toContain("\"asset_name\":\"林冲\"");
+    expect(String(libraryUploadForms[0].get("metadata_json"))).toContain("\"asset_tags\":[\"默认\"]");
     expect(String(libraryUploadForms[0].get("metadata_json"))).not.toContain("\"tags\"");
     expect(String(libraryUploadForms[0].get("tag_ids"))).toContain("tag-character");
     expect(String(libraryUploadForms[0].get("tag_ids"))).toContain("tag-linchong");
@@ -945,11 +952,39 @@ describe("node-ui controls", () => {
       }
       if (url.startsWith("/api/assets/search")) {
         const called = new URL(url, "http://localhost");
-        expect(called.searchParams.get("names")).toBe("角色_林冲_默认,角色_鲁智深_默认");
+        expect(called.searchParams.get("names")).toBeNull();
+        const tagNames = called.searchParams.get("tag_names") ?? "";
+        if (tagNames === "角色,林冲,默认") {
+          return jsonResponse({
+            items: [
+              { asset_id: "asset-linchong", name: "角色_林冲_默认", asset_type: "file", scope: "global", metadata: {}, created_at: "2026-05-31T00:00:00Z" },
+            ],
+          });
+        }
+        if (tagNames === "角色,鲁智深,默认") {
+          return jsonResponse({
+            items: [
+              { asset_id: "asset-luzhishen", name: "角色_鲁智深_默认", asset_type: "file", scope: "global", metadata: {}, created_at: "2026-05-31T00:00:00Z" },
+            ],
+          });
+        }
+        return jsonResponse({ items: [] });
+      }
+      if (url === "/api/assets/asset-linchong/tags") {
         return jsonResponse({
           items: [
-            { asset_id: "asset-linchong", name: "角色_林冲_默认", asset_type: "file", scope: "global", metadata: {}, created_at: "2026-05-31T00:00:00Z" },
-            { asset_id: "asset-luzhishen", name: "角色_鲁智深_默认", asset_type: "file", scope: "global", metadata: {}, created_at: "2026-05-31T00:00:00Z" },
+            { tag_id: "tag-character", name: "角色", scope: "global", project_id: null, asset_count: 1 },
+            { tag_id: "tag-linchong", name: "林冲", scope: "global", project_id: null, asset_count: 1 },
+            { tag_id: "tag-default", name: "默认", scope: "global", project_id: null, asset_count: 1 },
+          ],
+        });
+      }
+      if (url === "/api/assets/asset-luzhishen/tags") {
+        return jsonResponse({
+          items: [
+            { tag_id: "tag-character", name: "角色", scope: "global", project_id: null, asset_count: 1 },
+            { tag_id: "tag-luzhishen", name: "鲁智深", scope: "global", project_id: null, asset_count: 1 },
+            { tag_id: "tag-default", name: "默认", scope: "global", project_id: null, asset_count: 1 },
           ],
         });
       }
@@ -966,20 +1001,29 @@ describe("node-ui controls", () => {
           node_ref: "system.human_approval.v1",
           status: "waiting",
           input_snapshot: {
-            characters: [{ full_name: "林冲", matched: false }, { full_name: "鲁智深", matched: false }],
-            variant_results: [{ full_name: "林冲", matched_variant: "默认" }, { full_name: "鲁智深", matched_variant: "默认" }],
-            prompt_results: [{ full_name: "林冲_默认", prompt: "囚服" }, { full_name: "鲁智深_默认", prompt: "僧衣" }],
+            characters: [
+              { asset_type: "character", asset_name: "林冲", asset_tags: ["默认"], matched: false },
+              { asset_type: "character", asset_name: "鲁智深", asset_tags: ["默认"], matched: false },
+            ],
+            variant_results: [
+              { asset_type: "character", asset_name: "林冲", asset_tags: ["默认"] },
+              { asset_type: "character", asset_name: "鲁智深", asset_tags: ["默认"] },
+            ],
+            prompt_results: [
+              { asset_type: "character", asset_name: "林冲", asset_tags: ["默认"], prompt: "囚服" },
+              { asset_type: "character", asset_name: "鲁智深", asset_tags: ["默认"], prompt: "僧衣" },
+            ],
             asset_images: [
               {
                 asset_type: "character",
-                asset_key: "林冲",
-                full_name: "角色_林冲_默认",
+                asset_name: "林冲",
+                asset_tags: ["默认"],
                 image_url: "https://cdn.example.com/linchong-ready.png",
               },
               {
                 asset_type: "character",
-                asset_key: "鲁智深",
-                full_name: "角色_鲁智深_默认",
+                asset_name: "鲁智深",
+                asset_tags: ["默认"],
                 image_url: "https://cdn.example.com/luzhishen-ready.png",
               },
             ],
@@ -1083,6 +1127,8 @@ describe("node-ui controls", () => {
       const generateCalls = fetchMock.mock.calls.filter(([url]) => String(url) === "/api/assets/generate-image");
       expect(generateCalls.length).toBe(3);
     });
+    expect(screen.getByRole("status")).toHaveTextContent("资产图像生成完成");
+    expect(screen.getByRole("status")).toHaveTextContent("3/3");
     const bodies = fetchMock.mock.calls
       .filter(([url]) => String(url) === "/api/assets/generate-image")
       .map(([, init]) => JSON.parse(String((init as RequestInit).body ?? "{}")) as Record<string, unknown>);
@@ -1103,6 +1149,80 @@ describe("node-ui controls", () => {
         aspect_ratio: "1:1",
       }),
     ]));
+  });
+
+  it("keeps successful generated images when one asset image generation fails", async () => {
+    const onDraft = vi.fn();
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/assets/generate-image") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+        const promptResult = body.prompt_result as Record<string, unknown>;
+        const assetType = String(promptResult.asset_type ?? "");
+        if (assetType === "scene") throw new Error("RunningHub image request timed out");
+        return jsonResponse({
+          generation_id: `image-generation-${assetType}`,
+          status: "queued",
+        });
+      }
+      if (url.startsWith("/api/assets/generate-image/image-generation-")) {
+        const assetType = url.split("-").pop() ?? "asset";
+        return jsonResponse({
+          generation_id: url.split("/").pop(),
+          status: "succeeded",
+          result: {
+            full_name: assetType,
+            image_url: `https://cdn.example.com/generated-${assetType}.png`,
+            source: "ai_generated",
+          },
+        });
+      }
+      return jsonResponse({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <AssetImageCardsControl
+        config={{ control_id: "ui.interaction.asset_image_cards.v1", variant: "grouped_cards", mode: "interactive" }}
+        node={{
+          node_execution_id: "exec-card-partial-failure",
+          node_id: "upload_images",
+          node_ref: "system.human_approval.v1",
+          status: "waiting",
+          input_snapshot: {
+            approved_assets: {
+              characters: [{ name: "鲁智深", prompt: "粗眉僧衣" }],
+              assets: [{ name: "山神庙", prompt: "雪夜破庙" }],
+              props: [{ name: "花枪", prompt: "木杆长枪" }],
+            },
+            prompt_results: [
+              { asset_type: "character", asset_name: "鲁智深", prompt: "粗眉僧衣", reference_image_ref: { kind: "asset", asset_id: "asset-character", role: "reference" } },
+              { asset_type: "scene", asset_name: "山神庙", prompt: "雪夜破庙", reference_image_ref: { kind: "asset", asset_id: "asset-scene", role: "reference" } },
+              { asset_type: "prop", asset_name: "花枪", prompt: "木杆长枪", reference_image_ref: { kind: "asset", asset_id: "asset-prop", role: "reference" } },
+            ],
+          },
+        }}
+        onDraft={onDraft}
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "资产生成" }));
+
+    expect(await screen.findByRole("img", { name: "鲁智深 图像" })).toHaveAttribute("src", "https://cdn.example.com/generated-character.png");
+    await userEvent.click(screen.getByRole("tab", { name: /道具/ }));
+    expect(await screen.findByRole("img", { name: "花枪 图像" })).toHaveAttribute("src", "https://cdn.example.com/generated-prop.png");
+    await userEvent.click(screen.getByRole("tab", { name: /地点/ }));
+    expect(screen.getByText("生成失败：RunningHub image request timed out")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("资产图像生成完成");
+    expect(screen.getByRole("status")).toHaveTextContent("3/3");
+    expect(screen.getByText("已生成 2 张资产图像，1 张生成失败。")).toBeInTheDocument();
+    expect(onDraft).toHaveBeenCalledWith(expect.objectContaining({
+      decision: "generate_missing",
+      asset_images: expect.arrayContaining([
+        expect.objectContaining({ asset_name: "鲁智深", image_url: "https://cdn.example.com/generated-character.png" }),
+        expect.objectContaining({ asset_name: "花枪", image_url: "https://cdn.example.com/generated-prop.png" }),
+      ]),
+    }));
   });
 
   it("renders the P3 asset summary table with tabs and submitted image rows", async () => {
@@ -1164,24 +1284,24 @@ describe("node-ui controls", () => {
               variant_description: "劲装短打",
             },
             {
-              asset_type: "location",
+              asset_type: "scene",
               asset_name: "官兵船",
-              asset_tags: [],
+              asset_tags: ["水上", "官船"],
               matched: false,
               matched_asset_id: null,
               matched_asset_name: "",
-              description: "官兵在水上使用的船只，可作为水面地点资产。",
+              description: "官兵在水上押送使用的船只，甲板可站人，带低矮船舱、桅杆、缆绳和官府旗号。",
               location_type: "水上",
               time_of_day: "",
             },
             {
               asset_type: "prop",
               asset_name: "哨棒",
-              asset_tags: [],
+              asset_tags: ["武器"],
               matched: false,
               matched_asset_id: null,
               matched_asset_name: "",
-              description: "武松随身携带的棍棒。",
+              description: "武松途经景阳冈时随身携带的棍棒，长直木杆，握柄处颜色更深，杆身有磨损，便于防身挥击。",
               category: "武器",
               related_character: "武松",
             },
@@ -1234,11 +1354,14 @@ describe("node-ui controls", () => {
     expect(screen.getByDisplayValue("林冲")).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "标签" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "变体描述" })).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: /asset type/i })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "林冲_囚服" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("tab", { name: /道具/ }));
     expect(screen.getByRole("textbox", { name: "水火棍 关联角色" })).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: /asset type/i })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("tab", { name: /地点/ }));
     expect(screen.getByRole("button", { name: "未匹配到对应资产" })).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: /asset type/i })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("tab", { name: /角色/ }));
 
     await userEvent.click(screen.getByRole("button", { name: "林冲_囚服" }));
@@ -1248,12 +1371,12 @@ describe("node-ui controls", () => {
     expect(screen.queryByRole("button", { name: /野猪林资产/ })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "选择资产 鲁智深" }));
 
-    await userEvent.click(screen.getByRole("button", { name: "资产分析" }));
-    expect(await screen.findByRole("dialog", { name: "资产分析" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "补充缺失资产" }));
+    expect(await screen.findByRole("dialog", { name: "补充缺失资产" })).toBeInTheDocument();
     await userEvent.type(screen.getByLabelText("描述需要新增的资产"), "增加一个拿哨棒的武松、官兵船和哨棒");
-    await userEvent.click(screen.getByRole("button", { name: "分析资产" }));
+    await userEvent.click(screen.getByRole("button", { name: "生成资产草稿" }));
     expect(await screen.findByText("根据用户描述和原文补全多个资产字段。")).toBeInTheDocument();
-    expect(screen.getByText("分析出 3 个资产")).toBeInTheDocument();
+    expect(screen.getByText("生成 3 个资产草稿")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "保留修改意见" }));
     expect(screen.queryByDisplayValue("武松")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("tab", { name: /地点/ }));
@@ -1262,7 +1385,7 @@ describe("node-ui controls", () => {
     expect(screen.queryByDisplayValue("哨棒")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("tab", { name: /角色/ }));
 
-    await userEvent.click(screen.getByRole("button", { name: "资产分析" }));
+    await userEvent.click(screen.getByRole("button", { name: "补充缺失资产" }));
     await userEvent.click(await screen.findByRole("button", { name: "手动新增当前分类空行" }));
     let nameInputs = screen.getAllByLabelText("角色名称");
     await userEvent.type(nameInputs[nameInputs.length - 1], "宋江");
@@ -1301,6 +1424,13 @@ describe("node-ui controls", () => {
 
   it("renders the P5 asset task summary and exports image zip", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      if (String(input).startsWith("/api/assets/asset-linchong/thumbnail?")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          blob: async () => new Blob([new Uint8Array([9, 8, 7])], { type: "image/png" }),
+        } as Response);
+      }
       if (String(input) === "/api/assets/asset-linchong/content") {
         return Promise.resolve({
           ok: true,
@@ -1334,6 +1464,12 @@ describe("node-ui controls", () => {
             assets: [{ asset_name: "山神庙外", asset_tags: [] }],
             props: [{ asset_name: "花枪", asset_tags: [] }],
           },
+          generation_summary: {
+            total_asset_count: 3,
+            new_asset_count: 1,
+            matched_asset_count: 2,
+            has_assets_to_generate: true,
+          },
           asset_images: [
             {
               asset_type: "character",
@@ -1341,6 +1477,7 @@ describe("node-ui controls", () => {
               asset_tags: ["囚服", "佩刀"],
               image_url: "https://cdn.example.com/linchong.png",
               source: "library",
+              asset_id: "asset-linchong",
             },
           ],
         },
@@ -1355,13 +1492,22 @@ describe("node-ui controls", () => {
     );
 
     expect(screen.getByText("资产编目已完成")).toBeInTheDocument();
-    expect(screen.queryByText("林冲_囚服_佩刀")).not.toBeInTheDocument();
-    expect(screen.queryByRole("img", { name: "林冲_囚服_佩刀 图像" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("img", { name: "林冲 图像" })).toHaveAttribute("src", "blob:asset-zip");
+    expect(fetchMock).toHaveBeenCalledWith("/api/assets/asset-linchong/thumbnail?size=256", expect.any(Object));
     expect(screen.getByText("已入库")).toBeInTheDocument();
     expect(screen.getByText("总资产").closest("div")).toHaveTextContent("3");
+    expect(screen.getByText("新增").closest("div")).toHaveTextContent("1");
+    expect(screen.getByText("已匹配").closest("div")).toHaveTextContent("2");
     expect(screen.getByText("角色").closest("div")).toHaveTextContent("1");
     expect(screen.getByText("地点").closest("div")).toHaveTextContent("1");
     expect(screen.getByText("道具").closest("div")).toHaveTextContent("1");
+    await userEvent.click(screen.getByRole("button", { name: "全屏查看图像" }));
+    const preview = await screen.findByRole("dialog", { name: "全屏查看 林冲" });
+    expect(fetchMock).toHaveBeenCalledWith("/api/assets/asset-linchong/content", expect.any(Object));
+    fireEvent.wheel(within(preview).getByAltText("林冲").parentElement as HTMLElement, { deltaY: -120 });
+    expect(await within(preview).findByText("112%")).toBeInTheDocument();
+    fireEvent.mouseDown(preview);
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "全屏查看 林冲" })).not.toBeInTheDocument());
     await userEvent.click(screen.getByRole("button", { name: "导出资产为压缩包" }));
     await waitFor(() => expect(clickMock).toHaveBeenCalled());
     expect(fetchMock).toHaveBeenCalledWith("/api/assets/asset-linchong/content", expect.any(Object));
@@ -1992,6 +2138,16 @@ describe("node-ui controls", () => {
       required: ["episode_asset_id"],
       properties: {
         episode_asset_id: { type: "string", title: "集信息资产" },
+        no_material: {
+          type: "boolean",
+          title: "禁止材质区分",
+          default: false,
+        },
+        enrich_description: {
+          type: "boolean",
+          title: "丰富画面描述",
+          default: false,
+        },
       },
     };
     const inputNode: TaskNodeExecution = {
@@ -2037,6 +2193,13 @@ describe("node-ui controls", () => {
     );
 
     const picker = await screen.findByRole("combobox", { name: "集信息资产" });
+    expect(picker.closest(".schema-form-primary-row")).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "分镜生成选项" })).toBeInTheDocument();
+    const noMaterialSwitch = screen.getByLabelText("禁止材质区分");
+    const enrichDescriptionSwitch = screen.getByLabelText("丰富画面描述");
+    expect(noMaterialSwitch.closest(".check-field")).toHaveClass("check-field");
+    await userEvent.click(noMaterialSwitch);
+    await userEvent.click(enrichDescriptionSwitch);
     await waitFor(() => {
       expect(fetchMock.mock.calls.some(([calledUrl]) => {
         const called = new URL(String(calledUrl), "http://localhost");
@@ -2067,6 +2230,8 @@ describe("node-ui controls", () => {
 
     expect(onSubmit).toHaveBeenCalledWith({
       episode_asset_id: "asset-episode-23",
+      no_material: true,
+      enrich_description: true,
     });
   });
 

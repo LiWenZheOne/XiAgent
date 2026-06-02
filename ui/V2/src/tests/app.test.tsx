@@ -465,6 +465,11 @@ function mockFetch() {
       assetTags = assetTags.filter((tag) => tag.tag_id !== tagId);
       return jsonResponse({ deleted: true });
     }
+    if (url.startsWith("/api/assets/") && method === "DELETE") {
+      const assetId = decodeURIComponent(url.split("/").pop() ?? "");
+      assetRecords = assetRecords.filter((asset) => asset.asset_id !== assetId);
+      return jsonResponse({ deleted: true, asset_id: assetId });
+    }
     if (
       url === "/api/assets/tags?scope=combined&project_id=global" ||
       url === "/api/assets/tags?scope=project&project_id=global" ||
@@ -1256,6 +1261,38 @@ describe("XiAgent V2 app", () => {
     fireEvent.mouseDown(viewer);
     await waitFor(() => {
       expect(screen.queryByRole("dialog", { name: "全屏查看 参考图" })).not.toBeInTheDocument();
+    });
+  });
+
+  it("batch selects and soft deletes assets from the asset library", async () => {
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:asset-thumbnail") });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    render(<App />);
+    await login();
+
+    await userEvent.click(screen.getByRole("button", { name: "资产库" }));
+    expect(await screen.findByRole("button", { name: "参考图" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /全局参考\.png/ })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "批量选择" }));
+    await userEvent.click(screen.getByLabelText("选择资产 参考图"));
+    await userEvent.click(screen.getByLabelText("选择资产 全局参考.png"));
+    await userEvent.click(screen.getByRole("button", { name: "批量软删除 2" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "批量软删除资产" });
+    expect(within(dialog).getByText("参考图")).toBeInTheDocument();
+    expect(within(dialog).getByText("全局参考.png")).toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole("button", { name: "确认软删除" }));
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(([url, init]) => url === "/api/assets/asset-1" && init?.method === "DELETE"),
+      ).toBe(true);
+      expect(
+        fetchMock.mock.calls.some(([url, init]) => url === "/api/assets/asset-global" && init?.method === "DELETE"),
+      ).toBe(true);
+      expect(screen.getByText("已软删除 2 个资产。")).toBeInTheDocument();
     });
   });
 

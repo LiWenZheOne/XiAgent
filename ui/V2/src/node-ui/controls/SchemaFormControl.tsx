@@ -1,4 +1,4 @@
-import { type ChangeEvent, useEffect, useMemo, useState } from "react";
+import { type ChangeEvent, type ReactNode, useEffect, useMemo, useState } from "react";
 
 import { downloadAssetContent, listAssetCollections, listAssetTags, searchAssets, uploadAsset } from "../../api/assets";
 import { listProjects } from "../../api/projects";
@@ -35,6 +35,15 @@ export function SchemaFormControl({ busy, config, node, nodeSpec, projectId, sna
   const title = readText(node.metadata?.title) || readText(nodeConfig?.title) || "填写运行输入";
   const description = readText(node.metadata?.description) || readText(nodeConfig?.description);
   const hasDropdownAssetPicker = fields.some((field) => fieldConfigs[field.key]?.control_id === "ui.input.asset_picker.v1" && fieldConfigs[field.key]?.variant === "dropdown");
+  const dropdownAssetField = hasDropdownAssetPicker
+    ? fields.find((field) => fieldConfigs[field.key]?.control_id === "ui.input.asset_picker.v1" && fieldConfigs[field.key]?.variant === "dropdown")
+    : undefined;
+  const compactSwitchFields = hasDropdownAssetPicker ? fields.filter((field) => field.control === "checkbox").slice(0, 2) : [];
+  const usesCompactPrimaryRow = Boolean(dropdownAssetField && compactSwitchFields.length);
+  const compactFieldKeys = new Set(usesCompactPrimaryRow ? [
+    dropdownAssetField?.key,
+    ...compactSwitchFields.map((field) => field.key),
+  ].filter((key): key is string => Boolean(key)) : []);
 
   useEffect(() => {
     setValues(initialValues(fields));
@@ -52,6 +61,45 @@ export function SchemaFormControl({ busy, config, node, nodeSpec, projectId, sna
     onSubmit?.(buildInputData(fields, values));
   }
 
+  function renderField(field: SchemaField): ReactNode {
+    const fieldConfig = fieldConfigs[field.key];
+    if (fieldConfig?.control_id === "ui.input.asset_image_picker.v1" || field.control === "asset_images") {
+      return (
+        <AssetImagePickerField
+          config={fieldConfig}
+          field={field}
+          key={field.key}
+          projectId={projectId}
+          readonly={controlsReadonly}
+          value={renderedValues[field.key]}
+          onChange={(value) => setValues((current) => ({ ...current, [field.key]: value }))}
+        />
+      );
+    }
+    if (fieldConfig?.control_id === "ui.input.asset_picker.v1") {
+      return (
+        <AssetPickerField
+          config={fieldConfig}
+          field={field}
+          key={field.key}
+          projectId={projectId}
+          readonly={controlsReadonly}
+          value={renderedValues[field.key]}
+          onChange={(value) => setValues((current) => ({ ...current, [field.key]: value }))}
+        />
+      );
+    }
+    return (
+      <SchemaValueField
+        field={field}
+        key={field.key}
+        readonly={controlsReadonly}
+        value={renderedValues[field.key]}
+        onChange={(value) => setValues((current) => ({ ...current, [field.key]: value }))}
+      />
+    );
+  }
+
   return (
     <section className={hasDropdownAssetPicker ? "interaction-panel schema-form-control asset-dropdown-form" : "interaction-panel schema-form-control"}>
       <div>
@@ -61,44 +109,17 @@ export function SchemaFormControl({ busy, config, node, nodeSpec, projectId, sna
       </div>
 
       <div className="schema-form-grid">
-        {fields.map((field) => {
-          const fieldConfig = fieldConfigs[field.key];
-          if (fieldConfig?.control_id === "ui.input.asset_image_picker.v1" || field.control === "asset_images") {
-            return (
-              <AssetImagePickerField
-                config={fieldConfig}
-                field={field}
-                key={field.key}
-                projectId={projectId}
-                readonly={controlsReadonly}
-                value={renderedValues[field.key]}
-                onChange={(value) => setValues((current) => ({ ...current, [field.key]: value }))}
-              />
-            );
-          }
-          if (fieldConfig?.control_id === "ui.input.asset_picker.v1") {
-            return (
-              <AssetPickerField
-                config={fieldConfig}
-                field={field}
-                key={field.key}
-                projectId={projectId}
-                readonly={controlsReadonly}
-                value={renderedValues[field.key]}
-                onChange={(value) => setValues((current) => ({ ...current, [field.key]: value }))}
-              />
-            );
-          }
-          return (
-            <SchemaValueField
-              field={field}
-              key={field.key}
-              readonly={controlsReadonly}
-              value={renderedValues[field.key]}
-              onChange={(value) => setValues((current) => ({ ...current, [field.key]: value }))}
-            />
-          );
-        })}
+        {usesCompactPrimaryRow && dropdownAssetField ? (
+          <div className="schema-form-primary-row">
+            <div className="schema-form-primary-picker">
+              {renderField(dropdownAssetField)}
+            </div>
+            <div className="schema-form-switch-group" role="group" aria-label="分镜生成选项">
+              {compactSwitchFields.map((field) => renderField(field))}
+            </div>
+          </div>
+        ) : null}
+        {fields.map((field) => compactFieldKeys.has(field.key) ? null : renderField(field))}
       </div>
 
       {error ? <p className="form-error">{error}</p> : null}
@@ -165,7 +186,10 @@ function SchemaValueField({
     return (
       <label className="check-field" title={field.helpText}>
         <input checked={Boolean(value)} disabled={readonly} type="checkbox" onChange={(event) => onChange(event.target.checked)} />
-        <span>{label}</span>
+        <span className="switch-track" aria-hidden="true">
+          <span />
+        </span>
+        <span className="switch-label">{label}</span>
       </label>
     );
   }

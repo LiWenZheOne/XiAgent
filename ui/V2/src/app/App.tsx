@@ -1910,6 +1910,10 @@ function AssetLibraryPage({
   const [assetDraft, setAssetDraft] = useState<AssetEditorDraft | null>(null);
   const [replacingAssetId, setReplacingAssetId] = useState("");
   const [fullscreenAsset, setFullscreenAsset] = useState<AssetRecord | null>(null);
+  const [batchMode, setBatchMode] = useState(false);
+  const [batchSelectedIds, setBatchSelectedIds] = useState<string[]>([]);
+  const [batchDeleteConfirmOpen, setBatchDeleteConfirmOpen] = useState(false);
+  const [batchDeleting, setBatchDeleting] = useState(false);
   const selectedAsset = assets.find((asset) => asset.asset_id === selectedAssetId) ?? null;
 
   useEffect(() => {
@@ -1967,6 +1971,11 @@ function AssetLibraryPage({
     setTagName("");
   }, [project?.project_id, scope]);
 
+  useEffect(() => {
+    const loadedIds = new Set(assets.map((asset) => asset.asset_id));
+    setBatchSelectedIds((current) => current.filter((assetId) => loadedIds.has(assetId)));
+  }, [assets]);
+
   const selectedEditableTag = selectedTagIds.length === 1 ? tags.find((tag) => tag.tag_id === selectedTagIds[0]) ?? null : null;
   const selectedEditableTagIsEmpty = selectedEditableTag ? (selectedEditableTag.asset_count ?? 0) === 0 : false;
   const tagWriteScope = scope === "global" ? "global" : "project";
@@ -1975,6 +1984,12 @@ function AssetLibraryPage({
   const combinedScopeLabel = `${projectDisplayName} + 全局`;
   const projectScopeLabel = `${projectDisplayName}资产`;
   const quickTypeTags = ["角色", "地点", "道具", "集元数据"].map((name) => tags.find((tag) => tag.name === name)).filter((tag): tag is AssetTag => Boolean(tag));
+  const batchSelectedSet = useMemo(() => new Set(batchSelectedIds), [batchSelectedIds]);
+  const batchSelectedAssets = useMemo(
+    () => assets.filter((asset) => batchSelectedSet.has(asset.asset_id)),
+    [assets, batchSelectedSet],
+  );
+  const allLoadedAssetsSelected = Boolean(assets.length) && assets.every((asset) => batchSelectedSet.has(asset.asset_id));
   const filteredAssetTagOptions = useMemo(() => {
     const keyword = assetTagFilter.trim().toLowerCase();
     const compatibleTags = selectedAsset ? tags.filter((tag) => tagMatchesAssetScope(tag, selectedAsset)) : [];
@@ -2113,6 +2128,57 @@ function AssetLibraryPage({
   async function handleDelete(asset: AssetRecord) {
     await deleteAsset(asset.asset_id);
     setReloadKey((current) => current + 1);
+  }
+
+  function handleToggleBatchMode() {
+    setBatchMode((current) => {
+      if (current) {
+        setBatchSelectedIds([]);
+        setBatchDeleteConfirmOpen(false);
+      }
+      return !current;
+    });
+  }
+
+  function handleToggleBatchAsset(assetId: string, checked: boolean) {
+    setBatchSelectedIds((current) => {
+      if (checked) return current.includes(assetId) ? current : [...current, assetId];
+      return current.filter((item) => item !== assetId);
+    });
+  }
+
+  function handleToggleAllLoadedAssets() {
+    if (allLoadedAssetsSelected) {
+      setBatchSelectedIds([]);
+      return;
+    }
+    setBatchSelectedIds(assets.map((asset) => asset.asset_id));
+  }
+
+  async function handleConfirmBatchDelete() {
+    const assetsToDelete = batchSelectedAssets;
+    if (!assetsToDelete.length || batchDeleting) return;
+    setBatchDeleting(true);
+    setMessage("");
+    try {
+      for (const asset of assetsToDelete) {
+        await deleteAsset(asset.asset_id);
+      }
+      const deletedIds = new Set(assetsToDelete.map((asset) => asset.asset_id));
+      setAssets((current) => current.filter((asset) => !deletedIds.has(asset.asset_id)));
+      if (selectedAssetId && deletedIds.has(selectedAssetId)) {
+        setSelectedAssetId("");
+      }
+      setMessage(`已软删除 ${assetsToDelete.length} 个资产。`);
+      setBatchSelectedIds([]);
+      setBatchMode(false);
+      setBatchDeleteConfirmOpen(false);
+      setReloadKey((current) => current + 1);
+    } catch (error) {
+      setMessage(readableError(error, "批量软删除失败，请稍后重试。"));
+    } finally {
+      setBatchDeleting(false);
+    }
   }
 
   async function handleReplaceAssetImage(asset: AssetRecord, nextFile: File | undefined | null) {
@@ -2528,23 +2594,52 @@ function AssetLibraryPage({
                 <h2>资产列表</h2>
                 <p>{loading ? "正在加载资产..." : `已加载 ${assets.length} 个资产`} · {activeFilterText}</p>
               </div>
-              {quickTypeTags.length ? (
-                <div className="asset-quick-filter-row" aria-label="类型快速筛选">
-                  {quickTypeTags.map((tag) => {
-                    const active = selectedTagIds.includes(tag.tag_id);
-                    return (
-                      <button
-                        className={active ? "asset-quick-filter active" : "asset-quick-filter"}
-                        key={tag.tag_id}
-                        type="button"
-                        onClick={() => handleToggleTag(tag.tag_id, !active)}
-                      >
-                        {tag.name}
+              <div className="asset-list-controls">
+                <div className="asset-batch-toolbar" role="toolbar" aria-label="资产批量操作">
+                  {batchMode ? (
+                    <>
+                      <button className="secondary-button" disabled={!assets.length} type="button" onClick={handleToggleAllLoadedAssets}>
+                        {allLoadedAssetsSelected ? "取消全选" : "全选当前页"}
                       </button>
-                    );
-                  })}
+                      <button className="secondary-button" disabled={!batchSelectedIds.length} type="button" onClick={() => setBatchSelectedIds([])}>
+                        清空选择
+                      </button>
+                      <button
+                        className="secondary-button danger"
+                        disabled={!batchSelectedAssets.length || batchDeleting}
+                        type="button"
+                        onClick={() => setBatchDeleteConfirmOpen(true)}
+                      >
+                        批量软删除{batchSelectedAssets.length ? ` ${batchSelectedAssets.length}` : ""}
+                      </button>
+                      <button className="secondary-button" disabled={batchDeleting} type="button" onClick={handleToggleBatchMode}>
+                        退出批量
+                      </button>
+                    </>
+                  ) : (
+                    <button className="secondary-button" disabled={!assets.length} type="button" onClick={handleToggleBatchMode}>
+                      批量选择
+                    </button>
+                  )}
                 </div>
-              ) : null}
+                {quickTypeTags.length ? (
+                  <div className="asset-quick-filter-row" aria-label="类型快速筛选">
+                    {quickTypeTags.map((tag) => {
+                      const active = selectedTagIds.includes(tag.tag_id);
+                      return (
+                        <button
+                          className={active ? "asset-quick-filter active" : "asset-quick-filter"}
+                          key={tag.tag_id}
+                          type="button"
+                          onClick={() => handleToggleTag(tag.tag_id, !active)}
+                        >
+                          {tag.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
             </div>
           </div>
           {loading ? <p className="muted">正在加载资产...</p> : null}
@@ -2552,21 +2647,48 @@ function AssetLibraryPage({
           <div className="asset-list-scroll">
             <div className="asset-grid">
               {assets.map((asset) => {
+                const isBatchSelected = batchSelectedSet.has(asset.asset_id);
+                const cardClassName = [
+                  "asset-card",
+                  asset.asset_id === selectedAssetId ? "active" : "",
+                  batchMode ? "batch" : "",
+                  isBatchSelected ? "batch-selected" : "",
+                ].filter(Boolean).join(" ");
                 return (
                   <article
                     aria-label={asset.name}
-                    className={asset.asset_id === selectedAssetId ? "asset-card active" : "asset-card"}
+                    className={cardClassName}
                     key={asset.asset_id}
                     role="button"
                     tabIndex={0}
-                    onClick={() => setSelectedAssetId(asset.asset_id)}
+                    onClick={() => {
+                      if (batchMode) {
+                        handleToggleBatchAsset(asset.asset_id, !isBatchSelected);
+                        return;
+                      }
+                      setSelectedAssetId(asset.asset_id);
+                    }}
                     onKeyDown={(event) => {
                       if (event.key !== "Enter" && event.key !== " ") return;
                       event.preventDefault();
+                      if (batchMode) {
+                        handleToggleBatchAsset(asset.asset_id, !isBatchSelected);
+                        return;
+                      }
                       setSelectedAssetId(asset.asset_id);
                     }}
                   >
                     <span className="asset-card-preview-shell">
+                      {batchMode ? (
+                        <label className="asset-batch-checkbox" onClick={(event) => event.stopPropagation()}>
+                          <input
+                            aria-label={`选择资产 ${asset.name}`}
+                            checked={isBatchSelected}
+                            type="checkbox"
+                            onChange={(event) => handleToggleBatchAsset(asset.asset_id, event.target.checked)}
+                          />
+                        </label>
+                      ) : null}
                       <AssetPreviewImage asset={asset} projectId={project?.project_id} />
                       {asset.mime_type?.startsWith("image/") ? (
                         <button
@@ -2767,6 +2889,37 @@ function AssetLibraryPage({
           )}
         </aside>
       </div>
+      {batchDeleteConfirmOpen ? (
+        <div className="asset-picker-modal">
+          <button
+            aria-label="关闭批量软删除确认"
+            className="modal-scrim"
+            disabled={batchDeleting}
+            type="button"
+            onClick={() => setBatchDeleteConfirmOpen(false)}
+          />
+          <section className="asset-batch-confirm-dialog" role="dialog" aria-modal="true" aria-label="批量软删除资产">
+            <div>
+              <p className="eyebrow">批量操作</p>
+              <h2>批量软删除资产</h2>
+              <p>确认软删除当前选中的 {batchSelectedAssets.length} 个资产？历史任务引用会保留，但资产不会再出现在资产库列表中。</p>
+            </div>
+            <div className="asset-batch-confirm-list" aria-label="待软删除资产">
+              {batchSelectedAssets.map((asset) => (
+                <span key={asset.asset_id}>{asset.name}</span>
+              ))}
+            </div>
+            <div className="button-row">
+              <button className="secondary-button" disabled={batchDeleting} type="button" onClick={() => setBatchDeleteConfirmOpen(false)}>
+                取消
+              </button>
+              <button className="primary-button danger" disabled={!batchSelectedAssets.length || batchDeleting} type="button" onClick={() => void handleConfirmBatchDelete()}>
+                {batchDeleting ? "正在软删除..." : "确认软删除"}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
       {fullscreenAsset ? (
         <AssetFullscreenViewer
           asset={fullscreenAsset}

@@ -1,9 +1,9 @@
 import { type ChangeEvent, type DragEvent, useEffect, useMemo, useState } from "react";
 
-import { createAssetTag, generateAssetImage, listAssetTags, searchAssets, uploadAsset } from "../../api/assets";
+import { createAssetTag, generateAssetImage, listAssetTags, listAssetTagsForAsset, searchAssets, uploadAsset } from "../../api/assets";
 import { ApiError } from "../../api/client";
 import type { AssetRecord, AssetScope, AssetTag } from "../../api/types";
-import { assetNameFromTagNames, assetTagNamesForCatalogAsset, catalogAssetTypeTags } from "../../utils/assetNaming";
+import { assetNameFromTagNames, assetTagNamesForCatalogAsset, assetTagNamesFromName, catalogAssetTypeTags } from "../../utils/assetNaming";
 import type { NodeUiControlProps } from "../types";
 import { AssetPickerDialog } from "./AssetPickerDialog";
 import { assetSearchScopeForProject } from "./assetPicker";
@@ -14,7 +14,7 @@ interface AssetImageCard {
   assetKey: string;
   title: string;
   variantName?: string;
-  accessories?: string;
+  secondaryTagsText?: string;
   prompt?: string;
   referenceImageRef?: ImageRef;
   referenceSource?: string;
@@ -48,6 +48,7 @@ type ImageMetaState = Record<string, Record<string, string>>;
 type UploadState = Record<string, string>;
 type MatchState = Record<string, AssetMatch | null>;
 type CardEditsState = Record<string, CardEditState>;
+type GenerationErrorState = Record<string, string>;
 type TabKey = "character" | "scene" | "prop" | "other";
 
 interface AssetNameConflictDialog {
@@ -55,11 +56,24 @@ interface AssetNameConflictDialog {
   scopeLabel: string;
 }
 
+interface GenerationProgress {
+  total: number;
+  completed: number;
+  running: boolean;
+}
+
+interface AssetIdentity {
+  assetType: TabKey;
+  assetName: string;
+  assetTags: string[];
+}
+
 interface AssetUploadPlan {
   card: AssetImageCard;
   edit: CardEditState;
   group: TabKey;
   fullName: string;
+  identity: AssetIdentity;
   imageUrl: string;
 }
 
@@ -88,6 +102,8 @@ export function AssetImageCardsControl({
   const [edits, setEdits] = useState<CardEditsState>(() => initialCardEdits(cards));
   const [uploading, setUploading] = useState<UploadState>({});
   const [generating, setGenerating] = useState<UploadState>({});
+  const [generationErrors, setGenerationErrors] = useState<GenerationErrorState>({});
+  const [generationProgress, setGenerationProgress] = useState<GenerationProgress | null>(null);
   const [brokenImageUrls, setBrokenImageUrls] = useState<Record<string, string>>({});
   const [activeTab, setActiveTab] = useState<TabKey>("character");
   const [draggingKey, setDraggingKey] = useState("");
@@ -99,6 +115,10 @@ export function AssetImageCardsControl({
   const [assetNameConflictDialog, setAssetNameConflictDialog] = useState<AssetNameConflictDialog | null>(null);
   const tabs = useMemo(() => buildTabs(cards), [cards]);
   const selectedTab = tabs.some((tab) => tab.key === activeTab) ? activeTab : tabs[0]?.key ?? "character";
+  const generatingCount = Object.keys(generating).length;
+  const generationProgressPercent = generationProgress?.total
+    ? Math.round((generationProgress.completed / generationProgress.total) * 100)
+    : 0;
   const defaultReferenceTemplates = useMemo(
     () => defaultReferenceTemplatesFromOptions(config.options),
     [config.options],
@@ -222,7 +242,7 @@ export function AssetImageCardsControl({
         const group = tabKeyForAssetType(card.assetType);
         const fullName = cardDisplayName(edit, group);
         const imageUrl = images[card.assetKey];
-        return { card, edit, group, fullName, imageUrl };
+        return { card, edit, group, fullName, identity: assetIdentityForEdit(edit, group), imageUrl };
       });
       const conflict = await findAssetNameConflicts(uploadPlans, projectId);
       if (conflict) {
@@ -247,6 +267,8 @@ export function AssetImageCardsControl({
             metadata: {
               type: card.assetType,
               asset_type: card.assetType,
+              asset_name: edit.name.trim() || card.title,
+              asset_tags: assetTagsForEdit(edit),
               prompt: edit.prompt.trim(),
               appearance_description: card.referenceAppearanceDescription || "",
               source: "asset_catalog_workflow",
@@ -314,34 +336,54 @@ export function AssetImageCardsControl({
       return;
     }
     setError("");
+    setGenerationErrors((current) => {
+      const next = { ...current };
+      for (const card of targetCards) delete next[card.assetKey];
+      return next;
+    });
+    setGenerationProgress({ total: targetCards.length, completed: 0, running: true });
     for (const card of targetCards) {
       setGenerating((current) => ({ ...current, [card.assetKey]: "生成中" }));
     }
     try {
-      const results = await Promise.all(targetCards.map(async (card) => {
+      const settledResults = await Promise.allSettled(targetCards.map(async (card) => {
         const edit = edits[card.assetKey] ?? cardEditFromCard(card);
         const activeMatch = activeMatchForCard(matches, card);
         const promptResult = editedPromptResult(card, edit, activeMatch);
         const promptText = assetPromptText(card, config.options, activeMatch);
-        const generated = await generateAssetImage({
-          project_id: projectId,
-          prompt_result: promptResult,
-          prompt_prefix: promptText.prefix,
-          prompt_suffix: promptText.suffix,
-          aspect_ratio: tabKeyForAssetType(card.assetType) === "scene" ? "16:9" : "1:1",
-          resolution: "2k",
-        });
-        return {
-          card,
-          imageUrl: generated.image_url,
-          meta: {
-            source: generated.source || "ai_generated",
-            ...(generated.asset_id ? { asset_id: generated.asset_id } : {}),
-            ...(generated.runninghub_task_id ? { runninghub_task_id: generated.runninghub_task_id } : {}),
-            ...(generated.variant ? { variant: generated.variant } : {}),
-          },
-        };
+        try {
+          const generated = await generateAssetImage({
+            project_id: projectId,
+            prompt_result: promptResult,
+            prompt_prefix: promptText.prefix,
+            prompt_suffix: promptText.suffix,
+            aspect_ratio: tabKeyForAssetType(card.assetType) === "scene" ? "16:9" : "1:1",
+            resolution: "2k",
+          });
+          return {
+            card,
+            imageUrl: generated.image_url,
+            meta: {
+              source: generated.source || "ai_generated",
+              ...(generated.asset_id ? { asset_id: generated.asset_id } : {}),
+              ...(generated.runninghub_task_id ? { runninghub_task_id: generated.runninghub_task_id } : {}),
+              ...(generated.variant ? { variant: generated.variant } : {}),
+            },
+          };
+        } finally {
+          setGenerationProgress((current) => current ? {
+            ...current,
+            completed: Math.min(current.completed + 1, current.total),
+          } : current);
+        }
       }));
+      const results = settledResults.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+      const nextGenerationErrors: GenerationErrorState = {};
+      settledResults.forEach((result, index) => {
+        if (result.status === "rejected") {
+          nextGenerationErrors[targetCards[index].assetKey] = readableGenerationError(result.reason);
+        }
+      });
       const nextImages = { ...images };
       const nextImageMeta = { ...imageMeta };
       for (const result of results) {
@@ -350,6 +392,7 @@ export function AssetImageCardsControl({
       }
       setImages(nextImages);
       setImageMeta(nextImageMeta);
+      setGenerationErrors((current) => ({ ...current, ...nextGenerationErrors }));
       setBrokenImageUrls((current) => {
         const next = { ...current };
         for (const result of results) {
@@ -357,11 +400,17 @@ export function AssetImageCardsControl({
         }
         return next;
       });
-      await persistDraft(nextImages, nextImageMeta);
-      setError(`已生成 ${results.length} 张资产图像。`);
+      if (results.length) await persistDraft(nextImages, nextImageMeta);
+      const failedCount = Object.keys(nextGenerationErrors).length;
+      if (failedCount) {
+        setError(`已生成 ${results.length} 张资产图像，${failedCount} 张生成失败。`);
+      } else {
+        setError(`已生成 ${results.length} 张资产图像。`);
+      }
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "资产图像生成失败。");
     } finally {
+      setGenerationProgress((current) => current ? { ...current, running: false } : current);
       setGenerating((current) => {
         const next = { ...current };
         for (const card of targetCards) delete next[card.assetKey];
@@ -463,8 +512,8 @@ export function AssetImageCardsControl({
         </div>
         {!readonly ? (
           <div className="asset-image-cards-actions">
-            <button className="secondary-button" disabled={busy || Boolean(Object.keys(generating).length)} type="button" onClick={() => void generateCards()}>
-              资产生成
+            <button className="secondary-button" disabled={busy || Boolean(generatingCount)} type="button" onClick={() => void generateCards()}>
+              {generatingCount ? `生成中 ${generationProgress?.completed ?? 0}/${generationProgress?.total ?? generatingCount}` : "资产生成"}
             </button>
             <button className="primary-button" disabled={busy || libraryBusy} type="button" onClick={saveCardsToLibrary}>
               一键入库
@@ -478,6 +527,18 @@ export function AssetImageCardsControl({
           </div>
         )}
       </div>
+
+      {generationProgress ? (
+        <div className={generationProgress.running ? "asset-generation-progress running" : "asset-generation-progress"} role="status" aria-live="polite">
+          <div>
+            <strong>{generationProgress.running ? "正在并行生成资产图像" : "资产图像生成完成"}</strong>
+            <span>{generationProgress.completed}/{generationProgress.total}</span>
+          </div>
+          <div className="asset-generation-progress-bar" aria-hidden="true">
+            <span style={{ width: `${generationProgressPercent}%` }} />
+          </div>
+        </div>
+      ) : null}
 
       <div className="asset-image-tabs" role="tablist" aria-label="资产类型">
         {tabs.map((tab) => (
@@ -506,6 +567,7 @@ export function AssetImageCardsControl({
         readonly={readonly}
         uploading={uploading}
         generating={generating}
+        generationErrors={generationErrors}
         onDragState={setDraggingKey}
         onDrop={dropCardImage}
         onEdit={(card, patch) => {
@@ -533,7 +595,7 @@ export function AssetImageCardsControl({
               </button>
               <button
                 className="primary-button"
-                disabled={busy || Boolean(Object.keys(generating).length)}
+                disabled={busy || Boolean(generatingCount)}
                 type="button"
                 onClick={() => {
                   setMissingImageDialogOpen(false);
@@ -599,6 +661,7 @@ function AssetCardGroup({
   busy,
   uploading,
   generating,
+  generationErrors,
   draggingKey,
   onUpload,
   onDrop,
@@ -618,6 +681,7 @@ function AssetCardGroup({
   busy: boolean;
   uploading: UploadState;
   generating: UploadState;
+  generationErrors: GenerationErrorState;
   draggingKey: string;
   onUpload: (card: AssetImageCard, event: ChangeEvent<HTMLInputElement>) => void;
   onDrop: (card: AssetImageCard, event: DragEvent<HTMLElement>) => void;
@@ -646,6 +710,7 @@ function AssetCardGroup({
           const match = activeMatchForCard(matches, card);
           const edit = edits[card.assetKey] ?? cardEditFromCard(card);
           const finalImageUrl = images[card.assetKey] ?? "";
+          const generationError = generationErrors[card.assetKey] ?? "";
           const imageUrl = finalImageUrl || match?.imageUrl || "";
           const previewImageUrl = brokenImageUrls[card.assetKey] === imageUrl ? "" : imageUrl;
           const displayName = cardDisplayName(edit, group);
@@ -758,6 +823,7 @@ function AssetCardGroup({
                   <div className="asset-image-card-actions">
                     {uploading[card.assetKey] ? <span>{uploading[card.assetKey]}</span> : null}
                     {generating[card.assetKey] ? <span>{generating[card.assetKey]}</span> : null}
+                    {generationError ? <span className="asset-image-card-error">{generationError}</span> : null}
                   </div>
                 ) : null}
               </div>
@@ -811,7 +877,7 @@ function buildAssetCards(source: Record<string, unknown> | null): AssetImageCard
       title: name,
       matchedAsset: matchedAsset(character, enrichedItem),
       variantName: stringList(variant?.asset_tags)[0] || stringList(character.asset_tags)[0] || "",
-      accessories: stringList(accessory?.asset_tags).slice(1).join("、") || stringList(character.asset_tags).slice(1).join("、"),
+      secondaryTagsText: stringList(accessory?.asset_tags).slice(1).join("、") || stringList(character.asset_tags).slice(1).join("、"),
       prompt: textValue(prompt?.prompt),
       referenceImageRef: imageRefFromValue(prompt?.reference_image_ref),
       referenceSource: textValue(prompt?.reference_source) || textValue(character.reference_source),
@@ -836,7 +902,7 @@ function genericCards(value: unknown, assetType: string, prompts: Array<Record<s
       title,
       matchedAsset: matchedAsset(item),
       variantName: stringList(item.asset_tags)[0] || "",
-      accessories: stringList(item.asset_tags).slice(1).join("、"),
+      secondaryTagsText: stringList(item.asset_tags).slice(1).join("、"),
       prompt: textValue(prompt?.prompt) || textValue(item.prompt),
       referenceImageRef: imageRefFromValue(prompt?.reference_image_ref) || imageRefFromValue(item.reference_image_ref) || imageRefFromRecord(item),
       referenceSource: textValue(prompt?.reference_source) || textValue(item.reference_source),
@@ -904,12 +970,12 @@ function readonlyImages(value: unknown): ImageState {
 function assetLibraryTags(card: AssetImageCard, edit: CardEditState, group: TabKey): string[] {
   const name = edit.name.trim() || card.title;
   const tags = assetTagsForEdit(edit);
-  const [variantName = "", ...accessories] = tags;
+  const [variantName = "", ...extraTags] = tags;
   return assetTagNamesForCatalogAsset({
     group: group === "character" || group === "scene" || group === "prop" ? group : "asset",
     name,
     variantName: group === "character" ? variantName || "默认" : variantName,
-    accessories: accessories.join("、"),
+    accessories: extraTags.join("、"),
   });
 }
 
@@ -1039,13 +1105,21 @@ function cardEditFromCard(card: AssetImageCard): CardEditState {
 function cardDisplayName(edit: CardEditState, group: TabKey): string {
   const name = edit.name.trim();
   const tags = assetTagsForEdit(edit);
-  const [variantName = "", ...accessories] = tags;
+  const [variantName = "", ...extraTags] = tags;
   return assetNameFromTagNames(assetTagNamesForCatalogAsset({
     group: group === "character" || group === "scene" || group === "prop" ? group : "asset",
     name,
     variantName: group === "character" ? variantName || "默认" : variantName,
-    accessories: accessories.join("、"),
+    accessories: extraTags.join("、"),
   })) || "未命名资产";
+}
+
+function assetIdentityForEdit(edit: CardEditState, group: TabKey): AssetIdentity {
+  return {
+    assetType: group,
+    assetName: edit.name.trim(),
+    assetTags: assetTagsForEdit(edit),
+  };
 }
 
 function normalizedVariantName(name: string, variantName: string): string {
@@ -1074,18 +1148,8 @@ function activeMatchForCard(matchState: MatchState, card: AssetImageCard): Asset
 async function findAssetNameConflicts(plans: AssetUploadPlan[], projectId?: string): Promise<AssetNameConflictDialog | null> {
   const scope = uploadScope(projectId);
   const project_id = projectId && projectId !== "global" ? projectId : undefined;
-  const plannedNames = plans.map((plan) => plan.fullName.trim()).filter(Boolean);
-  const duplicatedNames = namesDuplicatedInBatch(plannedNames);
-  const uniqueNames = Array.from(new Set(plannedNames));
-  const existingAssets = uniqueNames.length
-    ? await searchAssets({
-      ...assetSearchScopeForProject(project_id),
-      scope,
-      names: uniqueNames,
-      limit: Math.max(uniqueNames.length, 1),
-    })
-    : [];
-  const existingNames = existingAssets.map((asset) => asset.name).filter(Boolean);
+  const duplicatedNames = identitiesDuplicatedInBatch(plans);
+  const existingNames = await existingAssetIdentityNames(plans, scope, project_id);
   const assetNames = Array.from(new Set([...duplicatedNames, ...existingNames])).sort((left, right) => left.localeCompare(right, "zh-Hans-CN"));
   if (!assetNames.length) return null;
   return {
@@ -1094,14 +1158,132 @@ async function findAssetNameConflicts(plans: AssetUploadPlan[], projectId?: stri
   };
 }
 
-function namesDuplicatedInBatch(names: string[]): string[] {
+function identitiesDuplicatedInBatch(plans: AssetUploadPlan[]): string[] {
   const counts = new Map<string, number>();
-  for (const name of names) {
-    counts.set(name, (counts.get(name) ?? 0) + 1);
+  const labels = new Map<string, string>();
+  for (const plan of plans) {
+    const key = assetIdentityKey(plan.identity);
+    if (!key) continue;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+    labels.set(key, plan.fullName);
   }
   return Array.from(counts.entries())
     .filter(([, count]) => count > 1)
-    .map(([name]) => name);
+    .map(([key]) => labels.get(key) ?? key);
+}
+
+async function existingAssetIdentityNames(plans: AssetUploadPlan[], scope: AssetScope, project_id?: string): Promise<string[]> {
+  const uniquePlans = uniquePlansByIdentity(plans);
+  const matchedNames: string[] = [];
+  await Promise.all(uniquePlans.map(async (plan) => {
+    const tagNames = assetLibraryTags(plan.card, plan.edit, plan.group);
+    if (!tagNames.length) return;
+    const candidates = await searchAssets({
+      ...assetSearchScopeForProject(project_id),
+      scope,
+      tag_names: tagNames,
+      limit: 50,
+    });
+    for (const candidate of candidates) {
+      if (await assetRecordMatchesIdentity(candidate, plan.identity)) {
+        matchedNames.push(candidate.name || plan.fullName);
+      }
+    }
+  }));
+  return matchedNames;
+}
+
+function uniquePlansByIdentity(plans: AssetUploadPlan[]): AssetUploadPlan[] {
+  const seen = new Set<string>();
+  const result: AssetUploadPlan[] = [];
+  for (const plan of plans) {
+    const key = assetIdentityKey(plan.identity);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    result.push(plan);
+  }
+  return result;
+}
+
+async function assetRecordMatchesIdentity(asset: AssetRecord, target: AssetIdentity): Promise<boolean> {
+  const tags = await listAssetTagsForAsset(asset.asset_id);
+  const identity = assetIdentityFromAssetRecord(asset, tags.map((tag) => tag.name));
+  if (!identity) return false;
+  if (identity.assetType !== target.assetType) return false;
+  if (identity.assetName !== target.assetName) return false;
+  if (!target.assetTags.length || !identity.assetTags.length) return true;
+  if (identity.assetTags.some((tag) => normalizeIdentityText(tag) === normalizeIdentityText("默认"))) return true;
+  return identity.assetTags.some((candidate) => target.assetTags.some((targetTag) => normalizeIdentityText(candidate) === normalizeIdentityText(targetTag)));
+}
+
+function assetIdentityFromAssetRecord(asset: AssetRecord, tagNames: string[]): AssetIdentity | null {
+  const metadata = asset.metadata ?? {};
+  const metadataType = typeof metadata.asset_type === "string" ? metadata.asset_type.trim() : "";
+  const metadataName = typeof metadata.asset_name === "string" ? metadata.asset_name.trim() : "";
+  const metadataTags = Array.isArray(metadata.asset_tags)
+    ? metadata.asset_tags.filter((tag): tag is string => typeof tag === "string")
+    : [];
+  const metadataTab = tabKeyFromIdentityType(metadataType);
+  if (metadataTab !== "other" && metadataName) {
+    return {
+      assetType: metadataTab,
+      assetName: metadataName,
+      assetTags: tagAtoms(metadataTags),
+    };
+  }
+
+  const nameIdentity = assetIdentityFromTagNames(assetTagNamesFromName(asset.name));
+  if (nameIdentity) return nameIdentity;
+  return assetIdentityFromTagNames(tagNames);
+}
+
+function assetIdentityFromTagNames(tagNames: string[]): AssetIdentity | null {
+  const index = tagNames.findIndex((tag) => tabKeyFromTypeTag(tag) !== "other");
+  if (index < 0 || tagNames.length <= index + 1) return null;
+  const assetType = tabKeyFromTypeTag(tagNames[index]);
+  const assetName = tagNames[index + 1]?.trim() ?? "";
+  if (!assetName) return null;
+  return {
+    assetType,
+    assetName,
+    assetTags: tagAtoms(tagNames.slice(index + 2)),
+  };
+}
+
+function assetIdentityKey(identity: AssetIdentity): string {
+  const name = normalizeIdentityText(identity.assetName);
+  if (!name) return "";
+  const tags = identity.assetTags.map(normalizeIdentityText).filter(Boolean).sort();
+  return `${identity.assetType}:${name}:${tags.join("|")}`;
+}
+
+function tabKeyFromTypeTag(tag: string): TabKey {
+  if (tag === catalogAssetTypeTags.character) return "character";
+  if (tag === catalogAssetTypeTags.scene) return "scene";
+  if (tag === catalogAssetTypeTags.prop) return "prop";
+  return "other";
+}
+
+function tabKeyFromIdentityType(value: string): TabKey {
+  if (value === "character" || value === catalogAssetTypeTags.character) return "character";
+  if (value === "scene" || value === catalogAssetTypeTags.scene) return "scene";
+  if (value === "prop" || value === catalogAssetTypeTags.prop) return "prop";
+  return "other";
+}
+
+function tagAtoms(values: string[]): string[] {
+  const tags: string[] = [];
+  for (const value of values) {
+    for (const part of value.replace("，", "、").replace(",", "、").replace("/", "、").replace("／", "、").split("、")) {
+      const tag = part.trim();
+      if (tag && !tags.includes(tag)) tags.push(tag);
+    }
+  }
+  return tags;
+}
+
+function normalizeIdentityText(value: string): string {
+  return value.trim().toLowerCase();
 }
 
 function enrichAssetNameConflict(error: unknown, fallbackName: string): unknown {
@@ -1144,6 +1326,11 @@ function assetScopeLabel(scope: string): string {
   return "当前资产库";
 }
 
+function readableGenerationError(error: unknown): string {
+  const message = error instanceof Error ? error.message : "";
+  return message ? `生成失败：${message}` : "生成失败，请重试";
+}
+
 function editedPromptResult(card: AssetImageCard, edit: CardEditState, match: AssetMatch | null): Record<string, unknown> {
   const prompt: Record<string, unknown> = {
     asset_type: card.assetType,
@@ -1168,7 +1355,7 @@ function assetTagsForEdit(edit: CardEditState): string[] {
 }
 
 function assetTagsTextFromCard(card: AssetImageCard): string {
-  const tags = [card.variantName, card.accessories]
+  const tags = [card.variantName, card.secondaryTagsText]
     .flatMap((value) => String(value ?? "").split(/[、,，]/))
     .map((item) => item.trim())
     .filter((item, index, items) => Boolean(item) && items.indexOf(item) === index);

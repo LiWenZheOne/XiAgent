@@ -229,7 +229,7 @@ export function AssetSummaryTableControl({
         {!readonly ? (
           <div className="asset-summary-actions">
             <button className="secondary-button" disabled={busy} type="button" onClick={openDraftDialog}>
-              资产分析
+              补充缺失资产
             </button>
             <button className="primary-button" disabled={busy} type="button" onClick={() => submit("approved")}>
               确认并继续
@@ -366,11 +366,11 @@ export function AssetSummaryTableControl({
       {error ? <p className="form-error">{error}</p> : null}
       {draftOpen ? (
         <div className="confirm-backdrop" role="presentation">
-          <section className="asset-draft-dialog" role="dialog" aria-modal="true" aria-label="资产分析">
+          <section className="asset-draft-dialog" role="dialog" aria-modal="true" aria-label="补充缺失资产">
             <header>
               <div>
-                <p className="eyebrow">资产分析</p>
-                <h3>根据描述分析并补全资产字段</h3>
+                <p className="eyebrow">补充缺失资产</p>
+                <h3>根据描述生成待确认资产草稿</h3>
               </div>
               <button className="secondary-button" disabled={draftLoading} type="button" onClick={() => setDraftOpen(false)}>关闭</button>
             </header>
@@ -390,7 +390,7 @@ export function AssetSummaryTableControl({
             </label>
             <div className="button-row">
               <button className="primary-button" disabled={draftLoading || !draftDescription.trim()} type="button" onClick={() => void generateDraftAsset()}>
-                {draftLoading ? "正在分析..." : "分析资产"}
+                {draftLoading ? "正在生成..." : "生成资产草稿"}
               </button>
               <button
                 className="secondary-button"
@@ -409,7 +409,7 @@ export function AssetSummaryTableControl({
               <div className="asset-draft-preview">
                 <div>
                   <p className="eyebrow">生成结果</p>
-                  <h4>分析出 {draftResult.assets.length} 个资产</h4>
+                  <h4>生成 {draftResult.assets.length} 个资产草稿</h4>
                   <p>{draftResult.reasoning}</p>
                   <small>可信度 {Math.round(draftResult.confidence * 100)}%</small>
                 </div>
@@ -505,6 +505,7 @@ function buildGroupRows(
     };
     delete fields.asset_name;
     delete fields.name;
+    delete fields.asset_type;
     delete fields.image_url;
     delete fields.type;
     delete fields.matched;
