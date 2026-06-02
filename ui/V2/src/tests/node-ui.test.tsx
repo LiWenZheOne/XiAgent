@@ -405,6 +405,77 @@ describe("node-ui controls", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "选择名称 晁盖" })).toHaveClass("active"));
   });
 
+  it("shows the upload placeholder when an asset image preview cannot load", async () => {
+    render(
+      <AssetImageCardsControl
+        config={{ control_id: "ui.interaction.asset_image_cards.v1", variant: "grouped_cards", mode: "interactive" }}
+        node={{
+          node_execution_id: "exec-broken-preview",
+          node_id: "upload_images",
+          node_ref: "system.human_approval.v1",
+          status: "waiting",
+          input_snapshot: {
+            characters: [{ asset_type: "character", asset_name: "林冲", asset_tags: ["囚服"] }],
+            prompt_results: [{ asset_type: "character", asset_name: "林冲", asset_tags: ["囚服"], prompt: "囚服" }],
+            asset_images: [
+              {
+                asset_type: "character",
+                asset_key: "林冲",
+                asset_name: "林冲",
+                asset_tags: ["囚服"],
+                image_url: "https://cdn.example.com/missing-linchong.png",
+              },
+            ],
+          },
+        }}
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    fireEvent.error(screen.getByRole("img"));
+
+    await waitFor(() => expect(screen.queryByRole("img")).not.toBeInTheDocument());
+    expect(screen.getByLabelText("林冲 选择图像")).toHaveTextContent("点击选择");
+    expect(screen.getByLabelText("林冲 选择图像")).toHaveTextContent("拖拽上传");
+  });
+
+  it("does not treat reference image asset ids as linked assets", () => {
+    render(
+      <AssetImageCardsControl
+        config={{ control_id: "ui.interaction.asset_image_cards.v1", variant: "grouped_cards", mode: "interactive" }}
+        node={{
+          node_execution_id: "exec-internal-id-link",
+          node_id: "upload_images",
+          node_ref: "system.human_approval.v1",
+          status: "waiting",
+          input_snapshot: {
+            characters: [
+              {
+                asset_type: "character",
+                asset_name: "众公差",
+                asset_tags: ["公差皂衣"],
+                reference_image_ref: { kind: "asset", asset_id: "asset_0382ca8350d344cc841870ea12345678", role: "reference" },
+              },
+            ],
+            prompt_results: [
+              {
+                asset_type: "character",
+                asset_name: "众公差",
+                asset_tags: ["公差皂衣"],
+                prompt: "公差皂衣",
+              },
+            ],
+          },
+        }}
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    expect(screen.getAllByText("无资产关联").length).toBeGreaterThan(0);
+    expect(screen.queryByText("已关联资产")).not.toBeInTheDocument();
+    expect(screen.queryByText(/asset_0382ca8350d344cc841870ea/)).not.toBeInTheDocument();
+  });
+
   it("renders matched asset cards, generates images locally, and submits after confirmation", async () => {
     const onSubmit = vi.fn();
     const onDraft = vi.fn();
@@ -521,28 +592,30 @@ describe("node-ui controls", () => {
             character_status: "被发配沧州途中，身着囚服，面带风霜。",
           },
           {
-            full_name: "鲁智深",
+            asset_type: "character",
+            asset_name: "鲁智深",
+            asset_tags: ["僧衣", "禅杖"],
             aliases: ["花和尚"],
             summary: "梁山好汉。",
             character_status: "身穿僧衣。",
           },
         ],
         enriched_characters: [
-          { full_name: "林冲", matched: true, matched_asset_name: "林冲_默认" },
-          { full_name: "鲁智深", matched: false },
+          { asset_type: "character", asset_name: "林冲", matched: true, matched_asset_name: "林冲_默认" },
+          { asset_type: "character", asset_name: "鲁智深", matched: false },
         ],
         variant_results: [
-          { full_name: "林冲", matched_variant: "默认" },
-          { full_name: "鲁智深", new_variant_name: "鲁智深_僧衣" },
+          { asset_type: "character", asset_name: "林冲", asset_tags: ["默认"] },
+          { asset_type: "character", asset_name: "鲁智深", asset_tags: ["僧衣"] },
         ],
         accessory_results: [
-          { full_name: "林冲", reason: "无配件" },
-          { full_name: "鲁智深", new_accessories: ["禅杖"] },
+          { asset_type: "character", asset_name: "林冲", asset_tags: [], reason: "无配件" },
+          { asset_type: "character", asset_name: "鲁智深", asset_tags: ["僧衣", "禅杖"] },
         ],
         prompt_results: [
-          { full_name: "林冲_默认", prompt: "囚服", reference_image_ref: { kind: "asset", asset_id: "asset-linchong", role: "reference" } },
-          { full_name: "鲁智深_僧衣", prompt: "僧衣", reference_image_ref: { kind: "asset", asset_id: "asset-luzhishen", role: "reference" } },
-          { full_name: "水火棍", prompt: "生成水火棍道具图", reference_image_ref: { kind: "asset", asset_id: "asset-prop", role: "reference" } },
+          { asset_type: "character", asset_name: "林冲", asset_tags: ["默认"], prompt: "囚服", reference_image_ref: { kind: "asset", asset_id: "asset-linchong", role: "reference" } },
+          { asset_type: "character", asset_name: "鲁智深", asset_tags: ["僧衣"], prompt: "僧衣", reference_image_ref: { kind: "asset", asset_id: "asset-luzhishen", role: "reference" } },
+          { asset_type: "prop", asset_name: "水火棍", prompt: "生成水火棍道具图", reference_image_ref: { kind: "asset", asset_id: "asset-prop", role: "reference" } },
         ],
         approved_assets: {
           props: [
@@ -568,6 +641,10 @@ describe("node-ui controls", () => {
 
     expect(screen.getByRole("tab", { name: /角色/ })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /道具/ })).toBeInTheDocument();
+    expect(screen.getAllByText("资产名称").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("标签").length).toBeGreaterThan(0);
+    expect(screen.queryByText("主体")).not.toBeInTheDocument();
+    expect(screen.queryByText("配件")).not.toBeInTheDocument();
     expect(screen.getByDisplayValue("林冲")).toBeInTheDocument();
     expect(screen.getByDisplayValue("默认")).toBeInTheDocument();
     expect(screen.getByDisplayValue("囚服")).toBeInTheDocument();
@@ -611,13 +688,13 @@ describe("node-ui controls", () => {
     await waitFor(() => expect(screen.getByRole("img", { name: "林冲 图像" })).toHaveAttribute("src", "https://cdn.example.com/generated-linchong.png"));
     expect(onDraft).toHaveBeenCalledWith(expect.objectContaining({
       decision: "generate_missing",
-      asset_images: expect.arrayContaining([
-        expect.objectContaining({
-          asset_type: "character",
-          asset_key: "林冲",
-          image_url: "https://cdn.example.com/generated-linchong.png",
-          source: "ai_generated",
-        }),
+          asset_images: expect.arrayContaining([
+            expect.objectContaining({
+              asset_type: "character",
+              asset_name: "林冲",
+              image_url: "https://cdn.example.com/generated-linchong.png",
+              source: "ai_generated",
+            }),
       ]),
     }));
     const clickMock = vi.fn();
@@ -653,8 +730,7 @@ describe("node-ui controls", () => {
       asset_images: expect.arrayContaining([
         expect.objectContaining({
           asset_type: "character",
-          asset_key: "林冲",
-          full_name: "角色_林冲_默认",
+          asset_name: "林冲",
           image_url: "https://cdn.example.com/generated-linchong.png",
           source: "library",
           runninghub_task_id: "rh-1",
@@ -662,8 +738,8 @@ describe("node-ui controls", () => {
       ]),
       prompt_results: expect.arrayContaining([
         expect.objectContaining({
-          asset_key: "林冲",
-          full_name: "角色_林冲_默认",
+          asset_type: "character",
+          asset_name: "林冲",
           prompt: "修改后的囚服提示词",
         }),
       ]),
@@ -701,20 +777,14 @@ describe("node-ui controls", () => {
                 style: "国风漫画",
                 constraints: "保持囚服。",
                 prompt: "分镜描述\n林冲踏雪前行。",
-                image_refs: [{ kind: "data_uri", data: "data:image/png;base64,cmVm", role: "reference" }],
                 reference_images: [
                   {
                     label: "林冲",
-                    variant: "囚服",
+                    asset_type: "character",
+                    asset_name: "林冲",
+                    asset_tags: ["囚服"],
                     image_ref: { kind: "data_uri", data: "data:image/png;base64,cmVm", role: "reference" },
                     source: "asset",
-                  },
-                ],
-                reference_assets: [
-                  {
-                    full_name: "林冲",
-                    variant: "囚服",
-                    image_ref: { kind: "data_uri", data: "data:image/png;base64,cmVm", role: "reference" },
                   },
                 ],
                 aspect_ratio: "16:9",
@@ -746,10 +816,11 @@ describe("node-ui controls", () => {
           reference_images: [
             expect.objectContaining({
               label: "林冲",
+              asset_type: "character",
+              asset_name: "林冲",
               image_ref: { kind: "data_uri", data: "data:image/png;base64,cmVm", role: "reference" },
             }),
           ],
-          image_refs: [{ kind: "data_uri", data: "data:image/png;base64,cmVm", role: "reference" }],
         }),
       ],
     });
@@ -1081,21 +1152,21 @@ describe("node-ui controls", () => {
         return jsonResponse({
           assets: [
             {
-              type: "character",
-              name: "武松",
+              asset_type: "character",
+              asset_name: "武松",
+              asset_tags: ["劲装短打", "哨棒"],
               matched: false,
               matched_asset_id: null,
               matched_asset_name: "",
               aliases: "行者",
               summary: "梁山好汉",
               character_status: "途经景阳冈",
-              variant_name: "默认",
               variant_description: "劲装短打",
-              accessories: "哨棒",
             },
             {
-              type: "location",
-              name: "官兵船",
+              asset_type: "location",
+              asset_name: "官兵船",
+              asset_tags: [],
               matched: false,
               matched_asset_id: null,
               matched_asset_name: "",
@@ -1104,8 +1175,9 @@ describe("node-ui controls", () => {
               time_of_day: "",
             },
             {
-              type: "prop",
-              name: "哨棒",
+              asset_type: "prop",
+              asset_name: "哨棒",
+              asset_tags: [],
               matched: false,
               matched_asset_id: null,
               matched_asset_name: "",
@@ -1128,10 +1200,10 @@ describe("node-ui controls", () => {
       status: "waiting",
       input_snapshot: {
         characters: [
-          { full_name: "林冲", aliases: ["林教头"], summary: "禁军教头", character_status: "发配途中" },
+          { asset_type: "character", asset_name: "林冲", asset_tags: ["囚服"], aliases: ["林教头"], summary: "禁军教头", character_status: "发配途中" },
         ],
         enriched_characters: [
-          { full_name: "林冲", matched: true, matched_asset_name: "林冲_默认" },
+          { asset_type: "character", asset_name: "林冲", asset_tags: ["囚服"], matched: true, matched_asset_name: "林冲_囚服" },
         ],
         scenes: [
           { name: "野猪林", description: "密林埋伏地", time_of_day: "白天" },
@@ -1140,10 +1212,10 @@ describe("node-ui controls", () => {
           { name: "野猪林", matched: false },
         ],
         props: [
-          { full_name: "水火棍", description: "差役棍棒", category: "武器" },
+          { asset_type: "prop", asset_name: "水火棍", asset_tags: ["武器"], description: "差役棍棒", category: "武器" },
         ],
         enriched_props: [
-          { full_name: "水火棍", matched: false },
+          { asset_type: "prop", asset_name: "水火棍", asset_tags: ["武器"], matched: false },
         ],
       },
     };
@@ -1160,16 +1232,16 @@ describe("node-ui controls", () => {
     expect(screen.getByRole("tab", { name: /地点/ })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /道具/ })).toBeInTheDocument();
     expect(screen.getByDisplayValue("林冲")).toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: "变体名" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "标签" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "变体描述" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "林冲_默认" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "林冲_囚服" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("tab", { name: /道具/ }));
     expect(screen.getByRole("textbox", { name: "水火棍 关联角色" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("tab", { name: /地点/ }));
     expect(screen.getByRole("button", { name: "未匹配到对应资产" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("tab", { name: /角色/ }));
 
-    await userEvent.click(screen.getByRole("button", { name: "林冲_默认" }));
+    await userEvent.click(screen.getByRole("button", { name: "林冲_囚服" }));
     expect(await screen.findByRole("dialog", { name: "选择匹配资产" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "选择名称 鲁智深" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "选择资产 鲁智深" })).toBeInTheDocument();
@@ -1204,7 +1276,9 @@ describe("node-ui controls", () => {
       approved_assets: expect.objectContaining({
         characters: [
           expect.objectContaining({
-            name: "林冲",
+            asset_type: "character",
+            asset_name: "林冲",
+            asset_tags: ["囚服"],
             matched_asset_name: "鲁智深",
             matched_asset_ref: { kind: "asset", asset_id: "asset-luzhishen", role: "reference" },
             reference_image_ref: { kind: "asset", asset_id: "asset-luzhishen", role: "reference" },
@@ -1212,7 +1286,8 @@ describe("node-ui controls", () => {
         ],
         assets: [
           expect.objectContaining({
-            name: "野猪林",
+            asset_type: "scene",
+            asset_name: "野猪林",
             matched: false,
             matched_asset_id: null,
             matched_asset_name: "",
@@ -1255,15 +1330,15 @@ describe("node-ui controls", () => {
         created_asset_ids: ["asset-linchong"],
         asset_catalog: {
           approved_assets: {
-            characters: [{ name: "林冲" }],
-            assets: [{ name: "山神庙外" }],
-            props: [{ full_name: "花枪" }],
+            characters: [{ asset_name: "林冲", asset_tags: ["囚服"] }],
+            assets: [{ asset_name: "山神庙外", asset_tags: [] }],
+            props: [{ asset_name: "花枪", asset_tags: [] }],
           },
           asset_images: [
             {
               asset_type: "character",
-              asset_key: "林冲",
-              full_name: "林冲_囚服_佩刀",
+              asset_name: "林冲",
+              asset_tags: ["囚服", "佩刀"],
               image_url: "https://cdn.example.com/linchong.png",
               source: "library",
             },
@@ -1303,21 +1378,22 @@ describe("node-ui controls", () => {
         approved_assets: {
           characters: [
             {
-              type: "character",
-              name: "林冲",
+              asset_type: "character",
+              asset_name: "林冲",
+              asset_tags: ["囚服"],
               matched: true,
               matched_asset_id: "asset-linchong",
-              matched_asset_name: "林冲_默认",
+              matched_asset_name: "林冲_囚服",
               summary: "八十万禁军教头",
               character_status: "发配途中",
-              variant_name: "囚服",
               variant_description: "身着囚服，头戴旧毡笠。",
             },
           ],
           assets: [
             {
-              type: "asset",
-              name: "野猪林",
+              asset_type: "scene",
+              asset_name: "野猪林",
+              asset_tags: [],
               matched: false,
               matched_asset_id: null,
               matched_asset_name: "",
@@ -1328,8 +1404,9 @@ describe("node-ui controls", () => {
           ],
           props: [
             {
-              type: "prop",
-              name: "水火棍",
+              asset_type: "prop",
+              asset_name: "水火棍",
+              asset_tags: ["武器"],
               matched: false,
               matched_asset_id: null,
               matched_asset_name: "",
@@ -1341,8 +1418,8 @@ describe("node-ui controls", () => {
         asset_images: [
           {
             asset_type: "character",
-            asset_key: "character:林冲",
-            full_name: "林冲",
+            asset_name: "林冲",
+            asset_tags: ["囚服"],
             image_url: "https://cdn.example.com/linchong.png",
             source: "manual_upload",
           },
@@ -1359,11 +1436,11 @@ describe("node-ui controls", () => {
 
     expect(screen.getAllByText("林冲").length).toBeGreaterThan(0);
     expect(screen.getByRole("columnheader", { name: "操作" })).toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: "变体名" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "标签" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "变体描述" })).toBeInTheDocument();
     expect(screen.getByText("囚服")).toBeInTheDocument();
     expect(screen.getByText("身着囚服，头戴旧毡笠。")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "林冲_默认" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "林冲_囚服" })).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "林冲 图像" })).toHaveAttribute("src", "https://cdn.example.com/linchong.png");
     await userEvent.click(screen.getByRole("tab", { name: /地点/ }));
     expect(screen.getByText("野猪林")).toBeInTheDocument();

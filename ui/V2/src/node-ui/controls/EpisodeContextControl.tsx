@@ -91,7 +91,7 @@ function countCatalog(catalog: Record<string, unknown>): CatalogCounts {
 }
 
 function catalogItemName(item: Record<string, unknown>, index: number): string {
-  return textValue(item.full_name) || textValue(item.name) || textValue(item.asset_key) || `资产 ${index + 1}`;
+  return textValue(item.asset_name) || textValue(item.name) || `资产 ${index + 1}`;
 }
 
 function arrayRecords(value: unknown): Record<string, unknown>[] {

@@ -31,16 +31,13 @@ _SEGMENT_ASSIGNMENT_OUTPUT_SCHEMA: dict[str, Any] = {
                         "type": "array",
                         "items": {
                             "type": "object",
-                            "required": ["full_name", "confidence", "reason"],
+                            "required": ["asset_type", "asset_name", "confidence", "reason"],
                             "properties": {
-                                "full_name": {"type": "string", "minLength": 1},
+                                "asset_type": {"type": "string", "minLength": 1},
+                                "asset_name": {"type": "string", "minLength": 1},
+                                "asset_tags": {"type": "array", "items": {"type": "string"}},
                                 "asset_id": {"type": "string"},
-                                "variant": {"type": "string"},
                                 "image_url": {"type": "string"},
-                                "accessories": {
-                                    "type": "array",
-                                    "items": {"type": "string"},
-                                },
                                 "confidence": {
                                     "type": "string",
                                     "enum": ["high", "medium", "low"],
@@ -54,9 +51,10 @@ _SEGMENT_ASSIGNMENT_OUTPUT_SCHEMA: dict[str, Any] = {
                         "type": "array",
                         "items": {
                             "type": "object",
-                            "required": ["full_name", "reason"],
+                            "required": ["asset_type", "asset_name", "reason"],
                             "properties": {
-                                "full_name": {"type": "string", "minLength": 1},
+                                "asset_type": {"type": "string", "minLength": 1},
+                                "asset_name": {"type": "string", "minLength": 1},
                                 "reason": {"type": "string", "minLength": 1},
                             },
                             "additionalProperties": False,
@@ -91,6 +89,7 @@ _DEFAULT_SYSTEM_PROMPT = """\
 8. absent_assets 的 reason 必须解释为何不算在场（对话提及/回忆/已离开等）。
 9. absent_assets 仅列出可用资产中不在本段在场的角色；未出场的一律不列。
 10. reasoning 字段用一句话概括本段资产判断的整体逻辑。
+11. present_assets 必须输出 asset_type、asset_name、asset_tags。asset_tags 只写本段需要的稳定服装、造型或配件标签，不写角色/地点/道具这类一级类型。
 """
 
 
@@ -315,6 +314,10 @@ def _build_assignment_prompt(
         "请为每个段落判断：哪些角色资产 actually present（在场/实际出现），"
         "哪些资产在对话、命令、计划或回忆中提及但不在场（absent），"
         "并逐项说明理由。"
+    )
+    parts.append(
+        "present_assets 每项使用 asset_type、asset_name、asset_tags 描述资产："
+        "asset_type 通常为 character；asset_name 是主名称；asset_tags 只写本段需要的稳定服装、造型或配件标签。"
     )
     parts.append("")
     parts.append(

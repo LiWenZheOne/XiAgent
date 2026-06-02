@@ -122,8 +122,8 @@ async function resolveExportImages(options: {
       assetType: textValue(asset.metadata?.asset_type) || textValue(asset.metadata?.type) || "asset",
       assetKey: asset.name,
       fullName: asset.name,
-      variantName: textValue(asset.metadata?.variant_name),
-      accessories: textValue(asset.metadata?.accessories),
+      variantName: stringList(asset.metadata?.asset_tags)[0],
+      accessories: stringList(asset.metadata?.asset_tags).slice(1).join("、"),
       imageUrl: publicUrlFromAsset(asset),
       assetId: asset.asset_id,
     })),
@@ -207,13 +207,14 @@ function summaryImages(source: Record<string, unknown>): SummaryImage[] {
     .filter((item): item is Record<string, unknown> => Boolean(item))
     .map((item, index) => {
       const assetType = textValue(item.asset_type) || "asset";
-      const fullName = textValue(item.full_name) || textValue(item.name) || textValue(item.asset_key) || `资产_${index + 1}`;
+      const fullName = textValue(item.asset_name) || textValue(item.name) || `资产_${index + 1}`;
+      const assetTags = stringList(item.asset_tags);
       return {
         assetType,
-        assetKey: textValue(item.asset_key) || fullName,
+        assetKey: fullName,
         fullName,
-        variantName: textValue(item.variant_name) || textValue(item.variant),
-        accessories: textValue(item.accessories),
+        variantName: assetTags[0],
+        accessories: assetTags.slice(1).join("、"),
         imageUrl: textValue(item.image_url) || "",
         source: textValue(item.source),
         assetId: textValue(item.asset_id),
@@ -270,4 +271,10 @@ function recordValue(value: unknown): Record<string, unknown> | null {
 
 function textValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function stringList(value: unknown): string[] {
+  if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string" && Boolean(item.trim())).map((item) => item.trim());
+  if (typeof value === "string") return value.split(/[、,，]/).map((item) => item.trim()).filter(Boolean);
+  return [];
 }

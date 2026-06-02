@@ -99,8 +99,8 @@ export function AssetSummaryTableControl({
           if (!imageUrl) return null;
           return {
             asset_type: row.type === "asset" ? "scene" : row.type,
-            asset_key: row.key,
-            full_name: row.name,
+            asset_name: row.name,
+            asset_tags: stringList(row.fields.asset_tags),
             image_url: imageUrl,
             source: "manual_upload",
           };
@@ -498,12 +498,12 @@ function buildGroupRows(
   related: Record<string, Map<string, Record<string, unknown>>>,
 ): AssetSummaryRow[] {
   return items.map((item, index) => {
-    const name = textValue(item.full_name) || textValue(item.name) || `${tabLabels[type]} ${index + 1}`;
+    const name = textValue(item.asset_name) || textValue(item.name) || `${tabLabels[type]} ${index + 1}`;
     const variantRecord = related.variants?.get(name);
     const fields = {
       ...flattenRecord(item),
     };
-    delete fields.full_name;
+    delete fields.asset_name;
     delete fields.name;
     delete fields.image_url;
     delete fields.type;
@@ -529,13 +529,14 @@ function buildGroupRows(
 
 function rowPayload(row: AssetSummaryRow, match: AssetMatch | null): Record<string, unknown> {
   const payload: Record<string, unknown> = {
-    type: row.type,
-    name: row.name.trim(),
+    asset_type: row.type === "asset" ? "scene" : row.type,
+    asset_name: row.name.trim(),
     matched: Boolean(match),
     matched_asset_id: match?.asset_id ?? null,
     matched_asset_name: match?.name ?? "",
     ...row.fields,
   };
+  payload.asset_tags = stringList(payload.asset_tags);
   if (match?.imageRef) {
     payload.matched_asset_ref = match.imageRef;
     payload.reference_image_ref = match.imageRef;
@@ -572,13 +573,13 @@ function normalizeAssetSummarySource(value: unknown): Record<string, unknown> | 
 
 function rowFromDraft(asset: Record<string, unknown>): AssetSummaryRow {
   const type = rowTypeFromDraft(asset);
-  const name = textValue(asset.name) || `${tabLabels[type]} ${Date.now()}`;
+  const name = textValue(asset.asset_name) || textValue(asset.name) || `${tabLabels[type]} ${Date.now()}`;
   const fields = {
     ...defaultFieldsForType(type),
     ...flattenRecord(asset),
   };
   delete fields.type;
-  delete fields.full_name;
+  delete fields.asset_name;
   delete fields.name;
   delete fields.image_url;
   delete fields.matched;
@@ -600,7 +601,7 @@ function normalizeDraftAssets(result: { assets?: Array<Record<string, unknown>>;
 }
 
 function rowTypeFromDraft(asset: Record<string, unknown>): TabKey {
-  const type = String(asset.type ?? "").trim().toLowerCase();
+  const type = String(asset.asset_type ?? asset.type ?? "").trim().toLowerCase();
   if (type === "character" || type === "role" || type === "角色") return "character";
   if (type === "location" || type === "asset" || type === "scene" || type === "地点" || type === "场景") return "asset";
   return "prop";
@@ -621,7 +622,7 @@ function tableColumns(rows: AssetSummaryRow[]): string[] {
 
 function defaultFieldsForType(type: TabKey): Record<string, string> {
   if (type === "character") {
-    return { aliases: "", summary: "", character_status: "", variant_name: "", variant_description: "" };
+    return { asset_tags: "", aliases: "", summary: "", character_status: "", variant_description: "" };
   }
   if (type === "asset") {
     return { description: "", location_type: "", time_of_day: "" };
@@ -644,16 +645,12 @@ function matchedAsset(...records: Array<Record<string, unknown> | undefined>): A
     if (!record) continue;
     const matchedAssetId = textValue(record.matched_asset_id);
     const matchedAssetName = textValue(record.matched_asset_name);
-    const matchedVariantId = textValue(record.matched_variant_id);
-    const matchedVariantName = textValue(record.matched_variant);
     const hasExplicitMatchFields = Object.prototype.hasOwnProperty.call(record, "matched")
       || Object.prototype.hasOwnProperty.call(record, "matched_asset_id")
-      || Object.prototype.hasOwnProperty.call(record, "matched_asset_name")
-      || Object.prototype.hasOwnProperty.call(record, "matched_variant_id")
-      || Object.prototype.hasOwnProperty.call(record, "matched_variant");
+      || Object.prototype.hasOwnProperty.call(record, "matched_asset_name");
     const fallbackAssetId = !hasExplicitMatchFields ? textValue(record.asset_id) : undefined;
-    const assetId = matchedAssetId || matchedVariantId || fallbackAssetId;
-    const name = matchedAssetName || matchedVariantName || (fallbackAssetId ? textValue(record.name) : undefined);
+    const assetId = matchedAssetId || fallbackAssetId;
+    const name = matchedAssetName || (fallbackAssetId ? textValue(record.name) : undefined);
     if ((record.matched === true || assetId || name) && (assetId || name)) {
       return {
         asset_id: assetId ?? name ?? "",
@@ -679,8 +676,8 @@ function readonlyImages(value: unknown, rows: AssetSummaryRow[]): ImageState {
   const images: ImageState = {};
   const byName = new Map(rows.map((row) => [row.name, row.key]));
   for (const item of arrayOfRecords(recordValue(value)?.asset_images)) {
-    const name = textValue(item.full_name) || textValue(item.name);
-    const key = textValue(item.asset_key) || (name ? byName.get(name) : undefined);
+    const name = textValue(item.asset_name) || textValue(item.name);
+    const key = name ? byName.get(name) : undefined;
     const url = textValue(item.image_url);
     if (key && url) images[key] = url;
   }
@@ -690,7 +687,7 @@ function readonlyImages(value: unknown, rows: AssetSummaryRow[]): ImageState {
 function mapByName(items: Array<Record<string, unknown>>): Map<string, Record<string, unknown>> {
   const mapped = new Map<string, Record<string, unknown>>();
   for (const item of items) {
-    const name = textValue(item.full_name) || textValue(item.name);
+    const name = textValue(item.asset_name) || textValue(item.name);
     if (name) mapped.set(name, item);
   }
   return mapped;
@@ -716,11 +713,17 @@ function displayValue(value: unknown): string {
   return "";
 }
 
+function stringList(value: unknown): string[] {
+  if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string" && Boolean(item.trim())).map((item) => item.trim());
+  if (typeof value === "string") return value.split(/[、,，]/).map((item) => item.trim()).filter(Boolean);
+  return [];
+}
+
 function imageRefFromRecord(record: Record<string, unknown> | undefined): ImageRef | undefined {
   if (!record) return undefined;
   const explicit = imageRefFromValue(record.reference_image_ref) || imageRefFromValue(record.matched_asset_ref);
   if (explicit) return explicit;
-  const assetId = textValue(record.asset_id) || textValue(record.matched_asset_id) || textValue(record.matched_variant_id);
+  const assetId = textValue(record.asset_id) || textValue(record.matched_asset_id);
   return assetId ? { kind: "asset", asset_id: assetId, role: "reference" } : undefined;
 }
 
@@ -789,31 +792,28 @@ function assetAppearanceDescription(asset: unknown): string | undefined {
 function fieldLabel(key: string): string {
   const labels: Record<string, string> = {
     aliases: "别名",
-    accessories: "配件",
+    asset_tags: "标签",
     asset_id: "资产ID",
     category: "类别",
     character_status: "角色状态",
     description: "描述",
-    full_name: "名称",
     matched: "是否匹配",
     matched_asset_id: "匹配资产ID",
     matched_asset_name: "匹配资产",
     name: "名称",
-    new_accessories: "新增配件",
     reason: "原因",
     related_character: "关联角色",
     time_of_day: "时间特征",
     location_type: "地点类型",
     summary: "摘要",
     variant_description: "变体描述",
-    variant_name: "变体名",
   };
   return labels[key] ?? key.replace(/_/g, " ");
 }
 
 function assetSummaryColumnClass(key: string): string {
   const twoCharacterColumns = new Set(["location_type", "time_of_day", "category", "related_character"]);
-  const fourCharacterColumns = new Set(["aliases", "accessories", "new_accessories"]);
+  const fourCharacterColumns = new Set(["aliases", "asset_tags"]);
   if (twoCharacterColumns.has(key)) return "asset-summary-col-field-two-char";
   if (fourCharacterColumns.has(key)) return "asset-summary-col-field-four-char";
   return "asset-summary-col-field";

@@ -6,6 +6,7 @@ from typing import Any
 
 from xiagent.core.errors import ValidationError
 from xiagent.nodes.base import AssetRef, BaseNode, NodeContext, NodeDescriptor, NodeResult
+from xiagent.nodes.tools.asset_identity import normalize_asset_record
 
 
 class EpisodeMetadataFinalizeNode(BaseNode):
@@ -46,9 +47,9 @@ class EpisodeMetadataFinalizeNode(BaseNode):
         episode_summary = _required_text(inputs.get("episode_summary"), "episode_summary_required", "集剧情概括不能为空。")
         source_script = _required_text(inputs.get("source_script"), "episode_source_script_required", "原剧本内容不能为空。")
         scope = _scope(inputs.get("scope"))
-        asset_catalog = _object(inputs.get("asset_catalog"))
-        asset_images = _object_list(inputs.get("asset_images"))
-        prompt_results = _object_list(inputs.get("prompt_results"))
+        asset_catalog = _normalize_asset_catalog(_object(inputs.get("asset_catalog")))
+        asset_images = _normalize_records(_object_list(inputs.get("asset_images")))
+        prompt_results = _normalize_records(_object_list(inputs.get("prompt_results")))
 
         complete_asset_catalog = {
             "approved_assets": asset_catalog,
@@ -219,6 +220,24 @@ def _episode_output_schema() -> dict[str, Any]:
         },
         "additionalProperties": False,
     }
+
+
+def _normalize_asset_catalog(value: dict[str, Any]) -> dict[str, Any]:
+    result = dict(value)
+    for key, default_type in (("characters", "character"), ("assets", "scene"), ("props", "prop")):
+        items = result.get(key)
+        if isinstance(items, list):
+            result[key] = [
+                normalize_asset_record(item, default_asset_type=default_type)
+                if isinstance(item, Mapping)
+                else item
+                for item in items
+            ]
+    return result
+
+
+def _normalize_records(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [normalize_asset_record(item) for item in items]
 
 
 def _parse_episode_payload(text: str | None, metadata: Mapping[str, Any]) -> dict[str, Any]:

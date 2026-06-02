@@ -94,7 +94,7 @@
             bindings:
               items_path: "$node.output.asset_images"
               image_url_path: image_url
-              label_path: full_name
+              label_path: asset_name
       tool.complete_asset_images.v1:
         controls:
           output:
@@ -179,10 +179,10 @@ nodes:
           6. 每个角色的生平背景是什么？summary 只写长期身份、原作背景和人物定位，不写当前动作、被绑、受伤、押送、服装或临时处境。
           7. 每个角色当前剧情状态是什么？character_status 只写此刻/本段剧情中的身份、处境或状态，不写生平背景。
           8. 每个角色的长相是什么样的？有什么面部特征（不写包括脸型）？在当前情景下应该是什么造型？必须结合世界背景、身份、职业/阶层、地点、时代和剧情阶段推导一个具体服装或稳定外观造型。不写脸型、面部轮廓、体型、体貌、身材、腿部、脚部、脚踝、鞋、靴、鞋履、脚穿物或任何下肢细节。
-          9. 这个稳定造型应该叫什么 variant_name？variant_name 必须是可复用的服装或造型名称，如"官兵装束"、"渔民短打"、"道士服"、"僧衣"、"旅人布衣"、"水军装束"、"囚服"、"夜行衣"；禁止用被绑、受伤、押送、奔跑等临时状态命名。
-          10. 哪些内容不是变体依据？被绑起来、被押送、受伤、疲惫、奔跑、打斗、表情、姿态、镜头动作、所在地点、天气、光照、剧情处境都不是 variant_name 的命名依据，也不得写入 variant_description 或 accessories。
+          9. 这个稳定造型应该叫什么标签？造型标签必须是可复用的服装或造型名称，如"官兵装束"、"渔民短打"、"道士服"、"僧衣"、"旅人布衣"、"水军装束"、"囚服"、"夜行衣"；禁止用被绑、受伤、押送、奔跑等临时状态命名。
+          10. 哪些内容不是资产标签依据？被绑起来、被押送、受伤、疲惫、奔跑、打斗、表情、姿态、镜头动作、所在地点、天气、光照、剧情处境都不是 asset_tags 的命名依据，也不得写入 variant_description。
           11. 这个变体的稳定视觉设定是什么？variant_description 至少 40 字，以这是一位xx开头，按性别年龄，身份，气质，五官，面部特征，头部/发型、上身、下装、鞋履、颜色搭配、身份识别特征、稳定配件描述；不要描述任何材质、布料质感、纹理或面料工艺；
-          12. 当前情景下有哪些稳定可穿戴/携带配件？例如面巾、披风、围巾、斗笠、斗篷、包袱、随身兵器挂件。只有叙述段显示正在佩戴、携带、遮挡、披挂，或此情景下极可能稳定附着于角色时才写入 accessories。束缚用绳索、临时镣铐、被绑状态造成的限制物不是角色配件。
+          12. 当前情景下有哪些稳定可穿戴/携带配件标签？例如面巾、披风、围巾、斗笠、斗篷、包袱、随身兵器挂件。只有叙述段显示正在佩戴、携带、遮挡、披挂，或此情景下极可能稳定附着于角色时才写入 asset_tags。束缚用绳索、临时镣铐、被绑状态造成的限制物不是角色配件。
         vars:
           background:
             from: "$nodes.collect_asset_catalog_input.output.background"
@@ -199,13 +199,13 @@ nodes:
           - character_names：所有角色的全名数组（仅字符串）
 
           每个角色对象必须包含：
-          - full_name：根据世界背景推断的全名（如"武松"而非"武二郎"），保存时固定使用全名作为资产名
+          - asset_type：固定为 "character"
+          - asset_name：角色主名称，只表示“这是谁”，例如"何涛"；不得包含服装、配件或类型前缀
+          - asset_tags：角色类型内部标签数组，按稳定造型和稳定配件填写，例如["官兵装束", "官帽", "佩刀"]；不得包含"角色"或 asset_name
           - aliases：别名列表
           - summary：角色生平背景/身份定位梗概（≤100字）；只写角色在原作或世界背景中的长期身份、经历和人物背景，不写当前剧情状态、动作、伤势、被绑、押送、服装或临时处境
           - character_status：当前剧情阶段该角色的上下文状态；只写此刻/本段剧情中的身份、处境、状态或正在经历的情况，不写生平背景、长期履历或原作人物介绍；该字段仅供理解上下文，不作为变体依据
-          - variant_name：回答"这个稳定造型应该叫什么？"后得到的服装/造型名称；必须是"官兵装束"、"渔民短打"、"道士服"、"囚服"、"夜行衣"、"僧衣"这类可复用造型名；禁止输出"默认"、"基础"、"普通"、"无特殊造型"，禁止包含角色名或临时状态
           - variant_description：回答"这个变体的稳定视觉设定是什么？"后得到的详细描述，至少 40 字；以这是一位xx开头，按性别年龄，身份，气质，面部特征，发型、头饰，上身、下装、鞋履、颜色搭配、身份识别特征、稳定配件描述；不得描述任何材质、布料质感、纹理或面料工艺；不得写被绑、受伤、动作、姿态、表情、场景、天气或剧情处境；
-          - accessories：当前变体包含的稳定可穿戴/携带配件列表（如["面巾", "披风"]，无配件时为空数组；不要把身份、身体特征、普通服装整体、束缚状态或剧情道具写成配件）
 
           根层级除 reasoning、characters 和 character_names 外不得包含其他键。
         vars:
@@ -226,11 +226,18 @@ nodes:
           type: array
           items:
             type: object
-            required: ["full_name", "aliases", "summary", "character_status", "variant_name", "variant_description", "accessories"]
+            required: ["asset_type", "asset_name", "asset_tags", "aliases", "summary", "character_status", "variant_description"]
             properties:
-              full_name:
+              asset_type:
+                type: string
+                enum: ["character"]
+              asset_name:
                 type: string
                 minLength: 1
+              asset_tags:
+                type: array
+                items:
+                  type: string
               aliases:
                 type: array
                 items:
@@ -241,16 +248,9 @@ nodes:
               character_status:
                 type: string
                 minLength: 1
-              variant_name:
-                type: string
-                minLength: 1
               variant_description:
                 type: string
                 minLength: 1
-              accessories:
-                type: array
-                items:
-                  type: string
             additionalProperties: false
         character_names:
           type: array
@@ -378,7 +378,7 @@ nodes:
           - match_results：数组，每个未匹配角色一条记录
 
           每条记录必须包含：
-          - full_name：角色全名（与输入一致）
+          - asset_name：角色主名称（与输入一致）
           - matched：true 或 false
           - matched_asset_name：匹配到的资产名（matched=true时必填）
           - matched_asset_id：匹配到的资产ID（matched=true时必填）
@@ -399,9 +399,9 @@ nodes:
           type: array
           items:
             type: object
-            required: ["full_name", "matched", "reason"]
+            required: ["asset_name", "matched", "reason"]
             properties:
-              full_name:
+              asset_name:
                 type: string
                 minLength: 1
               matched:
@@ -438,11 +438,17 @@ nodes:
           type: array
           items:
             type: object
-            required: ["full_name", "matched"]
+            required: ["asset_type", "asset_name", "matched"]
             properties:
-              full_name:
+              asset_type:
+                type: string
+              asset_name:
                 type: string
                 minLength: 1
+              asset_tags:
+                type: array
+                items:
+                  type: string
               matched:
                 type: boolean
               matched_asset_id:
@@ -453,7 +459,7 @@ nodes:
                 type: array
                 items:
                   type: object
-                  required: ["asset_id", "name", "variant"]
+                  required: ["asset_id", "name", "asset_tags"]
                   properties:
                     asset_id:
                       type: string
@@ -461,9 +467,10 @@ nodes:
                     name:
                       type: string
                       minLength: 1
-                    variant:
-                      type: string
-                      minLength: 1
+                    asset_tags:
+                      type: array
+                      items:
+                        type: string
                     metadata:
                       type: object
             additionalProperties: true
@@ -677,17 +684,17 @@ nodes:
         value: |
           仅返回合法 JSON。你是资产库角色变体匹配器，只负责把“提取到的角色变体资产”匹配到“资产库候选变体”。
           工程化匹配原则：
-          1. 严格区分输入分区：variant_name、variant_description、accessories 是提取到的待匹配变体；existing_variants 是资产库候选变体。
+          1. 严格区分输入分区：asset_name、asset_tags、variant_description 是提取到的待匹配资产语义；existing_variants 是资产库候选变体。
           2. 变体是否存在已经由上游 extract_characters 决定；本节点不得根据剧情处境、动作或临时状态新增变体依据。
           3. 只比较稳定服装、稳定外观造型、可穿戴/携带配件和 existing_variants 的 variant、name、资产库标签、appearance_description。
           4. 被绑起来、被押送、受伤、疲惫、奔跑、打斗、表情、姿态、镜头动作、地点、天气、光照等临时状态必须忽略。
-          5. 如果已提取变体无法匹配 existing_variants，才标记 is_new_variant=true，并把 new_variant_name 填为 角色名_已提取变体标签。
+          5. 如果已提取资产标签无法匹配 existing_variants，才标记 is_new_variant=true。
       prompt_template:
         value: |
           请为以下已提取角色变体匹配已有资产。
 
           ## A. 提取到的角色变体资产（待匹配）
-          字段来源：full_name、variant_name、variant_description、accessories、character_status。
+          字段来源：asset_name、asset_tags、variant_description、character_status。
 
           ## B. 资产库候选变体
           字段来源：同一 JSON 对象的 existing_variants；每个候选包含 asset_id、name、variant、storage_uri/image_url、appearance_description 和资产库标签。
@@ -696,19 +703,19 @@ nodes:
           {item}
 
           ## D. 匹配准则
-          - 请将 A 中的 variant_name、variant_description、accessories 与 B 中的 existing_variants 做语义匹配。
+          - 请将 A 中的 asset_name、asset_tags、variant_description 与 B 中的 existing_variants 做语义匹配。
           - character_status 只可作为上下文参考，不能作为新增变体依据。
           - 不得把 existing_variants 中的候选字段写回为提取结果。
           - 如只因被绑、受伤、姿态、表情、动作、天气、场景不同，不得创建新变体。
 
           ## E. 输出 JSON
           返回一个 JSON 对象：
-          - full_name：角色全名
-          - accessories：上游已提取的角色当前配件列表，不得自行新增
-          - matched_variant：匹配到的变体标签（无匹配时为空字符串）
-          - matched_variant_id：匹配到的变体资产ID（无匹配时为null）
+          - asset_type：固定为 "character"
+          - asset_name：角色主名称，必须与输入 asset_name 一致
+          - asset_tags：当前角色稳定标签数组，只包含变体和配件，不包含"角色"和角色名
+          - matched_asset_id：匹配到的资产ID（无匹配时为null）
+          - matched_asset_ref：匹配到的资产引用（无匹配时为null）
           - is_new_variant：上游已提取变体是否未匹配到已有变体资产
-          - new_variant_name：is_new_variant=true时必填，格式：角色名_上游variant_name；不得使用被绑、受伤、动作、场景等临时状态命名
           - reason：≤50字判断理由
       items:
         from: "$nodes.enrich_characters.output.characters"
@@ -722,23 +729,24 @@ nodes:
           type: array
           items:
             type: object
-            required: ["full_name", "accessories", "matched_variant", "is_new_variant", "reason"]
+            required: ["asset_type", "asset_name", "asset_tags", "is_new_variant", "reason"]
             properties:
-              full_name:
+              asset_type:
+                type: string
+                enum: ["character"]
+              asset_name:
                 type: string
                 minLength: 1
-              accessories:
+              asset_tags:
                 type: array
                 items:
                   type: string
-              matched_variant:
-                type: string
-              matched_variant_id:
+              matched_asset_id:
                 type: ["string", "null"]
+              matched_asset_ref:
+                type: ["object", "null"]
               is_new_variant:
                 type: boolean
-              new_variant_name:
-                type: string
               reason:
                 type: string
                 minLength: 1
@@ -761,30 +769,31 @@ nodes:
           type: array
           items:
             type: object
-            required: ["full_name", "accessories", "matched_variant", "is_new_variant", "default_variant_status", "reason"]
+            required: ["asset_name", "asset_tags", "is_new_variant", "reason"]
             properties:
-              full_name:
+              asset_type:
+                type: string
+              asset_name:
                 type: string
                 minLength: 1
-              accessories:
+              asset_tags:
                 type: array
                 items:
                   type: string
-              matched_variant:
-                type: string
-              matched_variant_id:
+              matched_asset_id:
                 type: ["string", "null"]
+              matched_asset_ref:
+                type: ["object", "null"]
+                additionalProperties: true
               is_new_variant:
                 type: boolean
-              new_variant_name:
+              default_asset_status:
                 type: string
-              default_variant_status:
+              default_asset_storage_uri:
                 type: string
-              default_variant_storage_uri:
+              default_asset_appearance_description:
                 type: string
-              default_variant_appearance_description:
-                type: string
-              matched_variant_appearance_description:
+              matched_asset_appearance_description:
                 type: string
               reason:
                 type: string
@@ -800,7 +809,7 @@ nodes:
         value: |
           仅返回合法 JSON。你是资产库角色配件匹配器，只检查“提取到的角色配件”是否已存在于“资产库候选变体/配件”中。
           工程化匹配原则：
-          1. 严格区分输入分区：accessories 是上游提取到的待检查配件；existing_variants 是资产库候选变体/配件来源。
+          1. 严格区分输入分区：asset_tags 是上游提取到的待检查稳定标签；existing_variants 是资产库候选变体/配件来源。
           2. 配件是独立变体维度：基础服装是一个变体，基础服装+配件是另一个变体；一个变体只对应一个图像。
           3. 只检查上游已提取配件，不得自行新增配件。
           4. 不得把被绑、受伤、动作、姿态、剧情处境、地点、天气或临时限制物补充为新配件。
@@ -809,7 +818,7 @@ nodes:
           请检查以下角色的配件状态。
 
           ## A. 提取到的角色配件（待检查）
-          字段来源：accessories。
+          字段来源：asset_tags。
 
           ## B. 资产库候选变体/配件
           字段来源：existing_variants 及其 name、variant、资产库标签。
@@ -819,10 +828,12 @@ nodes:
 
           ## D. 输出 JSON
           返回一个 JSON 对象：
-          - full_name：角色全名
-          - has_new_accessories：上游已提取配件中是否有未匹配配件
-          - new_accessories：上游已提取但未匹配的配件名称数组，不得自行新增
-          - existing_accessories：已有配件名称数组
+          - asset_type：固定为 "character"
+          - asset_name：角色主名称，必须与输入 asset_name 一致
+          - asset_tags：上游提取的稳定标签数组，不得自行新增
+          - has_new_asset_tags：上游已提取标签中是否有未匹配标签
+          - new_asset_tags：上游已提取但未匹配的标签数组，不得自行新增
+          - existing_asset_tags：已有标签数组
           - reason：≤50字判断理由
       items:
         from: "$nodes.enrich_characters.output.characters"
@@ -836,18 +847,25 @@ nodes:
           type: array
           items:
             type: object
-            required: ["full_name", "has_new_accessories", "new_accessories", "existing_accessories", "reason"]
+            required: ["asset_type", "asset_name", "asset_tags", "has_new_asset_tags", "new_asset_tags", "existing_asset_tags", "reason"]
             properties:
-              full_name:
+              asset_type:
+                type: string
+                enum: ["character"]
+              asset_name:
                 type: string
                 minLength: 1
-              has_new_accessories:
-                type: boolean
-              new_accessories:
+              asset_tags:
                 type: array
                 items:
                   type: string
-              existing_accessories:
+              has_new_asset_tags:
+                type: boolean
+              new_asset_tags:
+                type: array
+                items:
+                  type: string
+              existing_asset_tags:
                 type: array
                 items:
                   type: string
@@ -875,18 +893,25 @@ nodes:
           type: array
           items:
             type: object
-            required: ["full_name", "has_new_accessories", "new_accessories", "existing_accessories", "selected_accessory_assets", "reason"]
+            required: ["asset_type", "asset_name", "asset_tags", "has_new_asset_tags", "new_asset_tags", "existing_asset_tags", "selected_accessory_assets", "reason"]
             properties:
-              full_name:
+              asset_type:
+                type: string
+                enum: ["character"]
+              asset_name:
                 type: string
                 minLength: 1
-              has_new_accessories:
-                type: boolean
-              new_accessories:
+              asset_tags:
                 type: array
                 items:
                   type: string
-              existing_accessories:
+              has_new_asset_tags:
+                type: boolean
+              new_asset_tags:
+                type: array
+                items:
+                  type: string
+              existing_asset_tags:
                 type: array
                 items:
                   type: string
@@ -894,9 +919,9 @@ nodes:
                 type: array
                 items:
                   type: object
-                  required: ["accessory", "matched", "asset_id", "asset_name", "source"]
+                  required: ["asset_tag", "matched", "asset_id", "asset_name", "source"]
                   properties:
-                    accessory:
+                    asset_tag:
                       type: string
                       minLength: 1
                     matched:
@@ -905,6 +930,10 @@ nodes:
                       type: string
                     asset_name:
                       type: string
+                    asset_tags:
+                      type: array
+                      items:
+                        type: string
                     asset_ref:
                       type: ["object", "null"]
                     storage_uri:
@@ -913,7 +942,7 @@ nodes:
                       type: string
                     source:
                       type: string
-                      enum: ["matched_accessory", "first_variant_asset"]
+                      enum: ["matched_asset_tag", "first_variant_asset"]
                   additionalProperties: false
               reason:
                 type: string
@@ -935,9 +964,12 @@ nodes:
           请分析剧本中出现的所有关键道具，包括武器、工具、物品等。
           道具收录条件：在叙述段中被角色使用、持有、提及或具有叙事意义的物品。
           排除条件：仅为背景装饰的无名物品、对话中提及但未实际出现或使用的物品。
+          道具必须是角色可以手持、携带、拿取、赠予、争夺、打开、操作或作为独立物件流转的小型/中型物件。
+          船、舟、渔船、官船、楼船、马车、轿子、房屋、店铺、桥、码头、城门、牢房等大型载具、建筑、场所或可供角色进入/停留的空间，不作为道具提取；这类对象应归入地点/场景资产。
+          只有当文本明确说角色拿着“船桨、缆绳、船篙、灯笼、钥匙、酒壶”等可从大型场景中分离出来的小物件时，才把这些小物件作为道具；不要把承载它们的船或场所本身作为道具。
           衣服、服装、鞋帽、披风、围巾、面巾、斗笠、斗篷等穿戴类外观元素不作为道具提取；
           这类穿戴类外观元素属于角色变体或角色配件，不进入道具资产列表。
-          只有可从角色身上独立拿取、使用、赠予、争夺或作为剧情实体流转的物件才可作为道具；普通穿着状态不能作为道具。
+          只有可从角色身上或场景中独立拿取、使用、赠予、争夺或作为剧情实体流转的物件才可作为道具；普通穿着状态、交通载具、建筑空间不能作为道具。
           如果道具与某个角色有明确持有、使用、携带、赠予或争夺关系，请记录关联角色；没有明确关联时留空或省略。
           每个道具的 description 必须是可用于后续图像生成的道具设计描述，结合世界背景和时代质感设计材质、造型、颜色、装饰、磨损痕迹、用途和可见特征。
           将你的分析过程写入 reasoning 字段。
@@ -957,9 +989,10 @@ nodes:
           - prop_names：所有道具名称数组（仅字符串）
 
           每个道具对象必须包含：
-          - full_name：道具名称（如"青龙偃月刀"）
+          - asset_type：固定为 "prop"
+          - asset_name：道具名称（如"青龙偃月刀"）
           - description：道具设计描述（≤100字，结合世界背景和时代质感描述材质、造型、颜色、装饰、磨损痕迹、用途和可见特征）
-          - category：道具类别（如"武器"、"工具"、"容器"、"书籍/信件"等；不要使用"服装"作为道具类别，普通穿戴类外观元素不进入 props）
+          - category：道具类别（如"武器"、"工具"、"容器"、"书籍/信件"等；不要使用"服装"、"载具"、"建筑"、"场景"作为道具类别，普通穿戴类外观元素、大型载具和可进入空间不进入 props）
           - related_character：关联角色（可选；仅当剧本明确说明某角色持有、使用、携带、赠予或争夺该道具时填写角色名，否则可省略或为空字符串）
 
           根层级除 reasoning、props 和 prop_names 外不得包含其他键。
@@ -981,9 +1014,12 @@ nodes:
           type: array
           items:
             type: object
-            required: ["full_name", "description", "category"]
+            required: ["asset_type", "asset_name", "description", "category"]
             properties:
-              full_name:
+              asset_type:
+                type: string
+                enum: ["prop"]
+              asset_name:
                 type: string
                 minLength: 1
               description:
@@ -1108,9 +1144,11 @@ nodes:
           type: array
           items:
             type: object
-            required: ["full_name", "matched"]
+            required: ["asset_type", "asset_name", "matched"]
             properties:
-              full_name:
+              asset_type:
+                type: string
+              asset_name:
                 type: string
                 minLength: 1
               matched:
@@ -1123,7 +1161,7 @@ nodes:
                 type: array
                 items:
                   type: object
-                  required: ["asset_id", "name", "variant"]
+                  required: ["asset_id", "name", "asset_tags"]
                   properties:
                     asset_id:
                       type: string
@@ -1131,9 +1169,10 @@ nodes:
                     name:
                       type: string
                       minLength: 1
-                    variant:
-                      type: string
-                      minLength: 1
+                    asset_tags:
+                      type: array
+                      items:
+                        type: string
                     metadata:
                       type: object
             additionalProperties: true
@@ -1248,14 +1287,16 @@ nodes:
           type: array
           items:
             type: object
-            required: ["asset_type", "asset_key", "image_url"]
+            required: ["asset_type", "asset_name", "image_url"]
             properties:
               asset_type:
                 type: string
-              asset_key:
+              asset_name:
                 type: string
-              full_name:
-                type: string
+              asset_tags:
+                type: array
+                items:
+                  type: string
               image_url:
                 type: string
               source:
@@ -1307,12 +1348,12 @@ nodes:
           - additional_asset_request 是否为空、是否包含明确新增意图？
           - 用户要求新增几个独立资产？如果一句描述中包含多个角色、地点或道具，必须拆成多项。
           - 每个新增资产分别是什么类型：character、location 还是 prop？不要输出 scene/asset 等类型名。
-          - 每个新增资产应按对应提取规则补全哪些字段？角色补 name、aliases、summary、character_status、variant_name、variant_description、accessories；地点补 description、location_type、time_of_day；道具补 description、category、related_character。
+          - 每个新增资产应按对应提取规则补全哪些字段？角色补 asset_type、asset_name、asset_tags、aliases、summary、character_status、variant_description；地点补 asset_type、asset_name、description、location_type、time_of_day；道具补 asset_type、asset_name、description、category、related_character。
           - 哪些字段无法从用户描述、script 或 background 中确认？无法确认的字段留空，不要编造。
           处理规则：
           - 如果 additional_asset_request 为空、无明确新增意图或无法从原文/世界背景支持，原样返回 approved_assets，added_assets 为空。
           - 如果用户描述要求新增角色、地点或道具，必须从 script 和 background 中找依据，并补入 approved_assets 对应数组。
-          - 角色新增资产必须遵守资产提取分工：变体只由稳定服装、稳定外观造型和可穿戴/携带配件决定；先根据身份、职业/阶层、地点和剧情阶段推断具体稳定造型名；variant_name 禁止填"默认"、"基础"、"普通"、"无特殊造型"等空泛标签；被绑、受伤、动作、表情、姿态、剧情处境、镜头状态不是变体。
+          - 角色新增资产必须遵守资产提取分工：asset_tags 只由稳定服装、稳定外观造型和可穿戴/携带配件决定；先根据身份、职业/阶层、地点和剧情阶段推断具体稳定造型标签；禁止填"默认"、"基础"、"普通"、"无特殊造型"等空泛标签；被绑、受伤、动作、表情、姿态、剧情处境、镜头状态不是变体。
           - 角色 variant_description 至少 40 字，按头部/发型、上身、下装、鞋履、颜色搭配、身份识别特征、稳定配件描述；不得描述任何材质、布料质感、纹理或面料工艺；禁止输出"默认装束，无特殊造型描述"这类空泛描述。
           - 角色 summary 只描述角色生平背景、身份定位或原作人物背景，不描述当前剧情状态；character_status 只描述当前剧情阶段的身份、处境或状态，不描述生平背景。
           - 地点新增资产描述地点本身：它是什么地方、位于哪里、在原作/世界背景中用来做什么，并根据时代背景补足空间结构、场景物件、陈设、布局和装饰风格；不要把剧情场次当地点。
@@ -1344,13 +1385,13 @@ nodes:
           - reasoning：简要说明新增或不新增的依据。
 
           approved_assets.characters 每项建议包含：
-          type, name, matched, matched_asset_id, matched_asset_name, matched_asset_ref, reference_image_ref, matched_asset_appearance_description, reference_appearance_description, aliases, summary, character_status, variant_name, variant_description, accessories
+          asset_type, asset_name, asset_tags, matched, matched_asset_id, matched_asset_name, matched_asset_ref, reference_image_ref, matched_asset_appearance_description, reference_appearance_description, aliases, summary, character_status, variant_description
 
           approved_assets.assets 每项建议包含：
-          type, name, matched, matched_asset_id, matched_asset_name, matched_asset_ref, reference_image_ref, matched_asset_appearance_description, reference_appearance_description, description, location_type, time_of_day
+          asset_type, asset_name, asset_tags, matched, matched_asset_id, matched_asset_name, matched_asset_ref, reference_image_ref, matched_asset_appearance_description, reference_appearance_description, description, location_type, time_of_day
 
           approved_assets.props 每项建议包含：
-          type, name, matched, matched_asset_id, matched_asset_name, matched_asset_ref, reference_image_ref, matched_asset_appearance_description, reference_appearance_description, description, category, related_character
+          asset_type, asset_name, asset_tags, matched, matched_asset_id, matched_asset_name, matched_asset_ref, reference_image_ref, matched_asset_appearance_description, reference_appearance_description, description, category, related_character
         vars:
           background:
             from: "$nodes.collect_asset_catalog_input.output.background"
@@ -1445,6 +1486,8 @@ nodes:
           不写脸型、面部轮廓、体型、体貌、身材、腿部、脚部、脚踝、鞋、靴、鞋履、脚穿物或任何下肢细节。
           不写动作、姿态、表情、镜头调度、场景气氛、正在发生的剧情、受伤、疲惫、奔跑、打斗、被绑等临时状态。
           只保留稳定造型差异；临时情景信息只用于判断应排除哪些内容。
+          当角色是渔户、村民、公差、兵丁、随从、店小二等信息有限的群体/身份角色时，不得因为信息不足输出“或”“可能”“可选”“任选”“一类”等不确定造型；必须结合世界背景、原作桥段、当前剧情地点与身份，固定一种最适合该桥段的单一形象。
+          如果原文没有给出细节，也要从原作对应桥段和时代身份中推断一个确定方案，例如固定为“江边渔户短褐蓑笠造型”或“乡村农户短褐布衣造型”，不要写“渔户或村民”“斗笠或头巾”“短褐或长衫”。
           地点描述空间结构、建筑/地貌、时代质感、用途和关键视觉元素。
           道具描述形制、材质、颜色、装饰、磨损、用途和可见特征。
       prompt_template:
@@ -1454,31 +1497,33 @@ nodes:
 
           请按以下问题思考：
           1. 这个资产属于角色、地点还是道具？
-          2. 如果是角色：当前资产字段中的 name/full_name 只用于理解目标对象，最终外貌描述和 prompt 不得输出人名；当前资产的 variant_description 描述了哪些目标外貌？参考图的 reference_variant_description 描述了哪些原始外貌？
+          2. 如果是角色：当前资产字段中的 asset_name 只用于理解目标对象，最终外貌描述和 prompt 不得输出人名；当前资产的 variant_description 描述了哪些目标外貌？参考图的 reference_appearance_description 描述了哪些原始外貌？
           3. 如果是角色：目标外貌和参考图外貌之间的差异是什么？如何把参考图像修改为目标的外观？
           4. 如果是角色：哪些剧情、动作、状态、腿脚和鞋履信息必须排除？
-          5. 如果是地点：它的空间、建筑/地貌、时代质感、用途和关键视觉元素是什么，在当前时代背景下，这个场景中应该有什么物件摆设，布局是什么样的，用什么角度可以更好的展现地点的全貌？
-          6. 如果是道具：它的形制、材质、颜色、装饰、磨损、用途和可见特征是什么？
-          7. 最终 prompt 应该只保留资产可见目标设定，不包含固定开头、固定结尾或质量词。
+          5. 如果是角色且 asset_name / asset_tags / variant_description 信息有限：它在原作对应桥段、当前剧情地点和时代身份中最合理的一种固定造型是什么？必须选择一个确定方案，不得输出“或”“可能”“可选”“任选”“一类”等不确定表达。
+          6. 如果是地点：它的空间、建筑/地貌、时代质感、用途和关键视觉元素是什么，在当前时代背景下，这个场景中应该有什么物件摆设，布局是什么样的，用什么角度可以更好的展现地点的全貌？
+          7. 如果是道具：它的形制、材质、颜色、装饰、磨损、用途和可见特征是什么？
+          8. 最终 prompt 应该只保留资产可见目标设定，不包含固定开头、固定结尾或质量词；不得包含“或”“可能”“可选”“任选”“一类”等不确定表达。
 
           返回 JSON 对象：
-          - full_name：资产显示名称。角色优先组合 name、variant_name、accessories；地点/道具使用 name。
+          - asset_name：资产主名称，只表示“这是谁/是什么”，不得包含类型、变体或配件。
+          - asset_tags：资产类型内部标签，角色包含稳定造型和稳定配件；不得包含"角色/地点/道具"或 asset_name。
           - target_appearance_description：目标资产外貌描述，角色写稳定发型、眉毛、胡子、眼睛、气质、可见外貌特征、上身服装层次、颜色搭配和必要随身配件，并明确保持大圆头、圆鼓身体、短小四肢、简化五官、粗黑描边、平涂色块和圆润卡通比例不变；但不得包含人名、角色名、身份、职业、阶层、官职、称号、人物关系、阵营、剧情身份、长期履历、脸型、面部轮廓、体型、体貌、身材、腿部、脚部、脚踝、鞋、靴、鞋履、脚穿物、任何下肢细节、材质、布料质感、纹理或面料工艺；地点/道具写目标视觉设定。
-          - think：思考过程，说明如何比较当前资产 variant_description 和参考图 reference_variant_description，并排除了哪些身份、职业、剧情、临时状态或腿脚细节。
+          - think：思考过程，说明如何比较当前资产 variant_description 和参考图 reference_appearance_description，并排除了哪些身份、职业、剧情、临时状态或腿脚细节。
           - prompt：最终修改用的提示词。，以请将图中（角色/场景/道具）改成一位xx性格，气质的（身份），外貌xx，穿着xx的格式书写
       prompt_fields:
         value:
-          - type
-          - name
-          - full_name
-          - variant_name
+          - asset_type
+          - asset_name
+          - asset_tags
           - variant_description
-          - accessories
           - description
-          - reference_variant_description
+          - reference_appearance_description
       passthrough_fields:
         value:
-          - full_name
+          - asset_type
+          - asset_name
+          - asset_tags
       items:
         from: "$nodes.filter_assets_for_generation.output.approved_assets"
       max_attempts:
@@ -1491,11 +1536,18 @@ nodes:
           type: array
           items:
             type: object
-            required: ["full_name", "target_appearance_description", "think", "prompt"]
+            required: ["asset_type", "asset_name", "asset_tags", "target_appearance_description", "think", "prompt"]
             properties:
-              full_name:
+              asset_type:
                 type: string
                 minLength: 1
+              asset_name:
+                type: string
+                minLength: 1
+              asset_tags:
+                type: array
+                items:
+                  type: string
               target_appearance_description:
                 type: string
                 minLength: 1
@@ -1579,16 +1631,18 @@ nodes:
           type: array
           items:
             type: object
-            required: ["asset_type", "asset_key", "image_url"]
+            required: ["asset_type", "asset_name", "image_url"]
             properties:
               asset_type:
                 type: string
                 minLength: 1
-              asset_key:
+              asset_name:
                 type: string
                 minLength: 1
-              full_name:
-                type: string
+              asset_tags:
+                type: array
+                items:
+                  type: string
               image_url:
                 type: string
                 minLength: 1
@@ -1597,7 +1651,7 @@ nodes:
               source:
                 type: string
             additionalProperties: true
-      target_asset_key:
+      target_asset_name:
         value: ""
     outputs:
       type: object
@@ -1610,16 +1664,18 @@ nodes:
           type: array
           items:
             type: object
-            required: ["asset_type", "asset_key", "image_url"]
+            required: ["asset_type", "asset_name", "image_url"]
             properties:
               asset_type:
                 type: string
                 minLength: 1
-              asset_key:
+              asset_name:
                 type: string
                 minLength: 1
-              full_name:
-                type: string
+              asset_tags:
+                type: array
+                items:
+                  type: string
               image_url:
                 type: string
                 minLength: 1
@@ -1628,7 +1684,7 @@ nodes:
               source:
                 type: string
             additionalProperties: true
-        target_asset_key:
+        target_asset_name:
           type: string
         prompt_results:
           type: array

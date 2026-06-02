@@ -3,8 +3,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from xiagent.nodes.ai.image_references import image_refs_schema
 from xiagent.nodes.base import BaseNode, NodeContext, NodeDescriptor, NodeResult
+from xiagent.nodes.tools.asset_identity import normalize_asset_record
 
 
 class PrepareStoryboardPanelCardsNode(BaseNode):
@@ -80,8 +80,6 @@ class PrepareStoryboardPanelCardsNode(BaseNode):
             segment_title = _text(segment.get("segment_title")) or f"段落 {segment_index + 1}"
             assignment = assignments.get(segment_index, {})
             reference_images = _reference_images(assignment)
-            image_refs = [item["image_ref"] for item in reference_images if isinstance(item.get("image_ref"), Mapping)]
-            references = _legacy_reference_assets(reference_images)
             segment_context = _segment_context(assignment)
             source_item = items_by_index.get(segment_index, {})
 
@@ -110,8 +108,6 @@ class PrepareStoryboardPanelCardsNode(BaseNode):
                         "prompt": prompt,
                         "negative_prompt": negative_prompt,
                         "reference_images": reference_images,
-                        "image_refs": image_refs,
-                        "reference_assets": references,
                         "aspect_ratio": aspect_ratio,
                         "resolution": resolution,
                         "source_item": source_item,
@@ -140,9 +136,7 @@ def _panel_card_schema() -> dict[str, Any]:
             "style",
             "constraints",
             "prompt",
-            "image_refs",
             "reference_images",
-            "reference_assets",
             "aspect_ratio",
             "resolution",
         ],
@@ -156,33 +150,19 @@ def _panel_card_schema() -> dict[str, Any]:
             "constraints": {"type": "string", "minLength": 1},
             "prompt": {"type": "string", "minLength": 1},
             "negative_prompt": {"type": "string"},
-            "image_refs": image_refs_schema(),
             "reference_images": {
                 "type": "array",
                 "items": {
                     "type": "object",
                     "required": ["image_ref", "label", "source"],
                     "properties": {
-                        "image_ref": image_refs_schema()["items"],
+                        "image_ref": _image_ref_schema(),
                         "label": {"type": "string", "minLength": 1},
-                        "variant": {"type": "string"},
+                        "asset_type": {"type": "string", "minLength": 1},
+                        "asset_name": {"type": "string", "minLength": 1},
+                        "asset_tags": {"type": "array", "items": {"type": "string"}},
                         "source": {"type": "string", "enum": ["asset", "upload"]},
                         "preview_url": {"type": "string"},
-                    },
-                    "additionalProperties": False,
-                },
-            },
-            "reference_assets": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "required": ["full_name", "image_ref"],
-                    "properties": {
-                        "full_name": {"type": "string", "minLength": 1},
-                        "variant": {"type": "string"},
-                        "image_ref": image_refs_schema()["items"],
-                        "image_url": {"type": "string"},
-                        "source": {"type": "string", "enum": ["asset", "upload"]},
                     },
                     "additionalProperties": False,
                 },
@@ -216,17 +196,20 @@ def _items_by_index(value: Any) -> dict[int, Mapping[str, Any]]:
 def _reference_images(assignment: Mapping[str, Any]) -> list[dict[str, Any]]:
     references: list[dict[str, Any]] = []
     for character in _object_list(assignment.get("characters")):
+        normalized = normalize_asset_record(character, default_asset_type="character")
         image_ref = character.get("image_ref")
-        name = _text(character.get("full_name"))
+        name = _text(normalized.get("asset_name"))
         if name and isinstance(image_ref, Mapping):
             item: dict[str, Any] = {
                 "label": name,
+                "asset_type": _text(normalized.get("asset_type")) or "character",
+                "asset_name": name,
                 "image_ref": dict(image_ref),
                 "source": "asset",
             }
-            variant = _text(character.get("variant"))
-            if variant:
-                item["variant"] = variant
+            asset_tags = _string_list(normalized.get("asset_tags"))
+            if asset_tags:
+                item["asset_tags"] = asset_tags
             image_url = _text(character.get("image_url"))
             if image_url:
                 item["preview_url"] = image_url
@@ -234,36 +217,14 @@ def _reference_images(assignment: Mapping[str, Any]) -> list[dict[str, Any]]:
     return references
 
 
-def _legacy_reference_assets(reference_images: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    references: list[dict[str, Any]] = []
-    for image in reference_images:
-        image_ref = image.get("image_ref")
-        label = _text(image.get("label"))
-        if not label or not isinstance(image_ref, Mapping):
-            continue
-        item: dict[str, Any] = {
-            "full_name": label,
-            "image_ref": dict(image_ref),
-            "source": _text(image.get("source")) or "asset",
-        }
-        variant = _text(image.get("variant"))
-        if variant:
-            item["variant"] = variant
-        preview_url = _text(image.get("preview_url"))
-        if preview_url:
-            item["image_url"] = preview_url
-        references.append(item)
-    return references
-
-
 def _segment_context(assignment: Mapping[str, Any]) -> str:
     parts: list[str] = []
     characters = []
     for character in _object_list(assignment.get("characters")):
-        name = _text(character.get("full_name"))
-        variant = _text(character.get("variant"))
+        name = _text(character.get("asset_name"))
+        tags = _string_list(character.get("asset_tags"))
         if name:
-            characters.append(f"{name}（{variant}）" if variant else name)
+            characters.append(f"{name}（{'、'.join(tags)}）" if tags else name)
     if characters:
         parts.append(f"出场角色：{'、'.join(characters)}")
     location = _text(assignment.get("location"))
@@ -315,6 +276,20 @@ def _default_negative_prompt() -> str:
     return "low quality, bad anatomy, worst quality, text, watermark, signature, realistic, legs, feet, shoes"
 
 
+def _image_ref_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "required": ["kind"],
+        "properties": {
+            "kind": {"type": "string", "enum": ["asset", "data_uri"]},
+            "asset_id": {"type": "string", "minLength": 1},
+            "data": {"type": "string", "minLength": 1},
+            "role": {"type": "string"},
+        },
+        "additionalProperties": False,
+    }
+
+
 def _object_list(value: Any) -> list[Mapping[str, Any]]:
     return [item for item in _list(value) if isinstance(item, Mapping)]
 
@@ -325,6 +300,12 @@ def _mapping(value: Any) -> dict[str, Any]:
 
 def _list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item.strip() for item in value if isinstance(item, str) and item.strip()]
 
 
 def _text(value: Any) -> str:

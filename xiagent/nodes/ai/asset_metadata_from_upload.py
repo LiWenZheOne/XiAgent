@@ -122,13 +122,12 @@ def _output_schema() -> dict[str, Any]:
                 "type": "object",
                 "required": [
                     "type",
+                    "asset_tags",
                     "aliases",
                     "summary",
                     "relationships",
                     "character_status",
-                    "variant_name",
                     "variant_description",
-                    "accessories",
                     "description",
                     "location_type",
                     "time_of_day",
@@ -137,13 +136,12 @@ def _output_schema() -> dict[str, Any]:
                 ],
                 "properties": {
                     "type": {"type": "string", "enum": ["character", "location", "prop"]},
+                    "asset_tags": {"type": "array", "items": {"type": "string"}},
                     "aliases": {"type": "string"},
                     "summary": {"type": "string"},
                     "relationships": {"type": "string"},
                     "character_status": {"type": "string"},
-                    "variant_name": {"type": "string"},
                     "variant_description": {"type": "string"},
-                    "accessories": {"type": "string"},
                     "description": {"type": "string"},
                     "location_type": {"type": "string"},
                     "time_of_day": {"type": "string"},
@@ -179,9 +177,9 @@ def _system_prompt(asset_type: str) -> str:
 - summary 只写生平背景、身份定位或原作人物背景，不写当前镜头状态。
 - relationships 写社会关系、阵营关系、师徒/亲友/敌对等关系。
 - character_status 写可从资产名和世界背景推断的阶段性状态；不确定则留空。
-- variant_name 根据身份、职业、时代和世界背景推断稳定服装或稳定造型名，禁止写“默认”“基础”“普通”等空泛词。
+- asset_tags 根据身份、职业、时代和世界背景推断稳定服装、稳定造型和稳定配件标签，禁止写“默认”“基础”“普通”等空泛词。
 - variant_description 只描述图像中角色可见的外貌特征和稳定造型，可包含头部/发型、上身、颜色搭配、身份识别特征、稳定配件；不要写用途、生成目的、动作、表情、受伤、奔跑、被绑等临时状态。
-- accessories 写可穿戴、携带或识别角色身份的稳定配件。
+- 稳定配件写入 asset_tags，不单独输出配件字段。
 
 地点资产规则：
 - description 说明地点是什么、在哪里、在原作/世界背景中用来做什么。

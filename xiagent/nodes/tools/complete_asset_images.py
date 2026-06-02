@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from xiagent.nodes.base import BaseNode, NodeContext, NodeDescriptor, NodeResult
+from xiagent.nodes.tools.asset_identity import normalize_asset_record
 
 
 class CompleteAssetImagesNode(BaseNode):
@@ -31,7 +32,7 @@ class CompleteAssetImagesNode(BaseNode):
                         "type": "array",
                         "items": {"type": "object", "additionalProperties": True},
                     },
-                    "target_asset_key": {"type": "string"},
+                    "target_asset_name": {"type": "string"},
                 },
                 "additionalProperties": True,
             },
@@ -53,19 +54,19 @@ class CompleteAssetImagesNode(BaseNode):
         prompt_results = _dict_list(inputs.get("prompt_results"))
         manual_images = _manual_images(inputs.get("manual_images"), prompt_results)
         auto_images = _dict_list(inputs.get("auto_images"))
-        target_asset_key = _optional_text(inputs.get("target_asset_key"))
+        target_asset_name = _optional_text(inputs.get("target_asset_name"))
         uploaded_keys = {
             key
             for image in manual_images
-            for key in _asset_keys(image)
+            for key in [_asset_identity_key(image)]
         }
         uploaded_keys.discard("")
         uploaded_count = len(uploaded_keys) if uploaded_keys else len(manual_images)
-        if target_asset_key:
+        if target_asset_name:
             missing_prompt_results = [
                 item
                 for item in prompt_results
-                if _prompt_matches_target(item, target_asset_key)
+                if _prompt_matches_target(item, target_asset_name)
             ]
         else:
             missing_prompt_results = [
@@ -76,10 +77,15 @@ class CompleteAssetImagesNode(BaseNode):
         requested_generation = inputs.get("decision") == "generate_missing"
         next_action = "generate_missing" if requested_generation and missing_prompt_results else "finish"
 
+        asset_images = [
+            normalize_asset_record(image)
+            for image in [*manual_images, *auto_images]
+        ]
+
         return NodeResult(
             status="succeeded",
             output={
-                "asset_images": [*manual_images, *auto_images],
+                "asset_images": asset_images,
                 "missing_prompt_results": missing_prompt_results,
                 "missing_count": len(missing_prompt_results),
                 "next_action": next_action,
@@ -95,14 +101,18 @@ def _manual_images(value: Any, prompt_results: list[dict[str, Any]]) -> list[dic
             if not clean_url:
                 continue
             prompt = prompt_results[index] if index < len(prompt_results) else {}
-            full_name = prompt.get("full_name")
-            images.append(
-                {
-                    "full_name": full_name if isinstance(full_name, str) and full_name else f"手动上传{index + 1}",
-                    "image_url": clean_url,
-                    "source": "manual_upload",
-                }
-            )
+            normalized_prompt = normalize_asset_record(prompt)
+            asset_name = _optional_text(normalized_prompt.get("asset_name")) or f"手动上传{index + 1}"
+            image: dict[str, Any] = {
+                "asset_name": asset_name,
+                "image_url": clean_url,
+                "source": "manual_upload",
+            }
+            for key in ("asset_type", "asset_name", "asset_tags"):
+                value = normalized_prompt.get(key)
+                if value:
+                    image[key] = value
+            images.append(image)
         return images
     return [
         item
@@ -117,50 +127,38 @@ def _dict_list(value: Any) -> list[dict[str, Any]]:
     return [dict(item) for item in value if isinstance(item, Mapping)]
 
 
-def _asset_keys(image: Mapping[str, Any]) -> set[str]:
-    keys: set[str] = set()
-    for key in ("asset_key", "full_name", "name"):
-        value = image.get(key)
-        if isinstance(value, str) and value.strip():
-            keys.add(value.strip())
-    asset_type = image.get("asset_type")
-    name = image.get("full_name") or image.get("name")
+def _asset_identity_key(image: Mapping[str, Any]) -> str:
+    normalized = normalize_asset_record(image)
+    asset_type = normalized.get("asset_type") or image.get("asset_type")
+    name = normalized.get("asset_name")
+    tags = normalized.get("asset_tags")
     if isinstance(asset_type, str) and asset_type.strip() and isinstance(name, str) and name.strip():
-        keys.add(f"{asset_type.strip()}:{name.strip()}")
-    return keys
+        tag_suffix = "|".join(tag.strip() for tag in tags if isinstance(tag, str) and tag.strip()) if isinstance(tags, list) else ""
+        return f"{asset_type.strip()}:{name.strip()}:{tag_suffix}"
+    return name.strip() if isinstance(name, str) and name.strip() else ""
 
 
 def _optional_text(value: Any) -> str | None:
     return value.strip() if isinstance(value, str) and value.strip() else None
 
 
-def _prompt_keys(prompt: Mapping[str, Any]) -> set[str]:
-    keys: set[str] = set()
-    for key in ("asset_key", "full_name", "name"):
-        value = prompt.get(key)
-        if isinstance(value, str) and value.strip():
-            keys.add(value.strip())
-    asset_type = prompt.get("asset_type")
-    name = prompt.get("full_name") or prompt.get("name")
+def _prompt_key(prompt: Mapping[str, Any]) -> str:
+    normalized = normalize_asset_record(prompt)
+    asset_type = normalized.get("asset_type") or prompt.get("asset_type")
+    name = normalized.get("asset_name")
+    tags = normalized.get("asset_tags")
     if isinstance(asset_type, str) and asset_type.strip() and isinstance(name, str) and name.strip():
-        keys.add(f"{asset_type.strip()}:{name.strip()}")
-    return keys
+        tag_suffix = "|".join(tag.strip() for tag in tags if isinstance(tag, str) and tag.strip()) if isinstance(tags, list) else ""
+        return f"{asset_type.strip()}:{name.strip()}:{tag_suffix}"
+    return name.strip() if isinstance(name, str) and name.strip() else ""
 
 
-def _prompt_matches_target(prompt: Mapping[str, Any], target_asset_key: str) -> bool:
-    target = target_asset_key.strip()
+def _prompt_matches_target(prompt: Mapping[str, Any], target_asset_name: str) -> bool:
+    target = target_asset_name.strip()
     if not target:
         return False
-    for key in _prompt_keys(prompt):
-        if key == target or key.startswith(f"{target}_") or key.endswith(f":{target}"):
-            return True
-    return False
-
-
-def _prompt_key(prompt: Mapping[str, Any]) -> str:
-    for key in _prompt_keys(prompt):
-        return key
-    return ""
+    normalized = normalize_asset_record(prompt)
+    return normalized.get("asset_name") == target or _prompt_key(prompt) == target
 
 
 def _prompt_has_image(

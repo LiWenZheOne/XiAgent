@@ -204,7 +204,7 @@ async def test_parallel_node_merges_shared_context_into_prompt_item() -> None:
 
 @pytest.mark.asyncio
 async def test_parallel_node_filters_prompt_fields_and_passthroughs_program_fields() -> None:
-    responses = ['{"full_name": "乡民布衣", "prompt": "黑灰短发，眉眼锋利"}']
+    responses = ['{"asset_name": "乡民", "prompt": "黑灰短发，眉眼锋利"}']
     router = FakeParallelRouter(responses)
     node = ParallelDeepSeekStructuredJsonNode(
         model_router=router,
@@ -226,9 +226,9 @@ async def test_parallel_node_filters_prompt_fields_and_passthroughs_program_fiel
                     "type": "array",
                     "items": {
                         "type": "object",
-                        "required": ["full_name", "prompt", "reference_image_ref"],
-                        "properties": {
-                            "full_name": {"type": "string"},
+                            "required": ["asset_name", "prompt", "reference_image_ref"],
+                            "properties": {
+                            "asset_name": {"type": "string"},
                             "prompt": {"type": "string"},
                             "reference_image_ref": {
                                 "type": "object",
@@ -256,21 +256,21 @@ async def test_parallel_node_filters_prompt_fields_and_passthroughs_program_fiel
         {
             "items": [
                 {
-                    "name": "村民",
+                        "asset_name": "村民",
                     "variant_description": "黑灰短发，眉眼锋利。",
                     "reference_image_ref": {"kind": "asset", "asset_id": "template-character"},
                 }
             ],
             "prompt_template": "Process: {item}",
-            "prompt_fields": ["name", "variant_description"],
-            "passthrough_fields": ["full_name", "reference_image_ref"],
+                "prompt_fields": ["asset_name", "variant_description"],
+                "passthrough_fields": ["asset_name", "reference_image_ref"],
             "max_attempts": 1,
         },
     )
 
     assert result.output["results"] == [
         {
-            "full_name": "村民",
+            "asset_name": "村民",
             "prompt": "黑灰短发，眉眼锋利",
             "reference_image_ref": {"kind": "asset", "asset_id": "template-character"},
         }

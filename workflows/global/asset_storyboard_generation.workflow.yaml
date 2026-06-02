@@ -215,10 +215,10 @@ nodes:
           - segment_index：段落索引
           - location：本段主要地点，没有则空字符串
           - time：本段时间，没有则空字符串
-          - characters：本段实际出现角色数组，每个包含 full_name、variant，可选 asset_id、image_url
+          - characters：本段实际出现角色数组，每个包含 asset_type、asset_name、asset_tags，可选 asset_id、image_url
           - key_props：关键道具数组
 
-          只判断哪些资产实际出现在本段，不要拼接 image_ref；后续工具节点会根据资产目录补全结构化图像引用。
+          只判断哪些资产实际出现在本段，不要拼接 image_ref；asset_tags 只写稳定服装、造型、配件标签，不写"角色/地点/道具"或角色名；后续工具节点会根据资产目录补全结构化图像引用。
         vars:
           segments:
             from: "$nodes.split_script.output.segments"
@@ -249,22 +249,23 @@ nodes:
                 type: array
                 items:
                   type: object
-                  required: ["full_name"]
+                  required: ["asset_type", "asset_name"]
                   properties:
-                    full_name:
+                    asset_type:
                       type: string
                       minLength: 1
-                    asset_id:
+                    asset_name:
                       type: string
                       minLength: 1
-                    variant:
-                      type: string
-                    image_url:
-                      type: string
-                    accessories:
+                    asset_tags:
                       type: array
                       items:
                         type: string
+                    asset_id:
+                      type: string
+                      minLength: 1
+                    image_url:
+                      type: string
                   additionalProperties: false
               key_props:
                 type: array
@@ -303,11 +304,18 @@ nodes:
                 type: array
                 items:
                   type: object
-                  required: ["full_name"]
+                  required: ["asset_type", "asset_name"]
                   properties:
-                    full_name:
+                    asset_type:
                       type: string
                       minLength: 1
+                    asset_name:
+                      type: string
+                      minLength: 1
+                    asset_tags:
+                      type: array
+                      items:
+                        type: string
                     image_ref:
                       type: object
                       required: ["kind"]
@@ -324,14 +332,8 @@ nodes:
                         role:
                           type: string
                       additionalProperties: false
-                    variant:
-                      type: string
                     image_url:
                       type: string
-                    accessories:
-                      type: array
-                      items:
-                        type: string
                   additionalProperties: false
               key_props:
                 type: array

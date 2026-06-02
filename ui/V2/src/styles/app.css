@@ -2605,17 +2605,19 @@ dd {
 
 .asset-image-preview input {
   position: absolute;
-  width: 1px;
-  height: 1px;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
   opacity: 0;
-  pointer-events: none;
+  cursor: pointer;
 }
 
 .asset-image-download-button {
   position: absolute;
   right: 10px;
   bottom: 10px;
-  z-index: 1;
+  z-index: 2;
   height: 30px;
   padding: 0 10px;
   border: 1px solid rgb(148 163 184 / 0.6);
@@ -2670,7 +2672,7 @@ dd {
 
 .asset-image-edit-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.3fr);
   gap: 8px;
 }
 

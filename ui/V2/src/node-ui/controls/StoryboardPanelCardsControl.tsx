@@ -18,18 +18,12 @@ interface ImageRef {
   role?: string;
 }
 
-interface ReferenceAsset {
-  full_name: string;
-  variant?: string;
-  image_ref: ImageRef;
-  image_url?: string;
-  source?: "asset" | "upload";
-}
-
 interface ReferenceImage {
   image_ref: ImageRef;
   label: string;
-  variant?: string;
+  asset_type?: string;
+  asset_name?: string;
+  asset_tags?: string[];
   source?: "asset" | "upload";
   preview_url?: string;
 }
@@ -44,9 +38,7 @@ interface PanelCard {
   constraints: string;
   prompt: string;
   negative_prompt?: string;
-  image_refs: ImageRef[];
   reference_images: ReferenceImage[];
-  reference_assets: ReferenceAsset[];
   aspect_ratio: string;
   resolution: string;
   source_item?: Record<string, unknown>;
@@ -242,6 +234,7 @@ export function StoryboardPanelCardsControl({
   function addAssetReference(cardId: string, asset: AssetRecord, source: ReferenceImage["source"] = "asset") {
     const ref: ReferenceImage = {
       label: asset.name,
+      asset_name: asset.name,
       image_ref: { kind: "asset", asset_id: asset.asset_id, role: "reference" },
       preview_url: asset.metadata?.public_url,
       source,
@@ -413,7 +406,7 @@ export function StoryboardPanelCardsControl({
                                 </button>
                               ) : null}
                               <strong>{ref.label}</strong>
-                              {ref.variant ? <small>{ref.variant}</small> : null}
+                              {ref.asset_tags?.length ? <small>{ref.asset_tags.join("、")}</small> : null}
                             </div>
                           );
                         })}
@@ -485,9 +478,7 @@ function normalizeCard(value: unknown): PanelCard | null {
     constraints: text(item.constraints),
     prompt: text(item.prompt),
     negative_prompt: text(item.negative_prompt),
-    image_refs: imageRefs(item.image_refs),
-    reference_images: referenceImages(item.reference_images, item.reference_assets, item.image_refs),
-    reference_assets: referenceAssets(item.reference_assets),
+    reference_images: referenceImages(item.reference_images),
     aspect_ratio: text(item.aspect_ratio) || "16:9",
     resolution: text(item.resolution) || "2K",
     source_item: recordValue(item.source_item),
@@ -517,7 +508,7 @@ function draftFromSubmitted(card: PanelCard, value: Record<string, unknown>): Pa
     ? value.generated_images.map((item) => recordValue(item)).map((item) => ({ image_url: text(item.image_url), source: text(item.source), runninghub_task_id: text(item.runninghub_task_id) })).filter((item) => item.image_url)
     : [];
   const selected = text(value.selected_image_url);
-  const submittedReferences = referenceImages(value.reference_images, value.reference_assets, value.image_refs);
+  const submittedReferences = referenceImages(value.reference_images);
   return {
     prompt: text(value.prompt) || card.prompt,
     reference_images: submittedReferences.length ? submittedReferences : card.reference_images,
@@ -531,7 +522,6 @@ function payloadFromDrafts(cards: PanelCard[], drafts: DraftMap): Record<string,
     decision: "finish",
     panel_results: cards.map((card) => {
       const draft = drafts[card.card_id] ?? draftFromCard(card);
-      const imageRefs = imageRefsFromReferenceImages(draft.reference_images);
       return {
         card_id: card.card_id,
         segment_index: card.segment_index,
@@ -539,8 +529,6 @@ function payloadFromDrafts(cards: PanelCard[], drafts: DraftMap): Record<string,
         segment_title: card.segment_title,
         prompt: draft.prompt,
         reference_images: draft.reference_images,
-        image_refs: imageRefs,
-        reference_assets: legacyReferenceAssets(draft.reference_images),
         selected_image_url: draft.selected_image_url,
         generated_images: draft.generated_images,
       };
@@ -573,16 +561,6 @@ function imageRefsFromReferenceImages(referenceImages: ReferenceImage[]): ImageR
   return referenceImages.map((item) => item.image_ref).filter((item) => (item.kind === "asset" ? Boolean(item.asset_id) : Boolean(item.data)));
 }
 
-function legacyReferenceAssets(referenceImages: ReferenceImage[]): ReferenceAsset[] {
-  return referenceImages.map((item) => ({
-    full_name: item.label,
-    variant: item.variant,
-    image_ref: item.image_ref,
-    image_url: item.preview_url,
-    source: item.source ?? "asset",
-  }));
-}
-
 function imageRefs(value: unknown): ImageRef[] {
   if (!Array.isArray(value)) return [];
   return value.map((item) => {
@@ -597,44 +575,8 @@ function imageRefs(value: unknown): ImageRef[] {
   }).filter((item) => (item.kind === "asset" ? Boolean(item.asset_id) : Boolean(item.data)));
 }
 
-function referenceAssets(value: unknown): ReferenceAsset[] {
-  if (!Array.isArray(value)) return [];
-  const refs: ReferenceAsset[] = [];
-  for (const rawItem of value) {
-    const item = recordValue(rawItem);
-    const imageRef = imageRefs([item.image_ref])[0];
-    if (!imageRef) continue;
-    refs.push({
-      full_name: text(item.full_name) || "参考图",
-      variant: text(item.variant) || undefined,
-      image_ref: imageRef,
-      image_url: text(item.image_url) || undefined,
-      source: text(item.source) === "upload" ? "upload" : "asset",
-    });
-  }
-  return refs;
-}
-
-function referenceImages(value: unknown, legacyAssets: unknown, legacyImageRefs: unknown): ReferenceImage[] {
-  const direct = referenceImagesFromValue(value);
-  if (direct.length) return direct;
-
-  const assets = referenceAssets(legacyAssets);
-  if (assets.length) {
-    return assets.map((asset) => ({
-      label: asset.full_name,
-      variant: asset.variant,
-      image_ref: asset.image_ref,
-      preview_url: asset.image_url,
-      source: asset.source,
-    }));
-  }
-
-  return imageRefs(legacyImageRefs).map((imageRef, index) => ({
-    label: `参考图 ${index + 1}`,
-    image_ref: imageRef,
-    source: imageRef.kind === "data_uri" ? "upload" : "asset",
-  }));
+function referenceImages(value: unknown): ReferenceImage[] {
+  return referenceImagesFromValue(value);
 }
 
 function referenceImagesFromValue(value: unknown): ReferenceImage[] {
@@ -645,10 +587,12 @@ function referenceImagesFromValue(value: unknown): ReferenceImage[] {
     const imageRef = imageRefs([item.image_ref])[0];
     if (!imageRef) continue;
     refs.push({
-      label: text(item.label) || text(item.full_name) || "参考图",
-      variant: text(item.variant) || undefined,
+      label: text(item.label) || text(item.asset_name) || "参考图",
+      asset_type: text(item.asset_type) || undefined,
+      asset_name: text(item.asset_name) || text(item.label) || undefined,
+      asset_tags: stringList(item.asset_tags),
       image_ref: imageRef,
-      preview_url: text(item.preview_url) || text(item.image_url) || undefined,
+      preview_url: text(item.preview_url) || undefined,
       source: text(item.source) === "upload" ? "upload" : "asset",
     });
   }
@@ -661,6 +605,12 @@ function recordValue(value: unknown): Record<string, unknown> {
 
 function text(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function stringList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const items = value.map((item) => text(item)).filter(Boolean);
+  return items.length ? items : undefined;
 }
 
 function numberValue(value: unknown): number {

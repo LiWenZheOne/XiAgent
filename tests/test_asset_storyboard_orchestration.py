@@ -147,6 +147,7 @@ def test_episode_context_drives_segment_asset_assignment(test_settings) -> None:
         "from": "$nodes.select_episode_metadata.output.background",
     }
     assert "不要拼接 image_ref" in assign_node["inputs"]["prompt"]["template"]
+    assert "full_name" not in assign_node["inputs"]["prompt"]["template"]
 
     resolve_node = nodes_by_id["resolve_segment_image_refs"]
     assert resolve_node["inputs"] == {
@@ -202,8 +203,9 @@ def test_assign_assets_to_segments_output_schema(test_settings) -> None:
                     "segment_index": 0,
                     "characters": [
                         {
-                            "full_name": "林冲",
-                            "variant": "囚服雪地",
+                            "asset_type": "character",
+                            "asset_name": "林冲",
+                            "asset_tags": ["囚服雪地"],
                             "asset_id": "asset-linchong",
                         }
                     ],
@@ -240,13 +242,14 @@ def test_resolve_segment_image_refs_output_schema(test_settings) -> None:
                     "segment_index": 0,
                     "characters": [
                         {
-                            "full_name": "林冲",
+                            "asset_type": "character",
+                            "asset_name": "林冲",
                             "image_ref": {
                                 "kind": "asset",
                                 "asset_id": "asset-linchong",
                                 "role": "reference",
                             },
-                            "variant": "囚服雪地",
+                            "asset_tags": ["囚服雪地"],
                         }
                     ],
                     "key_props": ["花枪"],
@@ -258,7 +261,7 @@ def test_resolve_segment_image_refs_output_schema(test_settings) -> None:
         schema,
         {
             "segment_assignments": [
-                {"segment_index": 0, "characters": [{"full_name": "未知角色"}], "key_props": []}
+                {"segment_index": 0, "characters": [{"asset_type": "character", "asset_name": "未知角色"}], "key_props": []}
             ]
         },
     )
@@ -282,7 +285,7 @@ def test_prepare_segment_storyboard_inputs_output_schema(test_settings) -> None:
                     "neighbor_segments": [],
                     "segment_assignment": {
                         "segment_index": 0,
-                        "characters": [{"full_name": "林冲"}],
+                        "characters": [{"asset_type": "character", "asset_name": "林冲"}],
                         "key_props": [],
                     },
                 }
@@ -401,34 +404,18 @@ def test_prepare_storyboard_panel_cards_output_schema(test_settings) -> None:
                     "style": "电影感国风动画",
                     "constraints": "保持角色服装发型一致。",
                     "prompt": "分镜描述\n林冲披旧毡笠在风雪中前行。",
-                    "image_refs": [
-                        {
-                            "kind": "data_uri",
-                            "data": "data:image/png;base64,bGluY2hvbmc=",
-                            "role": "reference",
-                        }
-                    ],
                     "reference_images": [
                         {
                             "label": "林冲",
+                            "asset_type": "character",
+                            "asset_name": "林冲",
+                            "asset_tags": ["囚服雪地"],
                             "image_ref": {
                                 "kind": "data_uri",
                                 "data": "data:image/png;base64,bGluY2hvbmc=",
                                 "role": "reference",
                             },
-                            "variant": "囚服雪地",
                             "source": "asset",
-                        }
-                    ],
-                    "reference_assets": [
-                        {
-                            "full_name": "林冲",
-                            "image_ref": {
-                                "kind": "data_uri",
-                                "data": "data:image/png;base64,bGluY2hvbmc=",
-                                "role": "reference",
-                            },
-                            "variant": "囚服雪地",
                         }
                     ],
                     "aspect_ratio": "16:9",

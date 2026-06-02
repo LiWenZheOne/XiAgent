@@ -91,12 +91,12 @@ async def _with_reference_context(
     item: dict[str, Any],
 ) -> dict[str, Any]:
     item = _with_reference_image_ref(item)
-    if not _optional_text(item.get("reference_variant_description")):
-        description = _reference_variant_description(item)
+    if not _optional_text(item.get("reference_appearance_description")):
+        description = _reference_appearance_description(item)
         if not description:
-            description = await _reference_variant_description_from_ref(ctx, item.get("reference_image_ref"))
+            description = await _reference_appearance_description_from_ref(ctx, item.get("reference_image_ref"))
         if description:
-            item["reference_variant_description"] = description
+            item["reference_appearance_description"] = description
     return item
 
 
@@ -104,12 +104,12 @@ def _with_reference_image_ref(item: dict[str, Any]) -> dict[str, Any]:
     if _valid_image_ref(item.get("reference_image_ref")):
         item["reference_image_ref"] = _clean_image_ref(item["reference_image_ref"])
         return item
-    for key in ("matched_asset_ref", "default_variant_ref"):
+    for key in ("matched_asset_ref", "default_asset_ref"):
         value = item.get(key)
         if _valid_image_ref(value):
             item["reference_image_ref"] = _clean_image_ref(value)
             return item
-    for key in ("matched_variant_id", "asset_id", "matched_asset_id", "default_variant_asset_id"):
+    for key in ("asset_id", "matched_asset_id", "default_asset_id"):
         value = item.get(key)
         if isinstance(value, str) and value.strip():
             item["reference_image_ref"] = {"kind": "asset", "asset_id": value.strip(), "role": "reference"}
@@ -141,25 +141,24 @@ def _clean_image_ref(value: Any) -> dict[str, str]:
     return result
 
 
-def _reference_variant_description(item: Mapping[str, Any]) -> str | None:
+def _reference_appearance_description(item: Mapping[str, Any]) -> str | None:
     for key in (
         "matched_asset_appearance_description",
         "reference_appearance_description",
-        "default_variant_appearance_description",
-        "reference_variant_description",
+        "default_asset_appearance_description",
     ):
         value = _optional_text(item.get(key))
         if value:
             return value
     reference = item.get("reference_image_ref")
     if isinstance(reference, Mapping):
-        value = _optional_text(reference.get("variant_description"))
+        value = _optional_text(reference.get("appearance_description"))
         if value:
             return value
     return None
 
 
-async def _reference_variant_description_from_ref(ctx: NodeContext | None, image_ref: Any) -> str | None:
+async def _reference_appearance_description_from_ref(ctx: NodeContext | None, image_ref: Any) -> str | None:
     if ctx is None or ctx.asset_service is None or not isinstance(image_ref, Mapping):
         return None
     if image_ref.get("kind") != "asset":
@@ -175,10 +174,10 @@ async def _reference_variant_description_from_ref(ctx: NodeContext | None, image
         )
     except Exception:
         return None
-    return _asset_variant_description(asset)
+    return _asset_appearance_description(asset)
 
 
-def _asset_variant_description(asset: Any) -> str | None:
+def _asset_appearance_description(asset: Any) -> str | None:
     metadata: Any
     if isinstance(asset, Mapping):
         metadata = asset.get("metadata")

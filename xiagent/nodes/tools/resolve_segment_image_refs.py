@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from xiagent.nodes.base import BaseNode, NodeContext, NodeDescriptor, NodeResult
+from xiagent.nodes.tools.asset_identity import normalize_asset_record, tag_overlap_score
 
 
 class ResolveSegmentImageRefsNode(BaseNode):
@@ -47,16 +48,16 @@ class ResolveSegmentImageRefsNode(BaseNode):
                                     "type": "array",
                                     "items": {
                                         "type": "object",
-                                        "required": ["full_name"],
+                                        "required": ["asset_type", "asset_name"],
                                         "properties": {
-                                            "full_name": {"type": "string", "minLength": 1},
-                                            "image_ref": _image_ref_schema(),
-                                            "variant": {"type": "string"},
-                                            "image_url": {"type": "string"},
-                                            "accessories": {
+                                            "asset_type": {"type": "string", "minLength": 1},
+                                            "asset_name": {"type": "string", "minLength": 1},
+                                            "asset_tags": {
                                                 "type": "array",
                                                 "items": {"type": "string"},
                                             },
+                                            "image_ref": _image_ref_schema(),
+                                            "image_url": {"type": "string"},
                                         },
                                         "additionalProperties": False,
                                     },
@@ -125,20 +126,22 @@ def _copy_assignment(assignment: Mapping[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _resolve_character(character: Mapping[str, Any], lookup: Mapping[tuple[str, str], dict[str, Any]]) -> dict[str, Any]:
+def _resolve_character(character: Mapping[str, Any], lookup: Mapping[tuple[str, str], list[dict[str, Any]]]) -> dict[str, Any]:
+    normalized_character = normalize_asset_record(character, default_asset_type="character")
     result: dict[str, Any] = {}
-    for key in ("full_name", "variant", "image_url", "accessories"):
-        if key in character:
-            result[key] = character[key]
+    for key in ("asset_type", "asset_name", "asset_tags", "image_url"):
+        if key in normalized_character:
+            result[key] = normalized_character[key]
 
     existing_ref = _clean_image_ref(character.get("image_ref"))
     if existing_ref is not None:
         result["image_ref"] = existing_ref
         return result
 
-    name = _text(character.get("full_name"))
-    variant = _text(character.get("variant"))
-    catalog_item = lookup.get((name, variant)) or lookup.get((name, ""))
+    asset_type = _text(normalized_character.get("asset_type")) or "character"
+    name = _text(normalized_character.get("asset_name"))
+    asset_tags = _string_list(normalized_character.get("asset_tags"))
+    catalog_item = _best_catalog_item(lookup.get((asset_type, name), []), asset_tags)
     image_ref = _image_ref_from_item(catalog_item) if catalog_item is not None else None
     if image_ref is None:
         image_ref = _image_ref_from_item(character)
@@ -150,58 +153,47 @@ def _resolve_character(character: Mapping[str, Any], lookup: Mapping[tuple[str, 
     return result
 
 
-def _build_catalog_lookup(asset_catalog: Mapping[str, Any]) -> dict[tuple[str, str], dict[str, Any]]:
+def _build_catalog_lookup(asset_catalog: Mapping[str, Any]) -> dict[tuple[str, str], list[dict[str, Any]]]:
     source = _mapping(asset_catalog.get("approved_assets")) or asset_catalog
-    lookup: dict[tuple[str, str], dict[str, Any]] = {}
+    lookup: dict[tuple[str, str], list[dict[str, Any]]] = {}
 
     for item in _iter_catalog_items(source):
-        name = _text(item.get("name")) or _text(item.get("full_name"))
+        normalized = normalize_asset_record(item, default_asset_type="character")
+        name = _text(normalized.get("asset_name"))
         if not name:
             continue
-        variant = (
-            _text(item.get("variant"))
-            or _text(item.get("variant_name"))
-            or _text(item.get("new_variant_name"))
-        )
-        normalized = dict(item)
-        _store_lookup_item(lookup, (name, ""), normalized)
-        if variant:
-            _store_lookup_item(lookup, (name, variant), normalized)
+        _store_lookup_item(lookup, (_text(normalized.get("asset_type")) or "character", name), normalized)
 
     for image in _list(asset_catalog.get("asset_images")):
         if not isinstance(image, Mapping):
             continue
-        names = _lookup_names(image)
-        if not names:
+        normalized = normalize_asset_record(image, default_asset_type="character")
+        name = _text(normalized.get("asset_name"))
+        if not name:
             continue
-        normalized = dict(image)
-        variant = _text(image.get("variant")) or _text(image.get("variant_name")) or _variant_from_full_name(image)
-        for name in names:
-            _store_lookup_item(lookup, (name, variant), normalized)
-            _store_lookup_item(lookup, (name, ""), normalized)
+        _store_lookup_item(lookup, (_text(normalized.get("asset_type")) or "character", name), normalized)
 
     return lookup
 
-
-def _lookup_names(item: Mapping[str, Any]) -> list[str]:
-    names: list[str] = []
-    for key in ("asset_key", "name", "full_name"):
-        name = _text(item.get(key))
-        if name and name not in names:
-            names.append(name)
-    return names
-
-
 def _store_lookup_item(
-    lookup: dict[tuple[str, str], dict[str, Any]],
+    lookup: dict[tuple[str, str], list[dict[str, Any]]],
     key: tuple[str, str],
     item: dict[str, Any],
 ) -> None:
-    existing = lookup.get(key)
-    if existing is None or (
-        _image_ref_from_item(existing) is None and _image_ref_from_item(item) is not None
-    ):
-        lookup[key] = item
+    lookup.setdefault(key, []).append(item)
+
+
+def _best_catalog_item(candidates: list[dict[str, Any]], target_tags: list[str]) -> dict[str, Any] | None:
+    if not candidates:
+        return None
+    return max(
+        candidates,
+        key=lambda item: (
+            1 if _image_ref_from_item(item) is not None else 0,
+            tag_overlap_score(_string_list(item.get("asset_tags")), target_tags),
+            len(_string_list(item.get("asset_tags"))),
+        ),
+    )
 
 
 def _iter_catalog_items(source: Mapping[str, Any]) -> list[Mapping[str, Any]]:
@@ -220,7 +212,7 @@ def _image_ref_from_item(item: Mapping[str, Any] | None) -> dict[str, str] | Non
         image_ref = _clean_image_ref(item.get(key))
         if image_ref is not None:
             return image_ref
-    for key in ("matched_variant_id", "asset_id", "matched_asset_id", "default_variant_asset_id"):
+    for key in ("asset_id", "matched_asset_id"):
         asset_id = _text(item.get(key))
         if asset_id:
             return {"kind": "asset", "asset_id": asset_id, "role": "reference"}
@@ -231,19 +223,6 @@ def _image_url_from_item(item: Mapping[str, Any] | None) -> str:
     if item is None:
         return ""
     return _text(item.get("image_url")) or _text(item.get("public_url")) or _text(item.get("storage_uri"))
-
-
-def _variant_from_full_name(item: Mapping[str, Any]) -> str:
-    full_name = _text(item.get("full_name"))
-    asset_key = _text(item.get("asset_key"))
-    if not full_name or not asset_key:
-        return ""
-    parts = [part for part in full_name.split("_") if part]
-    try:
-        key_index = parts.index(asset_key)
-    except ValueError:
-        return ""
-    return parts[key_index + 1] if key_index + 1 < len(parts) else ""
 
 
 def _clean_image_ref(value: Any) -> dict[str, str] | None:
@@ -267,6 +246,12 @@ def _mapping(value: Any) -> Mapping[str, Any]:
 
 def _list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item.strip() for item in value if isinstance(item, str) and item.strip()]
 
 
 def _text(value: Any) -> str:

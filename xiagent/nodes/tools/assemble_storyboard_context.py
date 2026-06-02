@@ -47,8 +47,9 @@ class AssembleStoryboardContextNode(BaseNode):
                                     "items": {
                                         "type": "object",
                                         "properties": {
-                                            "full_name": {"type": "string", "minLength": 1},
-                                            "variant": {"type": "string"},
+                                            "asset_type": {"type": "string"},
+                                            "asset_name": {"type": "string", "minLength": 1},
+                                            "asset_tags": {"type": "array", "items": {"type": "string"}},
                                             "image_ref": {
                                                 "type": "object",
                                                 "properties": {
@@ -60,9 +61,8 @@ class AssembleStoryboardContextNode(BaseNode):
                                                 "additionalProperties": False,
                                             },
                                             "image_url": {"type": "string"},
-                                            "accessories": {"type": ["string", "array"]},
                                         },
-                                        "required": ["full_name"],
+                                        "required": ["asset_name"],
                                         "additionalProperties": False,
                                     },
                                 },
@@ -129,16 +129,14 @@ class AssembleStoryboardContextNode(BaseNode):
                     for asset_item in present_assets:
                         if not isinstance(asset_item, dict):
                             continue
-                        full_name = str(asset_item.get("full_name", "")).strip()
-                        if not full_name:
+                        asset_name = str(asset_item.get("asset_name", "")).strip()
+                        if not asset_name:
                             continue
-                        variant = str(asset_item.get("variant", "")).strip()
+                        asset_tags = _format_asset_tags(asset_item.get("asset_tags"))
                         image_url = str(asset_item.get("image_url", "")).strip()
                         image_ref = _format_image_ref(asset_item.get("image_ref"))
-                        accessories = asset_item.get("accessories", "")
-                        accessories_str = _format_accessories(accessories)
                         parts.append(
-                            f"  - {full_name}（变体：{variant}）（参考图：{image_ref or image_url}）（配件：{accessories_str}）"
+                            f"  - {asset_name}（标签：{asset_tags}）（参考图：{image_ref or image_url}）"
                         )
             parts.append("")
 
@@ -155,11 +153,10 @@ class AssembleStoryboardContextNode(BaseNode):
         )
 
 
-def _format_accessories(accessories: Any) -> str:
-    """Convert accessories to a string representation."""
-    if isinstance(accessories, list):
-        return "、".join(str(a) for a in accessories if a)
-    return str(accessories).strip() if accessories else ""
+def _format_asset_tags(asset_tags: Any) -> str:
+    if isinstance(asset_tags, list):
+        return "、".join(str(tag) for tag in asset_tags if tag)
+    return ""
 
 
 def _format_image_ref(image_ref: Any) -> str:

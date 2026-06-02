@@ -247,13 +247,13 @@ def test_asset_catalog_extract_characters_output_schema(test_settings) -> None:
             "reasoning": "剧本中叙述段提到林冲在山神庙外踏雪而来，满足收录条件。",
             "characters": [
                 {
-                    "full_name": "林冲",
+                    "asset_type": "character",
+                    "asset_name": "林冲",
+                    "asset_tags": ["囚服"],
                     "aliases": ["林教头"],
                     "summary": "八十万禁军教头，武艺高强。",
                     "character_status": "被发配沧州途中，身着囚服，面带风霜。",
-                    "variant_name": "囚服",
                     "variant_description": "身着囚服，保留八十万禁军教头的稳定体貌和身份识别特征。",
-                    "accessories": [],
                 }
             ],
             "character_names": ["林冲"],
@@ -275,7 +275,7 @@ def test_asset_catalog_semantic_match_output_schema(test_settings) -> None:
         {
             "match_results": [
                 {
-                    "full_name": "林冲",
+                    "asset_name": "林冲",
                     "matched": False,
                     "reason": "资产库中无匹配角色",
                 }
@@ -313,7 +313,8 @@ def test_asset_catalog_scene_and_prop_output_schemas(test_settings) -> None:
             "reasoning": "剧本叙述段中林冲持有花枪。",
             "props": [
                 {
-                    "full_name": "花枪",
+                    "asset_type": "prop",
+                    "asset_name": "花枪",
                     "description": "宋代花枪以木杆配亮银枪头，红缨装饰，杆身有使用磨痕，便于马上或步战。",
                     "category": "武器",
                 }
@@ -338,12 +339,11 @@ def test_asset_catalog_match_variants_output_schema(test_settings) -> None:
         {
             "results": [
                 {
-                    "full_name": "林冲",
-                    "accessories": [],
-                    "matched_variant": "",
-                    "matched_variant_id": None,
+                    "asset_type": "character",
+                    "asset_name": "林冲",
+                    "asset_tags": ["囚服"],
+                    "matched_asset_id": None,
                     "is_new_variant": True,
-                    "new_variant_name": "林冲_囚服",
                     "reason": "新角色无已有变体",
                 }
             ]
@@ -354,12 +354,11 @@ def test_asset_catalog_match_variants_output_schema(test_settings) -> None:
         {
             "results": [
                 {
-                    "full_name": "何涛",
-                    "accessories": [],
-                    "matched_variant": "",
-                    "matched_variant_id": None,
+                    "asset_type": "character",
+                    "asset_name": "何涛",
+                    "asset_tags": ["公差装束"],
+                    "matched_asset_id": None,
                     "is_new_variant": True,
-                    "new_variant_name": "何涛_公差装束",
                     "reason": "资产库无已有变体",
                 }
             ]
@@ -372,16 +371,15 @@ def test_asset_catalog_match_variants_output_schema(test_settings) -> None:
         {
             "results": [
                 {
-                    "full_name": "何涛",
-                    "accessories": [],
-                    "matched_variant": "",
-                    "matched_variant_id": None,
+                    "asset_type": "character",
+                    "asset_name": "何涛",
+                    "asset_tags": ["公差装束"],
+                    "matched_asset_id": None,
                     "is_new_variant": True,
-                    "new_variant_name": "何涛_公差装束",
-                    "default_variant_status": "",
-                    "default_variant_storage_uri": "",
-                    "default_variant_appearance_description": "",
-                    "matched_variant_appearance_description": "",
+                    "default_asset_status": "",
+                    "default_asset_storage_uri": "",
+                    "default_asset_appearance_description": "",
+                    "matched_asset_appearance_description": "",
                     "reason": "资产库无已有变体",
                 }
             ]
@@ -403,10 +401,12 @@ def test_asset_catalog_check_accessories_output_schema(test_settings) -> None:
         {
             "results": [
                 {
-                    "full_name": "林冲",
-                    "has_new_accessories": False,
-                    "new_accessories": [],
-                    "existing_accessories": [],
+                    "asset_type": "character",
+                    "asset_name": "林冲",
+                    "asset_tags": ["囚服"],
+                    "has_new_asset_tags": False,
+                    "new_asset_tags": [],
+                    "existing_asset_tags": [],
                     "reason": "无配件",
                 }
             ]
@@ -418,23 +418,25 @@ def test_asset_catalog_check_accessories_output_schema(test_settings) -> None:
         {
             "results": [
                 {
-                    "full_name": "林冲",
-                    "has_new_accessories": True,
-                    "new_accessories": ["披风"],
-                    "existing_accessories": ["毡笠"],
+                    "asset_type": "character",
+                    "asset_name": "林冲",
+                    "asset_tags": ["囚服", "毡笠", "披风"],
+                    "has_new_asset_tags": True,
+                    "new_asset_tags": ["披风"],
+                    "existing_asset_tags": ["毡笠"],
                     "selected_accessory_assets": [
                         {
-                            "accessory": "毡笠",
+                            "asset_tag": "毡笠",
                             "matched": True,
                             "asset_id": "asset-hat",
                             "asset_name": "林冲_囚服_毡笠",
                             "asset_ref": {"kind": "asset", "asset_id": "asset-hat", "role": "reference"},
                             "storage_uri": "https://cdn.test/hat.png",
                             "appearance_description": "囚服加毡笠参考图。",
-                            "source": "matched_accessory",
+                            "source": "matched_asset_tag",
                         },
                         {
-                            "accessory": "披风",
+                            "asset_tag": "披风",
                             "matched": False,
                             "asset_id": "asset-base",
                             "asset_name": "林冲_囚服",
@@ -465,7 +467,9 @@ def test_asset_catalog_generate_prompt_output_schema(test_settings) -> None:
         {
             "results": [
                 {
-                    "full_name": "林冲",
+                    "asset_type": "character",
+                    "asset_name": "林冲",
+                    "asset_tags": ["囚服"],
                     "target_appearance_description": "黑灰短发，眉眼锋利，短须明显，上身灰色囚衣，保持大圆头、圆鼓身体、短小四肢、简化五官、粗黑描边、平涂色块和圆润卡通比例。",
                     "think": "角色当前状态为囚服，默认变体为官服，需将官服改为囚服。",
                     "prompt": "黑灰短发，眉眼锋利，短须明显，上身灰色囚衣，保持大圆头、圆鼓身体、短小四肢、简化五官、粗黑描边、平涂色块和圆润卡通比例不变",
@@ -494,17 +498,17 @@ def test_asset_catalog_generate_prompt_is_character_design_text() -> None:
         "from": "$nodes.filter_assets_for_generation.output.approved_assets",
     }
     assert generate_prompt["inputs"]["prompt_fields"]["value"] == [
-        "type",
-        "name",
-        "full_name",
-        "variant_name",
+        "asset_type",
+        "asset_name",
+        "asset_tags",
         "variant_description",
-        "accessories",
         "description",
-        "reference_variant_description",
+        "reference_appearance_description",
     ]
     assert generate_prompt["inputs"]["passthrough_fields"]["value"] == [
-        "full_name",
+        "asset_type",
+        "asset_name",
+        "asset_tags",
     ]
     assert "reference_image_ref" not in nodes_by_id["generate_prompt"]["outputs"]["properties"]["results"]["items"]["required"]
     assert "视觉资产设定提示词专家" in system_prompt
@@ -520,10 +524,15 @@ def test_asset_catalog_generate_prompt_is_character_design_text() -> None:
     assert "角色描述不得包含任何材质" in system_prompt
     assert "道具描述形制、材质、颜色、装饰" in system_prompt
     assert "当前资产" in prompt_template
-    assert "name/full_name 只用于理解目标对象" in prompt_template
+    assert "asset_name 只用于理解目标对象" in prompt_template
     assert "最终外貌描述和 prompt 不得输出人名" in prompt_template
+    assert "渔户、村民、公差、兵丁、随从、店小二" in system_prompt
+    assert "不得因为信息不足输出“或”“可能”“可选”“任选”“一类”等不确定造型" in system_prompt
+    assert "原作对应桥段" in system_prompt
+    assert "必须选择一个确定方案" in prompt_template
+    assert "不得包含“或”“可能”“可选”“任选”“一类”等不确定表达" in prompt_template
     assert "variant_description 描述了哪些目标外貌" in prompt_template
-    assert "reference_variant_description 描述了哪些原始外貌" in prompt_template
+    assert "reference_appearance_description 描述了哪些原始外貌" in prompt_template
     assert "目标外貌和参考图外貌之间的差异是什么" in prompt_template
     assert "哪些剧情、动作、状态、腿脚和鞋履信息必须排除" in prompt_template
     assert "空间、建筑/地貌、时代质感、用途和关键视觉元素" in prompt_template
@@ -555,11 +564,9 @@ def test_asset_catalog_extract_prompt_includes_key_instructions() -> None:
     assert "思维链" in system_prompt
     assert "reasoning" in system_prompt
     assert "characters" in prompt_template
-    assert "full_name" in prompt_template
+    assert "asset_name" in prompt_template
     assert "character_status" in prompt_template
-    assert "variant_name" in prompt_template
     assert "variant_description" in prompt_template
-    assert "accessories" in prompt_template
     assert "character_names" in prompt_template
     assert "reasoning" in prompt_template
     assert "请用提问式思维链步骤完成分析" in system_prompt
@@ -568,18 +575,18 @@ def test_asset_catalog_extract_prompt_includes_key_instructions() -> None:
     assert "当前剧本属于原作的哪个剧情阶段" in system_prompt
     assert "每个角色的长相是什么样的" in system_prompt
     assert "在当前情景下应该是什么造型" in system_prompt
-    assert "这个稳定造型应该叫什么 variant_name" in system_prompt
+    assert "这个稳定造型应该叫什么标签" in system_prompt
     assert "被绑起来" in system_prompt
-    assert "不是变体依据" in system_prompt
+    assert "不是资产标签依据" in system_prompt
     assert "禁止用被绑、受伤、押送、奔跑等临时状态命名" in system_prompt
-    assert "禁止输出\"默认\"、\"基础\"、\"普通\"、\"无特殊造型\"" in prompt_template
+    assert "不得包含服装、配件或类型前缀" in prompt_template
     assert "这个变体的稳定视觉设定是什么" in system_prompt
     assert "至少 40 字" in system_prompt
     assert "不要描述任何材质、布料质感、纹理或面料工艺" in system_prompt
-    assert "禁止输出\"默认\"、\"基础\"、\"普通\"、\"无特殊造型\"" in prompt_template
+    assert "不得包含服装、配件或类型前缀" in prompt_template
     assert "按 system 中 12 个问题整理" in prompt_template
-    assert "回答\"这个稳定造型应该叫什么？\"" in prompt_template
-    assert "禁止输出\"默认\"、\"基础\"、\"普通\"、\"无特殊造型\"" in prompt_template
+    assert "asset_tags" in prompt_template
+    assert "不得包含服装、配件或类型前缀" in prompt_template
     assert "回答\"这个变体的稳定视觉设定是什么？\"" in prompt_template
     assert "束缚用绳索" in system_prompt
     assert "summary 只写长期身份" in system_prompt
@@ -593,9 +600,12 @@ def test_asset_catalog_extract_prompt_includes_key_instructions() -> None:
     assert "场景物件、陈设、布局和装饰风格" in scene_system
     assert "穿戴类外观元素不作为道具提取" in prop_system
     assert "属于角色变体或角色配件" in prop_system
-    assert "普通穿着状态不能作为道具" in prop_system
+    assert "普通穿着状态、交通载具、建筑空间不能作为道具" in prop_system
+    assert "船、舟、渔船、官船、楼船、马车、轿子" in prop_system
+    assert "大型载具、建筑、场所或可供角色进入/停留的空间，不作为道具提取" in prop_system
+    assert "船桨、缆绳、船篙" in prop_system
+    assert "不要使用\"服装\"、\"载具\"、\"建筑\"、\"场景\"作为道具类别" in prop_prompt
     assert "材质、造型、颜色、装饰、磨损痕迹、用途和可见特征" in prop_system
-    assert "不要使用\"服装\"作为道具类别" in prop_prompt
     assert "道具设计描述" in prop_prompt
 
 
@@ -620,7 +630,7 @@ def test_asset_catalog_variant_matching_only_matches_extracted_variants() -> Non
     assert "资产库角色变体匹配器" in match_system
     assert "提取到的角色变体资产" in match_system
     assert "变体是否存在已经由上游 extract_characters 决定" in match_system
-    assert "variant_name、variant_description、accessories" in match_system
+    assert "asset_name、asset_tags、variant_description" in match_system
     assert "被绑起来" in match_system
     assert "临时状态必须忽略" in match_system
     assert "## A. 提取到的角色变体资产" in match_prompt
@@ -632,8 +642,7 @@ def test_asset_catalog_variant_matching_only_matches_extracted_variants() -> Non
     assert nodes_by_id["resolve_character_variant_refs"]["inputs"]["variant_results"] == {
         "from": "$nodes.match_variants.output.results",
     }
-    assert "matched_variant_appearance_description" in nodes_by_id["resolve_character_variant_refs"]["outputs"]["properties"]["results"]["items"]["properties"]
-    assert "不得使用被绑、受伤、动作、场景等临时状态命名" in match_prompt
+    assert "matched_asset_appearance_description" in nodes_by_id["resolve_character_variant_refs"]["outputs"]["properties"]["results"]["items"]["properties"]
     assert "资产库角色配件匹配器" in accessory_system
     assert "只检查上游已提取配件" in accessory_system
     assert accessory_inputs["items"] == {
@@ -863,12 +872,12 @@ class FakeAssetCatalogRouter(ChatModelRouter):
             # extract_characters
             (
                 '{"reasoning": "剧本中叙述段提到林冲在山神庙外踏雪而来，满足收录条件。", '
-                '"characters": [{"full_name": "林冲", "aliases": ["林教头"], '
+                '"characters": [{"asset_type": "character", "asset_name": "林冲", '
+                '"asset_tags": ["囚服"], "aliases": ["林教头"], '
                 '"summary": "八十万禁军教头，武艺高强。", '
                 '"character_status": "被发配沧州途中，身着囚服，面带风霜。", '
-                '"variant_name": "囚服", '
-                '"variant_description": "身着囚服，保留八十万禁军教头的稳定体貌和身份识别特征。", '
-                '"accessories": []}], '
+                '"variant_description": "身着囚服，保留八十万禁军教头的稳定体貌和身份识别特征。"'
+                '}], '
                 '"character_names": ["林冲"]}'
             ),
             # extract_scenes
@@ -886,37 +895,35 @@ class FakeAssetCatalogRouter(ChatModelRouter):
             ),
             # semantic_match_characters
             (
-                '{"match_results": [{"full_name": "林冲", "matched": false, '
+                '{"match_results": [{"asset_name": "林冲", "matched": false, '
                 '"reason": "资产库中无匹配角色"}]}'
             ),
             # match_variants (parallel - 1 call for 1 character)
             (
-                '{"full_name": "林冲", "accessories": [], "matched_variant": "", '
-                '"matched_variant_id": null, "is_new_variant": true, '
-                '"new_variant_name": "林冲_囚服", '
+                '{"asset_type": "character", "asset_name": "林冲", "asset_tags": ["囚服"], '
+                '"matched_asset_id": null, "matched_asset_ref": null, "is_new_variant": true, '
                 '"reason": "新角色无已有变体"}'
             ),
             # check_accessories (parallel - 1 call for 1 character)
             (
-                '{"full_name": "林冲", "has_new_accessories": false, '
-                '"new_accessories": [], "existing_accessories": [], '
+                '{"asset_type": "character", "asset_name": "林冲", "asset_tags": ["囚服"], '
+                '"has_new_asset_tags": false, "new_asset_tags": [], "existing_asset_tags": [], '
                 '"reason": "无配件"}'
             ),
             # resolve_approved_assets
             (
-                '{"approved_assets": {"characters": [{"type": "character", "name": "林冲", '
+                '{"approved_assets": {"characters": [{"asset_type": "character", "asset_name": "林冲", '
+                '"asset_tags": ["囚服"], '
                 '"matched": false, "matched_asset_id": null, "matched_asset_name": "", '
                 '"aliases": "林教头", "summary": "八十万禁军教头，武艺高强。", '
                 '"character_status": "被发配沧州途中，身着囚服，面带风霜。", '
-                '"variant_name": "囚服", '
                 '"variant_description": "身着囚服，保留八十万禁军教头的稳定体貌和身份识别特征。", '
-                '"reference_appearance_description": "官服参考图，头戴幞头，身穿深色官袍。", '
-                '"accessories": ""}], "assets": [], "props": []}, '
+                '"reference_appearance_description": "官服参考图，头戴幞头，身穿深色官袍。"}], "assets": [], "props": []}, '
                 '"added_assets": [], "reasoning": "无新增资产描述，沿用审核列表。"}'
             ),
             # generate_prompt
             (
-                '{"full_name": "林冲", '
+                '{"asset_type": "character", "asset_name": "林冲", "asset_tags": ["囚服"], '
                 '"target_appearance_description": "黑灰短发，眉眼锋利，短须明显，上身灰色囚衣，保持大圆头、圆鼓身体、短小四肢、简化五官、粗黑描边、平涂色块和圆润卡通比例。", '
                 '"think": "角色当前状态为囚服，默认变体为官服，需将官服改为囚服。", '
                 '"prompt": "黑灰短发，眉眼锋利，短须明显，上身灰色囚衣，保持大圆头、圆鼓身体、短小四肢、简化五官、粗黑描边、平涂色块和圆润卡通比例不变"}'

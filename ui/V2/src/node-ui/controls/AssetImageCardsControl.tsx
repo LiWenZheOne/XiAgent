@@ -24,8 +24,7 @@ interface AssetImageCard {
 
 interface CardEditState {
   name: string;
-  variantName: string;
-  accessories: string;
+  assetTags: string;
   prompt: string;
 }
 
@@ -89,6 +88,7 @@ export function AssetImageCardsControl({
   const [edits, setEdits] = useState<CardEditsState>(() => initialCardEdits(cards));
   const [uploading, setUploading] = useState<UploadState>({});
   const [generating, setGenerating] = useState<UploadState>({});
+  const [brokenImageUrls, setBrokenImageUrls] = useState<Record<string, string>>({});
   const [activeTab, setActiveTab] = useState<TabKey>("character");
   const [draggingKey, setDraggingKey] = useState("");
   const [error, setError] = useState("");
@@ -160,7 +160,7 @@ export function AssetImageCardsControl({
 
   function interactionPayload(
     decision: "finish" | "generate_missing",
-    targetAssetKey: string,
+    targetAssetName: string,
     imageState: ImageState,
     imageMetaState: ImageMetaState,
     matchState: MatchState,
@@ -174,13 +174,14 @@ export function AssetImageCardsControl({
           const edit = editState[card.assetKey] ?? cardEditFromCard(card);
           const imageUrl = (imageState[card.assetKey] || "").trim();
           if (!imageUrl) return null;
-          const payload: Record<string, string> = {
+          const payload: Record<string, unknown> = {
             asset_type: card.assetType,
-            asset_key: card.assetKey,
-            full_name: cardDisplayName(edit, tabKeyForAssetType(card.assetType)),
+            asset_name: edit.name.trim() || card.title,
             image_url: imageUrl,
             source: imageMetaState[card.assetKey]?.source || "manual_upload",
           };
+          const tags = assetTagsForEdit(edit);
+          if (tags.length) payload.asset_tags = tags;
           Object.assign(payload, imageMetaState[card.assetKey] ?? {});
           if (match?.asset_id) payload.asset_id = match.asset_id;
           return payload;
@@ -188,7 +189,7 @@ export function AssetImageCardsControl({
         .filter(Boolean),
     prompt_results: editedPromptResults(cards, editState, matchState),
     };
-    if (targetAssetKey) payload.target_asset_key = targetAssetKey;
+    if (targetAssetName) payload.target_asset_name = targetAssetName;
     return payload;
   }
 
@@ -349,6 +350,13 @@ export function AssetImageCardsControl({
       }
       setImages(nextImages);
       setImageMeta(nextImageMeta);
+      setBrokenImageUrls((current) => {
+        const next = { ...current };
+        for (const result of results) {
+          if (result.imageUrl) delete next[result.card.assetKey];
+        }
+        return next;
+      });
       await persistDraft(nextImages, nextImageMeta);
       setError(`已生成 ${results.length} 张资产图像。`);
     } catch (nextError) {
@@ -384,6 +392,11 @@ export function AssetImageCardsControl({
       const nextImageMeta = { ...imageMeta, [card.assetKey]: { source: "manual_upload", asset_id: uploaded.asset_id } };
       setImages(nextImages);
       setImageMeta(nextImageMeta);
+      setBrokenImageUrls((current) => {
+        const next = { ...current };
+        delete next[card.assetKey];
+        return next;
+      });
       await persistDraft(nextImages, nextImageMeta);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "图片上传失败。");
@@ -487,6 +500,7 @@ export function AssetImageCardsControl({
         draggingKey={draggingKey}
         group={selectedTab}
         images={images}
+        brokenImageUrls={brokenImageUrls}
         matches={matches}
         edits={edits}
         readonly={readonly}
@@ -498,6 +512,9 @@ export function AssetImageCardsControl({
           setEdits((current) => ({ ...current, [card.assetKey]: { ...(current[card.assetKey] ?? cardEditFromCard(card)), ...patch } }));
         }}
         onGenerate={(card) => void generateCards(card)}
+        onBrokenImage={(card, url) => {
+          setBrokenImageUrls((current) => ({ ...current, [card.assetKey]: url }));
+        }}
         onOpenAssetPicker={openAssetPicker}
         onUpload={uploadCardImage}
       />
@@ -542,7 +559,7 @@ export function AssetImageCardsControl({
                 <li key={assetName}>{assetName}</li>
               ))}
             </ul>
-            <p>请修改这张卡片的资产名称、变体或配件后再入库，或先处理资产库中的同名资产。</p>
+            <p>请修改这张卡片的资产名称或标签后再入库，或先处理资产库中的同名资产。</p>
             <div className="button-row end">
               <button className="primary-button" type="button" onClick={() => setAssetNameConflictDialog(null)}>
                 知道了
@@ -575,6 +592,7 @@ function AssetCardGroup({
   group,
   cards,
   images,
+  brokenImageUrls,
   matches,
   edits,
   readonly,
@@ -586,12 +604,14 @@ function AssetCardGroup({
   onDrop,
   onEdit,
   onGenerate,
+  onBrokenImage,
   onOpenAssetPicker,
   onDragState,
 }: {
   group: TabKey;
   cards: AssetImageCard[];
   images: ImageState;
+  brokenImageUrls: Record<string, string>;
   matches: MatchState;
   edits: CardEditsState;
   readonly: boolean;
@@ -603,6 +623,7 @@ function AssetCardGroup({
   onDrop: (card: AssetImageCard, event: DragEvent<HTMLElement>) => void;
   onEdit: (card: AssetImageCard, patch: Partial<CardEditState>) => void;
   onGenerate: (card: AssetImageCard) => void;
+  onBrokenImage: (card: AssetImageCard, url: string) => void;
   onOpenAssetPicker: (card: AssetImageCard) => void;
   onDragState: (assetKey: string) => void;
 }) {
@@ -626,12 +647,14 @@ function AssetCardGroup({
           const edit = edits[card.assetKey] ?? cardEditFromCard(card);
           const finalImageUrl = images[card.assetKey] ?? "";
           const imageUrl = finalImageUrl || match?.imageUrl || "";
+          const previewImageUrl = brokenImageUrls[card.assetKey] === imageUrl ? "" : imageUrl;
           const displayName = cardDisplayName(edit, group);
+          const matchDisplayName = assetDisplayName(match);
           const inputId = `asset-image-upload-${card.assetType}-${card.assetKey}`.replace(/[^\w-]/g, "_");
           const cardClass = [
             "asset-image-card",
             group === "scene" ? "scene-card" : "square-card",
-            imageUrl ? "ready" : "missing",
+            previewImageUrl ? "ready" : "missing",
             draggingKey === card.assetKey ? "dragging" : "",
           ].filter(Boolean).join(" ");
           return (
@@ -656,17 +679,25 @@ function AssetCardGroup({
               <header className="asset-image-card-title">
                 <div>
                   <strong>{displayName}</strong>
-                  <small>{match ? `关联：${match.name}` : "无资产关联"}</small>
+                  <small>{match ? `关联：${matchDisplayName}` : "无资产关联"}</small>
                 </div>
                 {!readonly ? (
                   <button className="secondary-button" disabled={busy || Boolean(generating[card.assetKey])} type="button" onClick={() => onGenerate(card)}>
                     {generating[card.assetKey] ? "生成中" : finalImageUrl ? "重新生成" : "生成"}
                   </button>
-                ) : <span>{imageUrl ? "已上传" : "未上传"}</span>}
+                ) : <span>{previewImageUrl ? "已上传" : "未上传"}</span>}
               </header>
               <label className="asset-image-preview" htmlFor={inputId} aria-label={`${card.title} 选择图像`}>
-                {imageUrl ? <img src={imageUrl} alt={`${card.title} 图像`} /> : <span>点击选择<br />拖拽上传</span>}
-                {imageUrl ? (
+                {previewImageUrl ? (
+                  <img
+                    src={previewImageUrl}
+                    alt={`${card.title} 图像`}
+                    onError={() => {
+                      onBrokenImage(card, previewImageUrl);
+                    }}
+                  />
+                ) : <span>点击选择<br />拖拽上传</span>}
+                {previewImageUrl ? (
                   <button
                     aria-label={`下载${displayName}图像`}
                     className="asset-image-download-button"
@@ -674,7 +705,7 @@ function AssetCardGroup({
                     onClick={(event) => {
                       event.preventDefault();
                       event.stopPropagation();
-                      downloadImage(imageUrl, displayName);
+                      downloadImage(previewImageUrl, displayName);
                     }}
                   >
                     下载
@@ -688,7 +719,7 @@ function AssetCardGroup({
                 <div className="asset-image-link-row">
                   <div>
                     <span>关联资产</span>
-                    <strong>{match ? match.name : "无资产关联"}</strong>
+                    <strong>{match ? matchDisplayName : "无资产关联"}</strong>
                   </div>
                   <button
                     className={match ? "asset-match-button matched" : "asset-match-button missing"}
@@ -701,16 +732,18 @@ function AssetCardGroup({
                 </div>
                 <div className="asset-image-edit-grid">
                   <label>
-                    <span>主体</span>
+                    <span>资产名称</span>
                     <input disabled={readonly || busy} value={edit.name} onChange={(event) => onEdit(card, { name: event.target.value })} />
                   </label>
                   <label>
-                    <span>{group === "character" ? "变体" : "类型"}</span>
-                    <input disabled={readonly || busy} value={edit.variantName} onChange={(event) => onEdit(card, { variantName: event.target.value })} />
-                  </label>
-                  <label>
-                    <span>配件</span>
-                    <input disabled={readonly || busy} value={edit.accessories} onChange={(event) => onEdit(card, { accessories: event.target.value })} />
+                    <span>标签</span>
+                    <input
+                      aria-label={`${card.title} 标签`}
+                      disabled={readonly || busy}
+                      placeholder={group === "character" ? "如：囚服、毡笠" : "可留空，多个标签用顿号分隔"}
+                      value={edit.assetTags}
+                      onChange={(event) => onEdit(card, { assetTags: event.target.value })}
+                    />
                   </label>
                 </div>
                 <div className="asset-image-prompt">
@@ -751,10 +784,10 @@ function buildAssetCards(source: Record<string, unknown> | null): AssetImageCard
   const completedImages = arrayOfRecords(source.asset_images);
   if (completedImages.length && !recordValue(source.approved_assets) && !arrayOfRecords(source.characters).length) {
     return completedImages.map((item, index) => {
-      const title = textValue(item.full_name) || textValue(item.name) || `资产 ${index + 1}`;
+      const title = textValue(item.asset_name) || textValue(item.name) || `资产 ${index + 1}`;
       return {
         assetType: textValue(item.asset_type) || "other",
-        assetKey: textValue(item.asset_key) || title,
+        assetKey: `${textValue(item.asset_type) || "asset"}:${title}:${stringList(item.asset_tags).join("|")}`,
         title,
         prompt: textValue(item.prompt),
       };
@@ -767,18 +800,18 @@ function buildAssetCards(source: Record<string, unknown> | null): AssetImageCard
   const accessories = mapByName(arrayOfRecords(source.accessory_results));
   const promptItems = arrayOfRecords(source.prompt_results);
   const cards = characters.map((character) => {
-    const name = textValue(character.full_name) || textValue(character.name) || "未命名角色";
+    const name = textValue(character.asset_name) || textValue(character.name) || "未命名角色";
     const enrichedItem = enriched.get(name);
     const variant = variants.get(name);
     const accessory = accessories.get(name);
     const prompt = findPromptForAsset(promptItems, name);
     return {
       assetType: "character",
-      assetKey: name,
+      assetKey: `character:${name}:${stringList(character.asset_tags).join("|")}`,
       title: name,
       matchedAsset: matchedAsset(character, enrichedItem),
-      variantName: textValue(variant?.matched_variant) || textValue(variant?.new_variant_name) || textValue(character.variant_name),
-      accessories: joinValue(accessory?.new_accessories) || joinValue(character.accessories),
+      variantName: stringList(variant?.asset_tags)[0] || stringList(character.asset_tags)[0] || "",
+      accessories: stringList(accessory?.asset_tags).slice(1).join("、") || stringList(character.asset_tags).slice(1).join("、"),
       prompt: textValue(prompt?.prompt),
       referenceImageRef: imageRefFromValue(prompt?.reference_image_ref),
       referenceSource: textValue(prompt?.reference_source) || textValue(character.reference_source),
@@ -795,15 +828,15 @@ function buildAssetCards(source: Record<string, unknown> | null): AssetImageCard
 
 function genericCards(value: unknown, assetType: string, prompts: Array<Record<string, unknown>>): AssetImageCard[] {
   return arrayOfRecords(value).filter(shouldShowInImageStep).map((item, index) => {
-    const title = textValue(item.name) || textValue(item.full_name) || `${groupLabels[assetType] ?? "资产"} ${index + 1}`;
+    const title = textValue(item.asset_name) || textValue(item.name) || `${groupLabels[assetType] ?? "资产"} ${index + 1}`;
     const prompt = findPromptForAsset(prompts, title);
     return {
       assetType,
-      assetKey: title,
+      assetKey: `${assetType}:${title}:${stringList(item.asset_tags).join("|")}`,
       title,
       matchedAsset: matchedAsset(item),
-      variantName: textValue(item.variant_name) || textValue(item.scene_type) || textValue(item.category),
-      accessories: joinValue(item.accessories) || textValue(item.related_character),
+      variantName: stringList(item.asset_tags)[0] || "",
+      accessories: stringList(item.asset_tags).slice(1).join("、"),
       prompt: textValue(prompt?.prompt) || textValue(item.prompt),
       referenceImageRef: imageRefFromValue(prompt?.reference_image_ref) || imageRefFromValue(item.reference_image_ref) || imageRefFromRecord(item),
       referenceSource: textValue(prompt?.reference_source) || textValue(item.reference_source),
@@ -827,7 +860,7 @@ function findPromptForAsset(prompts: Array<Record<string, unknown>>, name: strin
 }
 
 function promptKey(prompt: Record<string, unknown>): string {
-  return textValue(prompt.full_name) || textValue(prompt.name) || textValue(prompt.asset_key) || "";
+  return textValue(prompt.asset_name) || textValue(prompt.name) || "";
 }
 
 function buildTabs(cards: AssetImageCard[]): Array<{ key: TabKey; count: number }> {
@@ -860,7 +893,8 @@ function assetPromptText(
 function readonlyImages(value: unknown): ImageState {
   const images: ImageState = {};
   for (const item of arrayOfRecords(recordValue(value)?.asset_images)) {
-    const key = textValue(item.asset_key) || textValue(item.full_name) || textValue(item.name);
+    const name = textValue(item.asset_name) || textValue(item.name);
+    const key = name ? `${textValue(item.asset_type) || "asset"}:${name}:${stringList(item.asset_tags).join("|")}` : "";
     const url = textValue(item.image_url);
     if (key && url) images[key] = url;
   }
@@ -869,11 +903,13 @@ function readonlyImages(value: unknown): ImageState {
 
 function assetLibraryTags(card: AssetImageCard, edit: CardEditState, group: TabKey): string[] {
   const name = edit.name.trim() || card.title;
+  const tags = assetTagsForEdit(edit);
+  const [variantName = "", ...accessories] = tags;
   return assetTagNamesForCatalogAsset({
     group: group === "character" || group === "scene" || group === "prop" ? group : "asset",
     name,
-    variantName: normalizedVariantName(name, edit.variantName) || "默认",
-    accessories: edit.accessories.trim(),
+    variantName: group === "character" ? variantName || "默认" : variantName,
+    accessories: accessories.join("、"),
   });
 }
 
@@ -931,10 +967,6 @@ function initialMatches(cards: AssetImageCard[]): MatchState {
   const matches: MatchState = {};
   for (const card of cards) {
     if (card.matchedAsset) matches[card.assetKey] = card.matchedAsset;
-    else {
-      const referenceMatch = matchFromReferenceImage(card);
-      if (referenceMatch) matches[card.assetKey] = referenceMatch;
-    }
   }
   return matches;
 }
@@ -982,17 +1014,6 @@ async function loadDefaultReferenceMatches(
   return matches;
 }
 
-function matchFromReferenceImage(card: AssetImageCard): AssetMatch | undefined {
-  const imageRef = card.referenceImageRef;
-  if (!imageRef || imageRef.kind !== "asset" || !imageRef.asset_id) return undefined;
-  return {
-    asset_id: imageRef.asset_id,
-    name: card.referenceSource === "default_template" ? "默认参考资产" : imageRef.asset_id,
-    imageRef,
-    appearanceDescription: card.referenceAppearanceDescription,
-  };
-}
-
 function defaultReferenceTemplatesFromOptions(options: Record<string, unknown> | undefined): DefaultReferenceTemplates {
   const raw = recordValue(options?.default_reference_templates);
   if (!raw) return {};
@@ -1010,19 +1031,20 @@ function initialCardEdits(cards: AssetImageCard[]): CardEditsState {
 function cardEditFromCard(card: AssetImageCard): CardEditState {
   return {
     name: card.title,
-    variantName: card.variantName || "",
-    accessories: card.accessories || "",
+    assetTags: assetTagsTextFromCard(card),
     prompt: card.prompt || "",
   };
 }
 
 function cardDisplayName(edit: CardEditState, group: TabKey): string {
   const name = edit.name.trim();
+  const tags = assetTagsForEdit(edit);
+  const [variantName = "", ...accessories] = tags;
   return assetNameFromTagNames(assetTagNamesForCatalogAsset({
     group: group === "character" || group === "scene" || group === "prop" ? group : "asset",
     name,
-    variantName: normalizedVariantName(name, edit.variantName) || "默认",
-    accessories: edit.accessories.trim(),
+    variantName: group === "character" ? variantName || "默认" : variantName,
+    accessories: accessories.join("、"),
   })) || "未命名资产";
 }
 
@@ -1123,11 +1145,10 @@ function assetScopeLabel(scope: string): string {
 }
 
 function editedPromptResult(card: AssetImageCard, edit: CardEditState, match: AssetMatch | null): Record<string, unknown> {
-  const group = tabKeyForAssetType(card.assetType);
   const prompt: Record<string, unknown> = {
-    asset_key: card.assetKey,
     asset_type: card.assetType,
-    full_name: cardDisplayName(edit, group),
+    asset_name: edit.name.trim() || card.title,
+    asset_tags: assetTagsForEdit(edit),
     prompt: edit.prompt.trim(),
   };
   const referenceImageRef = match?.imageRef || card.referenceImageRef;
@@ -1135,10 +1156,33 @@ function editedPromptResult(card: AssetImageCard, edit: CardEditState, match: As
   if (!match?.imageRef && card.referenceSource) prompt.reference_source = card.referenceSource;
   const appearanceDescription = match?.appearanceDescription || card.referenceAppearanceDescription || "";
   if (appearanceDescription) prompt.reference_appearance_description = appearanceDescription;
-  if (edit.name.trim()) prompt.name = edit.name.trim();
-  if (edit.variantName.trim()) prompt.variant_name = edit.variantName.trim();
-  if (edit.accessories.trim()) prompt.accessories = edit.accessories.trim();
   return prompt;
+}
+
+function assetTagsForEdit(edit: CardEditState): string[] {
+  return edit.assetTags
+    .split(/[、,，]/)
+    .map((item) => item.trim())
+    .map((item) => normalizedVariantName(edit.name.trim(), item))
+    .filter((item, index, items) => Boolean(item) && items.indexOf(item) === index);
+}
+
+function assetTagsTextFromCard(card: AssetImageCard): string {
+  const tags = [card.variantName, card.accessories]
+    .flatMap((value) => String(value ?? "").split(/[、,，]/))
+    .map((item) => item.trim())
+    .filter((item, index, items) => Boolean(item) && items.indexOf(item) === index);
+  return tags.join("、");
+}
+
+function assetDisplayName(match: AssetMatch | null | undefined): string {
+  const name = match?.name.trim() ?? "";
+  if (name && !isInternalAssetId(name)) return name;
+  return "已关联资产";
+}
+
+function isInternalAssetId(value: string): boolean {
+  return /^asset[_-][a-zA-Z0-9_-]{8,}$/.test(value.trim());
 }
 
 function matchedAsset(...records: Array<Record<string, unknown> | undefined>): AssetMatch | undefined {
@@ -1165,7 +1209,7 @@ function matchedAsset(...records: Array<Record<string, unknown> | undefined>): A
 function mapByName(items: Array<Record<string, unknown>>): Map<string, Record<string, unknown>> {
   const mapped = new Map<string, Record<string, unknown>>();
   for (const item of items) {
-    const name = textValue(item.full_name) || textValue(item.name);
+    const name = textValue(item.asset_name) || textValue(item.name);
     if (name) mapped.set(name, item);
   }
   return mapped;
@@ -1181,6 +1225,10 @@ function recordValue(value: unknown): Record<string, unknown> | null {
 
 function textValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.map((item) => textValue(item)).filter((item): item is string => Boolean(item)) : [];
 }
 
 function joinValue(value: unknown): string | undefined {

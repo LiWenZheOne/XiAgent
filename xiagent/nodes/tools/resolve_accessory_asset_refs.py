@@ -5,6 +5,7 @@ from typing import Any
 
 from xiagent.core.errors import ValidationError
 from xiagent.nodes.base import BaseNode, NodeContext, NodeDescriptor, NodeResult
+from xiagent.nodes.tools.asset_identity import normalize_asset_record
 
 
 class ResolveAccessoryAssetRefsNode(BaseNode):
@@ -71,14 +72,20 @@ class ResolveAccessoryAssetRefsNode(BaseNode):
             name: _variant_items(character.get("existing_variants"))
             for character in characters
             if isinstance(character, Mapping)
-            for name in [_text(character.get("full_name")) or _text(character.get("name"))]
+            for name in [
+                _text(normalize_asset_record(character, default_asset_type="character").get("asset_name"))
+                or _text(character.get("name"))
+            ]
             if name
         }
         variant_result_by_name = {
             name: item
             for item in variant_results
             if isinstance(item, Mapping)
-            for name in [_text(item.get("full_name")) or _text(item.get("name"))]
+            for name in [
+                _text(normalize_asset_record(item, default_asset_type="character").get("asset_name"))
+                or _text(item.get("name"))
+            ]
             if name
         }
 
@@ -86,30 +93,30 @@ class ResolveAccessoryAssetRefsNode(BaseNode):
         for item in accessory_results:
             if not isinstance(item, Mapping):
                 continue
-            result = dict(item)
-            full_name = _text(result.get("full_name")) or ""
-            variants = variants_by_name.get(full_name, [])
-            variant_result = variant_result_by_name.get(full_name, {})
+            result = normalize_asset_record(item, default_asset_type="character")
+            asset_name = _text(result.get("asset_name")) or ""
+            variants = variants_by_name.get(asset_name, [])
+            variant_result = variant_result_by_name.get(asset_name, {})
             same_variant_assets = _same_variant_assets(variants, variant_result)
             fallback_asset = same_variant_assets[0] if same_variant_assets else None
 
             selected: list[dict[str, Any]] = []
-            existing_accessories = _string_list(result.get("existing_accessories"))
-            new_accessories = _string_list(result.get("new_accessories"))
-            for accessory in existing_accessories:
-                matched_asset = _find_accessory_asset(same_variant_assets, accessory)
+            existing_asset_tags = _string_list(result.get("existing_asset_tags"))
+            new_asset_tags = _string_list(result.get("new_asset_tags"))
+            for asset_tag in existing_asset_tags:
+                matched_asset = _find_tag_asset(same_variant_assets, asset_tag)
                 selected.append(
                     _selection(
-                        accessory=accessory,
+                        asset_tag=asset_tag,
                         matched=True,
                         asset=matched_asset or fallback_asset,
-                        source="matched_accessory" if matched_asset is not None else "first_variant_asset",
+                        source="matched_asset_tag" if matched_asset is not None else "first_variant_asset",
                     )
                 )
-            for accessory in new_accessories:
+            for asset_tag in new_asset_tags:
                 selected.append(
                     _selection(
-                        accessory=accessory,
+                        asset_tag=asset_tag,
                         matched=False,
                         asset=fallback_asset,
                         source="first_variant_asset",
@@ -132,58 +139,47 @@ def _same_variant_assets(
     variants: list[Mapping[str, Any]],
     variant_result: Mapping[str, Any],
 ) -> list[Mapping[str, Any]]:
-    matched_variant_id = _text(variant_result.get("matched_variant_id"))
-    matched_variant = _text(variant_result.get("matched_variant"))
-    if not matched_variant and matched_variant_id:
+    matched_asset_id = _text(variant_result.get("matched_asset_id"))
+    matched_asset_tags = _string_list(variant_result.get("asset_tags"))
+    matched_asset_tag = matched_asset_tags[0] if matched_asset_tags else ""
+    if not matched_asset_tag and matched_asset_id:
         for variant in variants:
-            if _text(variant.get("asset_id")) == matched_variant_id:
-                matched_variant = _text(variant.get("variant")) or _text(variant.get("name"))
+            if _text(variant.get("asset_id")) == matched_asset_id:
+                variant_tags = _asset_tags(variant)
+                matched_asset_tag = variant_tags[0] if variant_tags else _text(variant.get("name")) or ""
                 break
-    normalized_variant = _normalize(matched_variant)
-    if not normalized_variant:
+    normalized_asset_tag = _normalize(matched_asset_tag)
+    if not normalized_asset_tag:
         return variants
     return [
         variant
         for variant in variants
-        if _normalize(_text(variant.get("variant")) or _text(variant.get("name"))) == normalized_variant
+        if normalized_asset_tag in {_normalize(value) for value in _asset_tags(variant)}
     ]
 
 
-def _find_accessory_asset(variants: list[Mapping[str, Any]], accessory: str) -> Mapping[str, Any] | None:
-    normalized = _normalize(accessory)
+def _find_tag_asset(variants: list[Mapping[str, Any]], asset_tag: str) -> Mapping[str, Any] | None:
+    normalized = _normalize(asset_tag)
     for variant in variants:
-        if normalized in {_normalize(value) for value in _accessory_labels(variant)}:
+        if normalized in {_normalize(value) for value in _asset_tags(variant)}:
             return variant
     return None
 
 
-def _accessory_labels(variant: Mapping[str, Any]) -> list[str]:
-    labels: list[str] = []
-    tags = variant.get("tags")
-    if isinstance(tags, list):
-        labels.extend(tag for tag in tags[3:] if isinstance(tag, str) and tag.strip())
-    for key in ("accessory", "accessories", "name"):
-        value = variant.get(key)
-        if isinstance(value, str) and value.strip():
-            labels.append(value.strip())
-        elif isinstance(value, list):
-            labels.extend(item.strip() for item in value if isinstance(item, str) and item.strip())
-    return labels
-
-
 def _selection(
     *,
-    accessory: str,
+    asset_tag: str,
     matched: bool,
     asset: Mapping[str, Any] | None,
     source: str,
 ) -> dict[str, Any]:
     asset_id = _text(asset.get("asset_id")) if asset is not None else None
     return {
-        "accessory": accessory,
+        "asset_tag": asset_tag,
         "matched": matched,
         "asset_id": asset_id or "",
         "asset_name": (_text(asset.get("name")) if asset is not None else None) or "",
+        "asset_tags": _asset_tags(asset) if asset is not None else [],
         "asset_ref": {"kind": "asset", "asset_id": asset_id, "role": "reference"} if asset_id else None,
         "storage_uri": _variant_image_url(asset) if asset is not None else "",
         "appearance_description": _appearance_description(asset) if asset is not None else "",
@@ -206,6 +202,12 @@ def _variant_image_url(variant: Mapping[str, Any]) -> str:
         if isinstance(object_storage, Mapping):
             return _text(object_storage.get("public_url")) or ""
     return ""
+
+
+def _asset_tags(asset: Mapping[str, Any]) -> list[str]:
+    normalized = normalize_asset_record(asset, default_asset_type="character")
+    tags = normalized.get("asset_tags")
+    return [tag for tag in tags if isinstance(tag, str)] if isinstance(tags, list) else []
 
 
 def _appearance_description(variant: Mapping[str, Any]) -> str:

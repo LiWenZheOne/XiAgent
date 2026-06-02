@@ -13,6 +13,7 @@ from xiagent.nodes.ai.image_references import (
     resolve_image_refs,
 )
 from xiagent.nodes.base import BaseNode, NodeContext, NodeDescriptor, NodeResult
+from xiagent.nodes.tools.asset_identity import normalize_asset_record
 
 _OUTPUT_SCHEMA = {
     "type": "object",
@@ -153,12 +154,17 @@ class RunningHubImageToImageNodeV2(BaseNode):
                 "items": {
                     "type": "object",
                     "properties": {
-                        "full_name": {"type": "string", "minLength": 1},
+                        "asset_type": {"type": "string", "minLength": 1},
+                        "asset_name": {"type": "string", "minLength": 1},
+                        "asset_tags": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
                         "prompt": {"type": "string", "minLength": 1},
                         "reference_image_ref": image_ref_schema(),
                     },
-                    "required": ["full_name", "prompt", "reference_image_ref"],
-                    "additionalProperties": False,
+                    "required": ["asset_type", "asset_name", "prompt", "reference_image_ref"],
+                    "additionalProperties": True,
                 },
                 "minItems": 1,
             },
@@ -203,7 +209,9 @@ class RunningHubImageToImageNodeV2(BaseNode):
         metadata_base = self._metadata(inputs)
 
         async def generate_one(item: Mapping[str, Any]) -> dict[str, Any]:
-            full_name = _required_text(item, "full_name", "runninghub_full_name_required")
+            normalized_item = normalize_asset_record(item)
+            _required_text(normalized_item, "asset_type", "runninghub_asset_type_required")
+            _required_text(normalized_item, "asset_name", "runninghub_asset_name_required")
             prompt = _image_to_image_prompt(
                 _required_text(item, "prompt", "runninghub_prompt_required"),
                 inputs,
@@ -224,16 +232,16 @@ class RunningHubImageToImageNodeV2(BaseNode):
             )
 
             asset_result: dict[str, Any] = {
-                "full_name": full_name,
                 "image_url": response.text,
                 "source": "ai_generated",
             }
+            for key in ("asset_type", "asset_name", "asset_tags"):
+                value = normalized_item.get(key)
+                if value:
+                    asset_result[key] = value
             task_id = response.metadata.get("task_id")
             if isinstance(task_id, str):
                 asset_result["runninghub_task_id"] = task_id
-            variant = response.metadata.get("variant")
-            if isinstance(variant, str):
-                asset_result["variant"] = variant
             asset_id = response.metadata.get("asset_id")
             if isinstance(asset_id, str):
                 asset_result["asset_id"] = asset_id

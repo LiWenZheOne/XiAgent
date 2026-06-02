@@ -169,14 +169,15 @@ async def test_filter_assets_for_generation_keeps_explicit_reference_context() -
             "approved_assets": {
                 "characters": [
                     {
-                        "type": "character",
-                        "name": "鲁智深",
+                        "asset_type": "character",
+                        "asset_name": "鲁智深",
+                        "asset_tags": ["僧衣"],
                         "reference_image_ref": {"kind": "asset", "asset_id": "variant-ref", "role": "reference"},
                         "reference_appearance_description": "僧衣参考图外貌。",
                     }
                 ],
-                "assets": [{"type": "location", "name": "野猪林"}],
-                "props": [{"type": "prop", "name": "禅杖"}],
+                "assets": [{"asset_type": "location", "asset_name": "野猪林", "asset_tags": []}],
+                "props": [{"asset_type": "prop", "asset_name": "禅杖", "asset_tags": []}],
             },
         },
     )
@@ -187,7 +188,7 @@ async def test_filter_assets_for_generation_keeps_explicit_reference_context() -
         "asset_id": "variant-ref",
         "role": "reference",
     }
-    assert output["characters"][0]["reference_variant_description"] == "僧衣参考图外貌。"
+    assert output["characters"][0]["reference_appearance_description"] == "僧衣参考图外貌。"
     assert "reference_image_ref" not in output["assets"][0]
     assert "reference_source" not in output["assets"][0]
     assert "reference_image_ref" not in output["props"][0]
@@ -202,18 +203,19 @@ async def test_resolve_character_variant_refs_inherits_variant_facts_programmati
         {
             "characters": [
                 {
-                    "full_name": "林冲",
+                    "asset_type": "character",
+                    "asset_name": "林冲",
                     "existing_variants": [
                         {
                             "asset_id": "variant-default",
-                            "variant": "默认",
+                            "asset_tags": ["默认"],
                             "storage_uri": "https://cdn.test/default.png",
                             "appearance_description": "默认官服参考图外貌。",
                             "metadata": {"status": "八十万禁军教头，身着官服。"},
                         },
                         {
                             "asset_id": "variant-prisoner",
-                            "variant": "囚服",
+                            "asset_tags": ["囚服"],
                             "image_url": "https://cdn.test/prisoner.png",
                             "appearance_description": "囚服参考图外貌。",
                             "metadata": {"status": "刺配途中，身着囚服。"},
@@ -221,11 +223,12 @@ async def test_resolve_character_variant_refs_inherits_variant_facts_programmati
                     ],
                 },
                 {
-                    "full_name": "鲁智深",
+                    "asset_type": "character",
+                    "asset_name": "鲁智深",
                     "existing_variants": [
                         {
                             "asset_id": "variant-monk",
-                            "variant": "僧衣",
+                            "asset_tags": ["僧衣"],
                             "appearance_description": "僧衣参考图外貌。",
                         }
                     ],
@@ -233,25 +236,21 @@ async def test_resolve_character_variant_refs_inherits_variant_facts_programmati
             ],
             "variant_results": [
                 {
-                    "full_name": "林冲",
-                    "accessories": ["毡笠"],
-                    "matched_variant": "囚服",
-                    "matched_variant_id": None,
-                    "is_new_variant": False,
-                    "new_variant_name": "",
-                    "default_variant_status": "LLM 编造状态",
-                    "default_variant_storage_uri": "https://bad.test/fake.png",
-                    "default_variant_appearance_description": "LLM 编造默认图描述",
-                    "matched_variant_appearance_description": "LLM 编造匹配图描述",
+                    "asset_type": "character",
+                    "asset_name": "林冲",
+                    "asset_tags": ["囚服"],
+                    "matched_asset_id": "",
+                    "default_asset_status": "LLM 编造状态",
+                    "default_asset_storage_uri": "https://bad.test/fake.png",
+                    "default_asset_appearance_description": "LLM 编造默认图描述",
+                    "matched_asset_appearance_description": "LLM 编造匹配图描述",
                     "reason": "已有囚服",
                 },
                 {
-                    "full_name": "鲁智深",
-                    "accessories": [],
-                    "matched_variant": "僧衣",
-                    "matched_variant_id": None,
-                    "is_new_variant": False,
-                    "new_variant_name": "",
+                    "asset_type": "character",
+                    "asset_name": "鲁智深",
+                    "asset_tags": ["僧衣"],
+                    "matched_asset_id": "",
                     "reason": "已有僧衣",
                 },
             ],
@@ -259,17 +258,17 @@ async def test_resolve_character_variant_refs_inherits_variant_facts_programmati
     )
 
     resolved = result.output["results"][0]
-    assert resolved["matched_variant_id"] == "variant-prisoner"
-    assert resolved["default_variant_status"] == "八十万禁军教头，身着官服。"
-    assert resolved["default_variant_storage_uri"] == "https://cdn.test/default.png"
-    assert resolved["default_variant_appearance_description"] == "默认官服参考图外貌。"
-    assert resolved["matched_variant_appearance_description"] == "囚服参考图外貌。"
+    assert resolved["matched_asset_id"] == "variant-prisoner"
+    assert resolved["default_asset_status"] == "八十万禁军教头，身着官服。"
+    assert resolved["default_asset_storage_uri"] == "https://cdn.test/default.png"
+    assert resolved["default_asset_appearance_description"] == "默认官服参考图外貌。"
+    assert resolved["matched_asset_appearance_description"] == "囚服参考图外貌。"
     no_default = result.output["results"][1]
-    assert no_default["matched_variant_id"] == "variant-monk"
-    assert no_default["default_variant_status"] == ""
-    assert no_default["default_variant_storage_uri"] == ""
-    assert no_default["default_variant_appearance_description"] == ""
-    assert no_default["matched_variant_appearance_description"] == "僧衣参考图外貌。"
+    assert no_default["matched_asset_id"] == "variant-monk"
+    assert no_default["default_asset_status"] == ""
+    assert no_default["default_asset_storage_uri"] == ""
+    assert no_default["default_asset_appearance_description"] == "僧衣参考图外貌。"
+    assert no_default["matched_asset_appearance_description"] == "僧衣参考图外貌。"
 
 
 def test_resolve_segment_image_refs_descriptor() -> None:
@@ -327,8 +326,9 @@ async def test_prepare_storyboard_panel_cards_builds_cards() -> None:
                     "location": "野猪林",
                     "characters": [
                         {
-                            "full_name": "林冲",
-                            "variant": "囚服",
+                            "asset_type": "character",
+                            "asset_name": "林冲",
+                            "asset_tags": ["囚服"],
                             "image_ref": {"kind": "asset", "asset_id": "asset-linchong", "role": "reference"},
                         }
                     ],
@@ -345,13 +345,13 @@ async def test_prepare_storyboard_panel_cards_builds_cards() -> None:
     assert card["reference_images"] == [
         {
             "label": "林冲",
-            "variant": "囚服",
+            "asset_type": "character",
+            "asset_name": "林冲",
+            "asset_tags": ["囚服"],
             "image_ref": {"kind": "asset", "asset_id": "asset-linchong", "role": "reference"},
             "source": "asset",
         }
     ]
-    assert card["reference_assets"][0]["full_name"] == "林冲"
-    assert card["image_refs"] == [{"kind": "asset", "asset_id": "asset-linchong", "role": "reference"}]
     assert "林冲踏雪前行" in card["prompt"]
     assert "出场角色：林冲（囚服）" in card["prompt"]
 
@@ -364,12 +364,14 @@ async def test_resolve_accessory_asset_refs_uses_match_or_first_variant_asset() 
         {
             "characters": [
                 {
-                    "full_name": "林冲",
+                    "asset_type": "character",
+                    "asset_name": "林冲",
+                    "asset_tags": ["囚服"],
                     "existing_variants": [
                         {
                             "asset_id": "variant-prisoner-base",
                             "name": "林冲_囚服",
-                            "variant": "囚服",
+                            "asset_tags": ["囚服"],
                             "storage_uri": "https://cdn.test/prisoner-base.png",
                             "appearance_description": "囚服基础参考图。",
                             "tags": ["角色", "林冲", "囚服"],
@@ -377,7 +379,7 @@ async def test_resolve_accessory_asset_refs_uses_match_or_first_variant_asset() 
                         {
                             "asset_id": "variant-prisoner-hat",
                             "name": "林冲_囚服_毡笠",
-                            "variant": "囚服",
+                            "asset_tags": ["囚服", "毡笠"],
                             "storage_uri": "https://cdn.test/prisoner-hat.png",
                             "appearance_description": "囚服加毡笠参考图。",
                             "tags": ["角色", "林冲", "囚服", "毡笠"],
@@ -387,17 +389,20 @@ async def test_resolve_accessory_asset_refs_uses_match_or_first_variant_asset() 
             ],
             "variant_results": [
                 {
-                    "full_name": "林冲",
-                    "matched_variant": "囚服",
-                    "matched_variant_id": "variant-prisoner-base",
+                    "asset_type": "character",
+                    "asset_name": "林冲",
+                    "asset_tags": ["囚服"],
+                    "matched_asset_id": "variant-prisoner-base",
                 }
             ],
             "accessory_results": [
                 {
-                    "full_name": "林冲",
-                    "existing_accessories": ["毡笠"],
-                    "new_accessories": ["披风"],
-                    "has_new_accessories": True,
+                    "asset_type": "character",
+                    "asset_name": "林冲",
+                    "asset_tags": ["囚服", "毡笠", "披风"],
+                    "existing_asset_tags": ["毡笠"],
+                    "new_asset_tags": ["披风"],
+                    "has_new_asset_tags": True,
                     "reason": "毡笠已存在，披风未命中。",
                 }
             ],
@@ -407,20 +412,22 @@ async def test_resolve_accessory_asset_refs_uses_match_or_first_variant_asset() 
     selected = result.output["results"][0]["selected_accessory_assets"]
     assert selected == [
         {
-            "accessory": "毡笠",
+            "asset_tag": "毡笠",
             "matched": True,
             "asset_id": "variant-prisoner-hat",
             "asset_name": "林冲_囚服_毡笠",
+            "asset_tags": ["囚服", "毡笠"],
             "asset_ref": {"kind": "asset", "asset_id": "variant-prisoner-hat", "role": "reference"},
             "storage_uri": "https://cdn.test/prisoner-hat.png",
             "appearance_description": "囚服加毡笠参考图。",
-            "source": "matched_accessory",
+            "source": "matched_asset_tag",
         },
         {
-            "accessory": "披风",
+            "asset_tag": "披风",
             "matched": False,
             "asset_id": "variant-prisoner-base",
             "asset_name": "林冲_囚服",
+            "asset_tags": ["囚服"],
             "asset_ref": {"kind": "asset", "asset_id": "variant-prisoner-base", "role": "reference"},
             "storage_uri": "https://cdn.test/prisoner-base.png",
             "appearance_description": "囚服基础参考图。",
@@ -488,8 +495,8 @@ async def test_episode_metadata_nodes_roundtrip_payload() -> None:
             "episode_name": "23、私放晁天王",
             "episode_summary": "晁盖义释刘唐，宋江暗通消息。",
             "source_script": "宋江见了晁盖。",
-            "asset_catalog": {"characters": [{"name": "宋江"}], "assets": [], "props": []},
-            "asset_images": [{"full_name": "宋江", "asset_id": "asset-songjiang"}],
+            "asset_catalog": {"characters": [{"asset_type": "character", "asset_name": "宋江"}], "assets": [], "props": []},
+            "asset_images": [{"asset_type": "character", "asset_name": "宋江", "asset_id": "asset-songjiang"}],
             "prompt_results": [],
         },
     )
@@ -502,8 +509,10 @@ async def test_episode_metadata_nodes_roundtrip_payload() -> None:
     assert "tags" not in service.created["asset-episode"].metadata
     assert loaded.output["episode_name"] == "23、私放晁天王"
     assert loaded.output["source_script"] == "宋江见了晁盖。"
-    assert result.output["asset_images"] == [{"full_name": "宋江", "asset_id": "asset-songjiang"}]
-    assert loaded.output["asset_catalog"]["approved_assets"]["characters"][0]["name"] == "宋江"
+    assert result.output["asset_images"] == [
+        {"asset_type": "character", "asset_name": "宋江", "asset_id": "asset-songjiang"}
+    ]
+    assert loaded.output["asset_catalog"]["approved_assets"]["characters"][0]["asset_name"] == "宋江"
     assert loaded.asset_refs[0].asset_id == "asset-episode"
 
 
@@ -515,8 +524,8 @@ async def test_complete_asset_images_prepares_only_missing_prompts() -> None:
         {
             "decision": "generate_missing",
             "prompt_results": [
-                {"full_name": "林冲", "prompt": "生成林冲", "reference_image_ref": {"kind": "asset", "asset_id": "template", "role": "reference"}},
-                {"full_name": "鲁智深", "prompt": "生成鲁智深", "reference_image_ref": {"kind": "asset", "asset_id": "template", "role": "reference"}},
+                {"asset_type": "character", "asset_name": "林冲", "prompt": "生成林冲", "reference_image_ref": {"kind": "asset", "asset_id": "template", "role": "reference"}},
+                {"asset_type": "character", "asset_name": "鲁智深", "prompt": "生成鲁智深", "reference_image_ref": {"kind": "asset", "asset_id": "template", "role": "reference"}},
             ],
             "manual_images": ["https://cdn.test/linchong.png"],
         },
@@ -526,17 +535,18 @@ async def test_complete_asset_images_prepares_only_missing_prompts() -> None:
     assert result.output["missing_count"] == 1
     assert result.output["asset_images"] == [
         {
-            "full_name": "林冲",
+            "asset_type": "character",
+            "asset_name": "林冲",
             "image_url": "https://cdn.test/linchong.png",
             "source": "manual_upload",
         }
     ]
     assert result.output["missing_prompt_results"] == [
-        {"full_name": "鲁智深", "prompt": "生成鲁智深", "reference_image_ref": {"kind": "asset", "asset_id": "template", "role": "reference"}}
+        {"asset_type": "character", "asset_name": "鲁智深", "prompt": "生成鲁智深", "reference_image_ref": {"kind": "asset", "asset_id": "template", "role": "reference"}}
     ]
 
 
-async def test_complete_asset_images_matches_uploaded_cards_by_asset_key() -> None:
+async def test_complete_asset_images_matches_uploaded_cards_by_asset_identity() -> None:
     node = CompleteAssetImagesNode()
 
     result = await node.run(
@@ -544,14 +554,13 @@ async def test_complete_asset_images_matches_uploaded_cards_by_asset_key() -> No
         {
             "decision": "generate_missing",
             "prompt_results": [
-                {"full_name": "林冲", "prompt": "生成林冲", "reference_image_ref": {"kind": "asset", "asset_id": "template", "role": "reference"}},
-                {"full_name": "鲁智深", "prompt": "生成鲁智深", "reference_image_ref": {"kind": "asset", "asset_id": "template", "role": "reference"}},
+                {"asset_type": "character", "asset_name": "林冲", "prompt": "生成林冲", "reference_image_ref": {"kind": "asset", "asset_id": "template", "role": "reference"}},
+                {"asset_type": "character", "asset_name": "鲁智深", "prompt": "生成鲁智深", "reference_image_ref": {"kind": "asset", "asset_id": "template", "role": "reference"}},
             ],
             "manual_images": [
                 {
-                    "asset_type": "character",
-                    "asset_key": "鲁智深",
-                    "full_name": "鲁智深",
+                        "asset_type": "character",
+                        "asset_name": "鲁智深",
                     "image_url": "https://cdn.test/luzhishen.png",
                     "source": "manual_upload",
                 }
@@ -562,11 +571,11 @@ async def test_complete_asset_images_matches_uploaded_cards_by_asset_key() -> No
     assert result.output["next_action"] == "generate_missing"
     assert result.output["missing_count"] == 1
     assert result.output["missing_prompt_results"] == [
-        {"full_name": "林冲", "prompt": "生成林冲", "reference_image_ref": {"kind": "asset", "asset_id": "template", "role": "reference"}}
+        {"asset_type": "character", "asset_name": "林冲", "prompt": "生成林冲", "reference_image_ref": {"kind": "asset", "asset_id": "template", "role": "reference"}}
     ]
 
 
-async def test_complete_asset_images_matches_prefixed_asset_key_by_full_name() -> None:
+async def test_complete_asset_images_matches_uploaded_cards_by_prop_identity() -> None:
     node = CompleteAssetImagesNode()
 
     result = await node.run(
@@ -574,13 +583,12 @@ async def test_complete_asset_images_matches_prefixed_asset_key_by_full_name() -
         {
             "decision": "generate_missing",
             "prompt_results": [
-                {"full_name": "花枪", "prompt": "生成花枪", "reference_image_ref": {"kind": "asset", "asset_id": "prop-ref", "role": "reference"}},
+                {"asset_type": "prop", "asset_name": "花枪", "prompt": "生成花枪", "reference_image_ref": {"kind": "asset", "asset_id": "prop-ref", "role": "reference"}},
             ],
             "manual_images": [
                 {
                     "asset_type": "prop",
-                    "asset_key": "prop:花枪",
-                    "full_name": "花枪",
+                    "asset_name": "花枪",
                     "image_url": "https://cdn.test/huagang.png",
                     "source": "manual_upload",
                 }
@@ -600,17 +608,16 @@ async def test_complete_asset_images_targets_single_card_for_regeneration() -> N
         None,
         {
             "decision": "generate_missing",
-            "target_asset_key": "鲁智深",
+            "target_asset_name": "鲁智深",
             "prompt_results": [
-                {"full_name": "林冲", "prompt": "生成林冲", "reference_image_ref": {"kind": "asset", "asset_id": "template", "role": "reference"}},
-                {"full_name": "鲁智深_僧衣", "prompt": "生成鲁智深僧衣", "reference_image_ref": {"kind": "asset", "asset_id": "template", "role": "reference"}},
-                {"full_name": "水火棍", "prompt": "生成水火棍", "reference_image_ref": {"kind": "asset", "asset_id": "template", "role": "reference"}},
+                {"asset_type": "character", "asset_name": "林冲", "prompt": "生成林冲", "reference_image_ref": {"kind": "asset", "asset_id": "template", "role": "reference"}},
+                {"asset_type": "character", "asset_name": "鲁智深", "asset_tags": ["僧衣"], "prompt": "生成鲁智深僧衣", "reference_image_ref": {"kind": "asset", "asset_id": "template", "role": "reference"}},
+                {"asset_type": "prop", "asset_name": "水火棍", "prompt": "生成水火棍", "reference_image_ref": {"kind": "asset", "asset_id": "template", "role": "reference"}},
             ],
             "manual_images": [
                 {
-                    "asset_type": "character",
-                    "asset_key": "林冲",
-                    "full_name": "林冲",
+                        "asset_type": "character",
+                        "asset_name": "林冲",
                     "image_url": "https://cdn.test/linchong.png",
                     "source": "manual_upload",
                 }
@@ -621,7 +628,7 @@ async def test_complete_asset_images_targets_single_card_for_regeneration() -> N
     assert result.output["next_action"] == "generate_missing"
     assert result.output["missing_count"] == 1
     assert result.output["missing_prompt_results"] == [
-        {"full_name": "鲁智深_僧衣", "prompt": "生成鲁智深僧衣", "reference_image_ref": {"kind": "asset", "asset_id": "template", "role": "reference"}}
+        {"asset_type": "character", "asset_name": "鲁智深", "asset_tags": ["僧衣"], "prompt": "生成鲁智深僧衣", "reference_image_ref": {"kind": "asset", "asset_id": "template", "role": "reference"}}
     ]
 
 
@@ -631,7 +638,7 @@ async def test_enrich_characters_carries_matched_asset_ref() -> None:
     result = await node.run(
         None,
         {
-            "characters": [{"full_name": "花枪", "description": "林冲使用的长枪"}],
+            "characters": [{"asset_type": "prop", "asset_name": "花枪", "description": "林冲使用的长枪"}],
             "matched_by_name": [
                 {
                     "asset_id": "asset_prop_1",
@@ -654,6 +661,115 @@ async def test_enrich_characters_carries_matched_asset_ref() -> None:
     assert result.output["characters"][0]["reference_appearance_description"] == "一杆银亮花枪，红缨醒目，枪身细长。"
 
 
+async def test_enrich_characters_matches_existing_asset_by_identity_name() -> None:
+    node = EnrichCharactersNode()
+
+    result = await node.run(
+        None,
+        {
+            "characters": [
+                {
+                    "asset_type": "character",
+                    "asset_name": "众公差",
+                    "asset_tags": ["公差皂衣"],
+                    "variant_description": "穿皂衣的押解公差。",
+                }
+            ],
+            "matched_by_name": [],
+            "existing_assets": [
+                {
+                    "asset_id": "asset_court_runner",
+                    "name": "角色_众公差_公差皂衣",
+                    "metadata": {
+                        "public_url": "https://cdn.test/court-runner.png",
+                        "appearance_description": "一名穿皂衣、戴公差帽的押解公差。",
+                    },
+                }
+            ],
+        },
+    )
+
+    character = result.output["characters"][0]
+    assert character["matched"] is True
+    assert character["matched_asset_id"] == "asset_court_runner"
+    assert character["matched_asset_name"] == "角色_众公差_公差皂衣"
+    assert character["matched_asset_ref"] == {
+        "kind": "asset",
+        "asset_id": "asset_court_runner",
+        "role": "reference",
+    }
+    assert character["reference_appearance_description"] == "一名穿皂衣、戴公差帽的押解公差。"
+
+
+async def test_enrich_characters_matches_scene_name_with_existing_scene_asset() -> None:
+    node = EnrichCharactersNode()
+
+    result = await node.run(
+        None,
+        {
+            "characters": [
+                {
+                    "name": "山神庙外",
+                    "description": "风雪夜里的破败庙外空地。",
+                    "time_of_day": "夜晚",
+                    "location_type": "户外",
+                }
+            ],
+            "matched_by_name": [],
+            "existing_assets": [
+                {
+                    "asset_id": "asset_scene_temple",
+                    "name": "地点_山神庙外",
+                    "metadata": {
+                        "public_url": "https://cdn.test/temple-yard.png",
+                        "appearance_description": "风雪夜色中的山神庙外景。",
+                    },
+                }
+            ],
+        },
+    )
+
+    scene = result.output["characters"][0]
+    assert scene["asset_type"] == "scene"
+    assert scene["asset_name"] == "山神庙外"
+    assert scene["matched"] is True
+    assert scene["matched_asset_id"] == "asset_scene_temple"
+    assert scene["matched_asset_name"] == "地点_山神庙外"
+
+
+async def test_enrich_characters_matches_prop_identity_with_existing_prop_asset() -> None:
+    node = EnrichCharactersNode()
+
+    result = await node.run(
+        None,
+        {
+            "characters": [
+                {
+                    "asset_type": "prop",
+                    "asset_name": "花枪",
+                    "description": "红缨长枪。",
+                    "category": "武器",
+                }
+            ],
+            "matched_by_name": [],
+            "existing_assets": [
+                {
+                    "asset_id": "asset_prop_spear",
+                    "name": "道具_花枪",
+                    "metadata": {"public_url": "https://cdn.test/spear.png"},
+                }
+            ],
+        },
+    )
+
+    prop = result.output["characters"][0]
+    assert prop["asset_type"] == "prop"
+    assert prop["asset_name"] == "花枪"
+    assert prop["matched"] is True
+    assert prop["matched_asset_id"] == "asset_prop_spear"
+    assert prop["matched_asset_name"] == "道具_花枪"
+
+
 async def test_complete_asset_images_merges_manual_and_generated_images() -> None:
     node = CompleteAssetImagesNode()
 
@@ -662,10 +778,10 @@ async def test_complete_asset_images_merges_manual_and_generated_images() -> Non
         {
             "decision": "finish",
             "manual_images": [
-                {"full_name": "林冲", "image_url": "https://cdn.test/linchong.png", "source": "manual_upload"}
+                {"asset_type": "character", "asset_name": "林冲", "image_url": "https://cdn.test/linchong.png", "source": "manual_upload"}
             ],
             "auto_images": [
-                {"full_name": "鲁智深", "image_url": "https://cdn.test/luzhishen.png", "source": "ai_generated"}
+                {"asset_type": "character", "asset_name": "鲁智深", "image_url": "https://cdn.test/luzhishen.png", "source": "ai_generated"}
             ],
         },
     )
@@ -673,8 +789,8 @@ async def test_complete_asset_images_merges_manual_and_generated_images() -> Non
     assert result.output["next_action"] == "finish"
     assert result.output["missing_count"] == 0
     assert result.output["asset_images"] == [
-        {"full_name": "林冲", "image_url": "https://cdn.test/linchong.png", "source": "manual_upload"},
-        {"full_name": "鲁智深", "image_url": "https://cdn.test/luzhishen.png", "source": "ai_generated"},
+        {"asset_type": "character", "asset_name": "林冲", "image_url": "https://cdn.test/linchong.png", "source": "manual_upload"},
+        {"asset_type": "character", "asset_name": "鲁智深", "image_url": "https://cdn.test/luzhishen.png", "source": "ai_generated"},
     ]
 
 

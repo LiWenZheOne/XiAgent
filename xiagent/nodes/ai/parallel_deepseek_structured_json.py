@@ -282,6 +282,4 @@ def _without_passthrough_fields(
 def _inherited_field_value(source: dict[str, Any], field: str) -> Any:
     if field in source:
         return source[field]
-    if field == "full_name" and "name" in source:
-        return source["name"]
     return None

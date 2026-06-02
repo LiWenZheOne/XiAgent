@@ -37,11 +37,11 @@ class ExtractPanelImageUrlsNode(BaseNode):
                                     "items": {
                                         "type": "object",
                                         "properties": {
-                                            "full_name": {"type": "string"},
+                                            "asset_name": {"type": "string"},
+                                            "asset_tags": {"type": "array", "items": {"type": "string"}},
                                             "image_url": {"type": "string"},
-                                            "variant": {"type": "string"},
                                         },
-                                        "required": ["full_name", "image_url"],
+                                        "required": ["asset_name", "image_url"],
                                         "additionalProperties": False,
                                     },
                                 },
