@@ -144,6 +144,7 @@ def _resolved_asset_schema() -> dict[str, Any]:
             "asset_type": {"type": "string", "minLength": 1},
             "asset_name": {"type": "string", "minLength": 1},
             "asset_tags": {"type": "array", "items": {"type": "string"}},
+            "description": {"type": "string"},
             "image_ref": _image_ref_schema(),
             "image_url": {"type": "string"},
         },
@@ -225,6 +226,9 @@ def _resolve_named_asset(
     asset_tags = _string_list(normalized.get("asset_tags"))
     if asset_tags:
         result["asset_tags"] = asset_tags
+    description = _text(normalized.get("description"))
+    if asset_type == "scene" and description:
+        result["description"] = description
     image_url = _image_url_from_item(catalog_item)
     if image_url:
         result["image_url"] = image_url

@@ -43,7 +43,11 @@ workflow:
         name: P3 分镜生成
         description: 生成分镜描述，并在分镜汇总中审核提示词、参考图和目标分镜图像。
         nodes:
-          - describe_panels
+          - analyze_scene_layout
+          - plan_storyboard_panels
+          - review_and_refine_storyboard_plan
+          - convert_storyboard_plan_to_image_prompt
+          - review_and_refine_image_prompt
           - merge_segment_descriptions
           - review_storyboard_image
     defaults:
@@ -209,7 +213,7 @@ nodes:
               panel_count_max:
                 type: integer
                 minimum: 1
-            additionalProperties: false
+            additionalProperties: true
       additionalProperties: false
 
   - id: prepare_storyboard_asset_index
@@ -441,7 +445,7 @@ nodes:
                     image_url:
                       type: string
                   additionalProperties: false
-            additionalProperties: false
+            additionalProperties: true
       additionalProperties: false
 
   - id: resolve_segment_image_refs
@@ -467,6 +471,39 @@ nodes:
                 minimum: 0
               location:
                 type: string
+              location_asset:
+                type: object
+                required: ["asset_type", "asset_name", "image_ref"]
+                properties:
+                  asset_type:
+                    type: string
+                    minLength: 1
+                  asset_name:
+                    type: string
+                    minLength: 1
+                  asset_tags:
+                    type: array
+                    items:
+                      type: string
+                  image_ref:
+                    type: object
+                    required: ["kind"]
+                    properties:
+                      kind:
+                        type: string
+                        enum: ["asset", "data_uri"]
+                      asset_id:
+                        type: string
+                        minLength: 1
+                      data:
+                        type: string
+                        minLength: 1
+                      role:
+                        type: string
+                    additionalProperties: false
+                  image_url:
+                    type: string
+                additionalProperties: false
               time:
                 type: string
               characters:
@@ -514,7 +551,42 @@ nodes:
                 items:
                   type: string
                   minLength: 1
-            additionalProperties: false
+              prop_assets:
+                type: array
+                items:
+                  type: object
+                  required: ["asset_type", "asset_name", "image_ref"]
+                  properties:
+                    asset_type:
+                      type: string
+                      minLength: 1
+                    asset_name:
+                      type: string
+                      minLength: 1
+                    asset_tags:
+                      type: array
+                      items:
+                        type: string
+                    image_ref:
+                      type: object
+                      required: ["kind"]
+                      properties:
+                        kind:
+                          type: string
+                          enum: ["asset", "data_uri"]
+                        asset_id:
+                          type: string
+                          minLength: 1
+                        data:
+                          type: string
+                          minLength: 1
+                        role:
+                          type: string
+                      additionalProperties: false
+                    image_url:
+                      type: string
+                  additionalProperties: false
+            additionalProperties: true
       additionalProperties: false
 
   - id: prepare_segment_storyboard_inputs
@@ -523,6 +595,8 @@ nodes:
     inputs:
       source_script:
         from: "$nodes.select_episode_metadata.output.source_script"
+      world_background:
+        from: "$nodes.select_episode_metadata.output.background"
       segments:
         from: "$nodes.split_script.output.segments"
       segment_assignments:
@@ -543,6 +617,7 @@ nodes:
               - panel_count
               - present_characters
               - location
+              - scene_description
               - key_props
               - segment_assignment
             properties:
@@ -562,6 +637,8 @@ nodes:
                   minLength: 1
               location:
                 type: string
+              scene_description:
+                type: string
               key_props:
                 type: array
                 items:
@@ -570,14 +647,16 @@ nodes:
               segment_assignment:
                 type: object
                 additionalProperties: true
-            additionalProperties: false
+            additionalProperties: true
         shared_context:
           type: object
-          required: ["full_script", "prompt_rules"]
+          required: ["full_script", "world_background", "prompt_rules"]
           properties:
             full_script:
               type: string
               minLength: 1
+            world_background:
+              type: string
             storyboard_options:
               type: object
               properties:
@@ -602,25 +681,26 @@ nodes:
           additionalProperties: false
       additionalProperties: false
 
-  - id: describe_panels
+  - id: analyze_scene_layout
     ref: ai.parallel_deepseek_structured_json.v1
-    name: 描述分镜画面
+    name: 分析场景布局
     inputs:
       system:
         value: |
-          仅返回合法 JSON。你是一位专业的分镜脚本师。每次只为当前段落输出一段完整、详细、自然的漫画分镜描述。
-          必须参考完整剧本理解剧情连续性，但描述内容只能依据当前段落、建议分格数、在场角色、地点和关键道具生成，不得扩写成其他段落剧情。
-          描述分镜画面时，只写分段内容、在场角色、地点、道具和每个分格画面中实际出现的事物；不得包含画风、风格关键词、图像生成技术参数、模型参数、质量词或生成指令。
-          画面中只能出现本段在场角色，不得描写或提及不在场角色；如果出现复数次要角色，必须先确定数量并编号，再分别描述动作。
+          仅返回合法 JSON。你是场景调度分析师。每次只分析当前段落的实际空间布局，不做分格计划，不写画面提示词。
+          必须根据原作世界观、完整剧本和当前段落对应情景判断空间关系；不得扩写其他段落剧情，不得加入画风、质量词、模型参数或参考图规则。
       items:
         from: "$nodes.prepare_segment_storyboard_inputs.output.items"
       shared_context:
         from: "$nodes.prepare_segment_storyboard_inputs.output.shared_context"
       prompt_template:
         value: |
-          你是一位专业的分镜脚本师，请基于以下输入为我设计漫画的分镜描述。
+          请分析当前段落的实际场景布局。
 
           ## 输入
+          原作/世界观背景：
+          {world_background}
+
           完整剧本（仅用于理解剧情连续性，不得扩写当前段落之外的剧情）：
           {full_script}
 
@@ -629,69 +709,49 @@ nodes:
           建议分格数：{panel_count}
           本段在场角色：{present_characters}
           地点：{location}
+          场景资产描述：{scene_description}
           关键道具：{key_props}
 
-          ## 要求
-          - 只生成分镜描述，不要生成图像，描述时从宏观到微观，确保画面的整体性及合理性。
-          - 漫画为一页，可以有多个分格；每个分格大小不要一样，不要平均，要富有设计感。
-          - 根据建议分格数设计分格；description 必须先说明一共有几个分格和整体布局，再生成完整、流畅、统一的详细分镜画面描述。
-          - 描述中不需要包含对话，不包含角色服装和外貌描写。
-          - 不要有任何腿部、脚部、鞋履相关描述，并注意标注角色朝向，例如面对镜头、背对镜头或侧对镜头。
-          - 画面中只能出现本段在场角色，不得描写或提及不在场角色。
-          - 如果出现复数形式的次要角色，请先确定次要角色数量，并给每个次要角色编号命名，每个次要角色分别描述动作。
-          - 严格按建议分格数设计分格；如果建议分格数为 1，只能写“单格整页”或“单个大分格”，不得写“跨页式分格”。
-          - 每个分格必须先确定镜头位置、视线方向和空间关系，再描述前景、中景、背景；前景遮挡、人物站位、光线落点和视觉重心必须互相兼容，不能出现镜头角度与画面组织互相矛盾的描述。
-          - 不得用“刚说出”“似乎刚陈述”“仿佛回应”等不可见的对话状态代替画面动作；只能描述当前画面中可见的姿态、视线、动作、物件和空间关系。
-          - 地点名称中如果包含角色名，例如“某某庄院”“某某宅”“某某村”，应整体视为地点；不得把地点名中的角色名当作入画角色来描写动作或情绪。
+          若场景资产描述不为空，必须优先吸收其中的稳定空间结构、功能区域、陈设和布局信息，用它约束 scene_layout；如果当前段落的明确剧情动作与场景资产描述冲突，以当前段落为准，但不得无故改写或忽略资产描述中的稳定场景设定。
+
+          ## 布局提问链
+          1. 当前地点的空间应该承担什么叙事作用：交代环境、压迫人物、制造遮挡、引导移动，还是强化冲突？前景、中景、背景分别应保留哪些可见区域，才能让观众一眼读懂场面关系？
+          2. 入口、出口、墙面、门窗、道路、水面、林木、建筑、遮挡物等空间边界在哪里？这些边界怎样限制角色行动、视线和镜头方向，避免后续分格出现空间跳变？
+          3. 在场角色分别位于空间中的哪一侧、哪个远近层级、朝向哪里、可能沿什么路径移动？这些站位怎样服务人物关系、行动压力和阅读方向？
+          4. 关键道具位于哪里？它在本段中是动作支点、视线焦点、遮挡物、危险来源，还是身份信息？如果道具不应成为焦点，应如何放置以免抢走主体？
+          5. 光源来自哪里？亮区和暗区分别在强调什么：主体、出口、危险、孤立感，还是情绪转折？光线是否能稳定支撑后续分格的明暗连续性？
+          6. 哪些空间约束必须保持一致，才能让后续分格中的人物方位、道具位置、行动路径、遮挡关系和光线方向不互相矛盾？
           {material_rule}
           {enrich_rule}
 
-          ## 核心原则
-          ### 先读情绪，再定镜头
-          设计每个镜头前，请依据水浒传对应章节的剧情，判断这场戏的核心情绪和情景，然后选择最能放大该情绪的镜头语言。一定要标注机位、角度、景别，特别强调镜头角度，多使用仰视、俯视、大透视等冲击力较强的镜头，并利用前后景突出透视。
+          输出一个 JSON 对象，只返回本步骤生成的字段：
+          - scene_layout：包含 location_summary、spatial_zones、entrances_exits、character_positions、prop_positions、foreground_options、midground_options、background_options、light_sources、movement_paths、layout_constraints
 
-          ### 禁止默认构图
-          不得无理由使用正中平视、角色左右对称等缺乏设计感的构图。每个镜头都必须有明确的视觉意图。不要在描述中写预示等未发生的事。
+          目标 JSON 示例：
+          {
+            "scene_layout": {
+              "location_summary": "当前段落所在空间的简洁说明",
+              "spatial_zones": ["前景区域", "中景区域", "背景区域"],
+              "entrances_exits": ["主要入口或出口"],
+              "character_positions": {"角色名": "角色所在区域、远近层级和朝向"},
+              "prop_positions": {"道具名": "道具相对角色和空间边界的位置"},
+              "foreground_options": ["前景可用遮挡或引导元素"],
+              "midground_options": ["中景主要行动区域"],
+              "background_options": ["背景中稳定空间关系的元素"],
+              "light_sources": ["光源方向和明暗作用"],
+              "movement_paths": ["角色或视线的移动路径"],
+              "layout_constraints": ["后续分格必须保持一致的空间约束"]
+            }
+          }
 
-          ## 分镜决策自审清单（写入 thinking）
-          请输出简洁、可检查的分镜决策记录，不要写与画面无关的创作闲聊。thinking 用于帮助后续检查 description 是否合理；最终 description 必须只保留自然、完整、可见的画面描述。
-
-          ### A. 整体分格设计
-          1. 当前段落的核心剧情动作是什么？观众看完这一页应获得什么信息或情绪？
-          2. 建议分格数是多少？本页应该如何排版？请说明阅读顺序，并避免平均切分。
-          3. 哪些剧情瞬间必须入格？哪些信息可以省略或合并？
-          4. 每个分格分别承担什么叙事功能：建立环境、交代动作、强调反应、突出道具、制造悬念、承接转折，还是收束情绪？
-          5. 这些分格之间如何衔接？是动作连续、视线引导、空间方向承接、情绪递进，还是反差切换？
-
-          ### B. 每个分格逐项判断
-          对每个分格分别回答以下问题：
-          1. 画面目的：这一格为什么存在？它比前一格新增了什么可见信息？
-          2. 入画对象：这一格中出现哪些本段在场角色、地点元素和关键道具？不得加入不在场角色。
-          3. 角色调度：每个角色的位置、朝向、视线、动作和姿态是什么？如果有复数次要角色，必须编号并分别描述。
-          4. 镜头选择：这一格使用什么景别、机位高度和镜头角度？为什么这种镜头最能服务当前情绪或动作？
-          5. 空间关系：摄影机位于场景哪一侧？前景、中景、背景分别是什么？遮挡、透视、视线方向和人物站位是否互相兼容？
-          6. 构图意图：视觉重心在哪里？是否使用留白、前景遮挡、斜线构图、俯视、仰视或大透视来增强叙事？不得无理由使用正中平视和左右对称。
-          7. 动作瞬间：这一格表现的是动作开始、动作中段、动作结果，还是反应瞬间？画面中是否有可见的物理扰动？不得写不可见的对话状态。
-          8. 光影与氛围：光源从哪里来？光线能否实际照到主体？明暗如何引导第一眼视觉落点？
-          9. 环境细节：除了角色之外，画面中有哪些能说明地点、身份、时代或当前处境的具体陈设？{material_thinking}
-          10. 逻辑自检：是否出现不可见的对话状态？是否误把地点名中的角色名当成人物？是否出现腿部、脚部、鞋履描述？是否存在机位、遮挡、光线、人物位置互相矛盾的问题？
-          11. 强化审查：{enrich_thinking}
-
-          ### C. 整页统一性检查
-          1. 整页分镜是否从宏观到微观推进，既讲清剧情，又有画面节奏？
-          2. 每格大小和布局是否有设计感，是否避免机械平均？
-          3. 角色、地点、道具是否严格来自当前段落输入？
-          4. description 是否能直接作为后续漫画画面提示词使用，且不包含画风、模型参数、质量词或生成技术指令？
-
-          输出一个 JSON 对象，必须包含：
-          - index：当前段落索引
-          - segment_title：当前段落标题
-          - thinking：按照“分镜决策自审清单”输出简洁的分镜决策记录，用于检查画面安排是否合理
-          - description：最终的画面提示词，不得少于500字，先说明一共有几个分格和整体布局，然后根据 thinking 的内容生成详细且自然的分镜画面描述文本；描述整体，流畅确保画面完整、内容统一，每格最后描述氛围。
       prompt_fields:
-        value: ["index", "paragraph_text", "panel_count", "present_characters", "location", "key_props"]
+        value: ["index", "paragraph_text", "panel_count", "present_characters", "location", "scene_description", "key_props"]
+      passthrough_fields:
+        value: ["index", "paragraph_text", "panel_count", "present_characters", "location", "scene_description", "key_props", "segment_assignment"]
       max_attempts:
         value: 2
+      continue_on_item_error:
+        value: true
     outputs:
       type: object
       required: ["results"]
@@ -699,22 +759,738 @@ nodes:
         results:
           type: array
           items:
-            type: object
-            required: ["index", "segment_title", "thinking", "description"]
-            properties:
-              index:
-                type: integer
-                minimum: 0
-              segment_title:
-                type: string
-                minLength: 1
-              thinking:
-                type: string
-                minLength: 1
-              description:
-                type: string
-                minLength: 1
-            additionalProperties: false
+            oneOf:
+              - type: object
+                required: ["index", "paragraph_text", "panel_count", "present_characters", "location", "scene_description", "key_props", "segment_assignment", "scene_layout"]
+                properties:
+                  index:
+                    type: integer
+                    minimum: 0
+                  paragraph_text:
+                    type: string
+                    minLength: 1
+                  panel_count:
+                    type: string
+                  present_characters:
+                    type: array
+                    items:
+                      type: string
+                  location:
+                    type: string
+                  scene_description:
+                    type: string
+                  key_props:
+                    type: array
+                    items:
+                      type: string
+                  segment_assignment:
+                    type: object
+                    additionalProperties: true
+                  scene_layout:
+                    type: object
+                    additionalProperties: true
+                additionalProperties: true
+              - type: object
+                required: ["index", "status", "error"]
+                properties:
+                  index:
+                    type: integer
+                    minimum: 0
+                  status:
+                    type: string
+                    enum: ["failed"]
+                  error:
+                    type: object
+                    additionalProperties: true
+                additionalProperties: true
+      additionalProperties: false
+
+  - id: plan_storyboard_panels
+    ref: ai.parallel_deepseek_structured_json.v1
+    name: 规划分镜分格
+    inputs:
+      system:
+        value: |
+          仅返回合法 JSON。你是专业分镜导演，只基于当前段落和场景布局生成结构化分格计划。
+          必须根据原作世界观、完整剧本和当前段落对应情景安排叙事节奏；不写自然语言长描述，不写图像提示词，不生成画风、质量词、模型参数、负面提示词或参考图规则。
+      items:
+        from: "$nodes.analyze_scene_layout.output.results"
+      shared_context:
+        from: "$nodes.prepare_segment_storyboard_inputs.output.shared_context"
+      prompt_template:
+        value: |
+          请为当前段落规划一页漫画分镜。
+
+          原作/世界观背景：
+          {world_background}
+
+          完整剧本（仅用于核对剧情连续性，不得扩写当前段落之外的剧情）：
+          {full_script}
+
+          当前段落：{paragraph_text}
+          建议分格数：{panel_count}
+          本段在场角色：{present_characters}
+          地点：{location}
+          关键道具：{key_props}
+          场景布局：{scene_layout}
+
+          分镜计划标准：
+          - 只根据当前段落、scene_layout、在场角色、地点和关键道具规划 panel_plan，不扩写其他段落剧情。
+          - panel_count 必须严格落实建议分格数；如果建议为 1，只能规划单个大分格或单格整页，不得拆成多格。
+          - 每格都必须有明确叙事功能和可见信息增量，避免重复表达同一动作或同一情绪。
+          - 页面布局、格子大小和阅读顺序必须服务叙事轻重，不做平均罗列。
+          - 每格必须明确入画角色、可见道具、动作瞬间、景别、机位、角度、构图、空间关系、光影氛围和与下一格的衔接。
+          - 每个镜头选择都必须说明服务什么叙事目的，例如人物处境、空间压迫、动作爆发、关系变化或情绪转折。
+          - 必须遵守 scene_layout 的空间约束，保持人物方位、道具位置、行动路径、遮挡关系和光线方向一致。
+          - 不新增不在场角色、未提供地点、未提供道具或未发生事件。
+          - 不写 image_prompt，不写自然语言长篇画面提示词，不加入画风、质量词、模型参数、负面提示词或参考图规则。
+
+          分格提问链：
+          1. 当前段落的核心剧情动作是什么？这一页结束时，观众应获得哪一种明确的信息、情绪或关系变化，所有分格是否都在服务这个目的？
+          2. 建议分格数如何落实为具体 panel_count？如果建议是范围，应选择能讲清动作起承转合的最小有效格数，避免为凑数量重复同一信息。
+          3. 页面排版怎样形成阅读节奏：哪一格需要建立场面，哪一格需要推进动作，哪一格需要强调转折或结果？格子大小和位置应服务叙事轻重，而不是平均切分。
+          4. 哪些剧情瞬间必须入格，才能让因果关系成立？哪些对白、心理或解释性信息不能直接画出，应转化为可见动作、站位、视线或物件状态？
+          5. 每格承担什么叙事功能，并新增什么可见信息？如果某格不能带来新的空间、动作、情绪或关系信息，应合并、删除或改成更有信息量的瞬间。
+          6. 每格的景别、机位、角度和构图分别在强调什么叙事重点：人物处境、空间压迫、动作爆发、关系变化，还是情绪转折？所选镜头是否能让主体、动作方向和画面重心立即清楚？
+          7. 每格的动作瞬间、光线和情绪怎样互相配合？动作应停在最能表达力量、犹豫、威胁或转折的可见瞬间，光线应帮助观众读懂主体和情绪，而不是只增加装饰。
+          8. 分格之间如何衔接：动作连续、视线引导、空间方向承接、情绪递进，还是反差切换？这种衔接为什么能让阅读更流畅或更有张力？
+          9. 是否严格遵守 scene_layout 的空间约束，不新增不在场角色和未提供道具？如有越界，应回到当前段落、在场资产和既定空间关系内重新安排。
+
+          输出一个 JSON 对象，只返回本步骤生成的字段：
+          - think：完整推理过程
+          - segment_title
+          - panel_plan
+
+          目标 JSON 示例：
+          {
+            "think": "完整推理过程",
+            "segment_title": "当前段落标题",
+            "panel_plan": {
+              "panel_count": 1,
+              "page_layout": "单格整页或多格页面布局说明",
+              "reading_order": ["第1格"],
+              "panels": [
+                {
+                  "panel_index": 1,
+                  "narrative_purpose": "这一格的叙事功能",
+                  "characters": ["角色名"],
+                  "visible_props": ["道具名"],
+                  "shot_info": {
+                    "shot_size": "景别",
+                    "camera_position": "机位和角度",
+                    "composition": "构图和视觉重心"
+                  },
+                  "frame_content": "这一格可见的动作、空间和情绪",
+                  "transition_to_next": "与下一格的衔接方式"
+                }
+              ]
+            }
+          }
+
+      prompt_fields:
+        value: ["index", "paragraph_text", "panel_count", "present_characters", "location", "key_props", "segment_assignment", "scene_layout"]
+      passthrough_fields:
+        value: ["index", "paragraph_text", "panel_count", "present_characters", "location", "scene_description", "key_props", "segment_assignment", "scene_layout"]
+      required_input_fields:
+        value: ["scene_layout"]
+      max_attempts:
+        value: 2
+      continue_on_item_error:
+        value: true
+    outputs:
+      type: object
+      required: ["results"]
+      properties:
+        results:
+          type: array
+          items:
+            oneOf:
+              - type: object
+                required: ["index", "segment_title", "think", "paragraph_text", "panel_count", "present_characters", "location", "key_props", "segment_assignment", "scene_layout", "panel_plan"]
+                properties:
+                  index:
+                    type: integer
+                    minimum: 0
+                  segment_title:
+                    type: string
+                    minLength: 1
+                  think:
+                    type: string
+                  paragraph_text:
+                    type: string
+                  panel_count:
+                    type: string
+                  present_characters:
+                    type: array
+                    items:
+                      type: string
+                  location:
+                    type: string
+                  key_props:
+                    type: array
+                    items:
+                      type: string
+                  segment_assignment:
+                    type: object
+                    additionalProperties: true
+                  scene_layout:
+                    type: object
+                    additionalProperties: true
+                  panel_plan:
+                    type: object
+                    additionalProperties: true
+                additionalProperties: true
+              - type: object
+                required: ["index", "status", "error"]
+                properties:
+                  index:
+                    type: integer
+                    minimum: 0
+                  status:
+                    type: string
+                    enum: ["failed"]
+                  error:
+                    type: object
+                    additionalProperties: true
+                additionalProperties: true
+      additionalProperties: false
+
+  - id: review_and_refine_storyboard_plan
+    ref: ai.storyboard_review_refine.v1
+    name: 审查并修订分镜计划
+    inputs:
+      items:
+        from: "$nodes.plan_storyboard_panels.output.results"
+      storyboard_items:
+        from: "$nodes.prepare_segment_storyboard_inputs.output.items"
+      shared_context:
+        from: "$nodes.prepare_segment_storyboard_inputs.output.shared_context"
+      review_system:
+        value: |
+          仅返回合法 JSON。你是分镜计划质量监督，只审查当前段落的 scene_layout 和 panel_plan 是否合格。
+          你按与“规划分镜分格”相同的分镜计划标准审查和修订，但职责边界只限于 scene_layout 与 panel_plan；不写画面提示词，不生成画风、质量词、模型参数、负面提示词或参考图规则。
+      review_prompt_template:
+        value: |
+          请用提问方式审查当前段落的结构化分镜计划。
+
+          原作/世界观背景：
+          {shared_context.world_background}
+
+          完整剧本（只用于核对连续性）：
+          {shared_context.full_script}
+
+          当前段落：
+          {item.paragraph_text}
+
+          场景布局：
+          {source.scene_layout}
+
+          分格计划：
+          {source.panel_plan}
+
+          分镜计划标准：
+          - 只根据当前段落、scene_layout、在场角色、地点和关键道具规划 panel_plan，不扩写其他段落剧情。
+          - panel_count 必须严格落实建议分格数；如果建议为 1，只能规划单个大分格或单格整页，不得拆成多格。
+          - 每格都必须有明确叙事功能和可见信息增量，避免重复表达同一动作或同一情绪。
+          - 页面布局、格子大小和阅读顺序必须服务叙事轻重，不做平均罗列。
+          - 每格必须明确入画角色、可见道具、动作瞬间、景别、机位、角度、构图、空间关系、光影氛围和与下一格的衔接。
+          - 每个镜头选择都必须说明服务什么叙事目的，例如人物处境、空间压迫、动作爆发、关系变化或情绪转折。
+          - 必须遵守 scene_layout 的空间约束，保持人物方位、道具位置、行动路径、遮挡关系和光线方向一致。
+          - 不新增不在场角色、未提供地点、未提供道具或未发生事件。
+          - 不写 image_prompt，不写自然语言长篇画面提示词，不加入画风、质量词、模型参数、负面提示词或参考图规则。
+
+          审查边界：
+          - 只判断 scene_layout 和 panel_plan 是否符合分镜计划标准。
+          - 不生成 image_prompt，不审查画面提示词写法。
+          - 不重新切分剧本，不评价资产分配是否最佳，不把当前段落之外的剧情纳入本段。
+
+          审查问题：
+          1. 当前段落的核心剧情动作是否被准确识别？这一页结束时观众应获得的信息、情绪或关系变化是否明确，所有分格是否都服务这个目的？如目的散乱，应收束到当前段落的核心可见动作和情绪变化。
+          2. 建议分格数是否被正确落实为具体 panel_count？如果建议是范围，是否选择了能讲清起承转合的最小有效格数；如果建议为 1，是否严格保持单格整页或单个大分格？
+          3. 页面排版是否形成清楚阅读节奏？哪一格建立场面、哪一格推进动作、哪一格强调转折或结果是否职责分明；如果格子大小和位置平均罗列，应按叙事轻重调整。
+          4. 入格剧情瞬间是否足以让因果关系成立？对白、心理或解释性信息是否被转化为可见动作、站位、视线或物件状态；如仍有不可见状态，应改为可见画面信息。
+          5. 每格是否有明确叙事功能和新的可见信息？如果某格没有新增空间、动作、情绪或关系信息，应合并、删除或改成更有信息量的瞬间。
+          6. 每格的景别、机位、角度和构图是否明确服务人物处境、空间压迫、动作爆发、关系变化或情绪转折？如果只是罗列术语，应改为能让主体、动作方向和画面重心立即清楚的镜头选择。
+          7. 每格动作瞬间、光线和情绪是否互相配合？动作是否停在最能表达力量、犹豫、威胁或转折的可见瞬间，光线是否帮助读懂主体和情绪，而不是只做装饰？
+          8. 分格之间的衔接是否清楚：动作连续、视线引导、空间方向承接、情绪递进或反差切换是否能让阅读更流畅或更有张力？
+          9. 是否严格遵守 scene_layout 的空间约束，不新增不在场角色、未提供地点、未提供道具或未发生事件？如有越界，应回到当前段落、在场资产和既定空间关系内重新安排。
+          10. 是否出现腿部、脚部、鞋履相关描述？如出现，应删除这些部位描写，并改用身体朝向、上半身动作、衣摆、武器、遮挡物或地面痕迹表达动作方向和受力关系。
+          11. 是否混入画风、质量词、模型参数、负面提示词、参考图规则或程序化说明？如出现，应删除，只保留分镜计划本身需要的叙事、空间、镜头和动作信息。
+
+          如果全部合格，passed=true。否则 passed=false，并给出可执行的修改意见。
+          输出中的 think 写完整推理过程。
+
+          目标 JSON 示例：
+          {
+            "think": "完整推理过程",
+            "passed": false,
+            "issues": ["需要修订的问题"],
+            "revision_instructions": "给修订节点的具体修改意见",
+            "revision_summary": "本轮审查结论摘要"
+          }
+      revision_system:
+        value: |
+          仅返回合法 JSON。你是分镜导演，只根据审查意见修订结构化 scene_layout 和 panel_plan。
+          修订必须遵守与“规划分镜分格”相同的分镜计划标准；不得改变原剧本事件、人物、地点或道具；不得生成画面提示词、画风、质量词、模型参数、负面提示词或参考图规则。
+      revision_prompt_template:
+        value: |
+          请根据审查意见修订当前段落的结构化分镜计划，只返回需要修订的字段。
+
+          原作/世界观背景：
+          {shared_context.world_background}
+
+          完整剧本（只用于核对连续性）：
+          {shared_context.full_script}
+
+          当前段落：
+          {item.paragraph_text}
+
+          建议分格数：{item.panel_count}
+          本段在场角色：{item.present_characters}
+          地点：{item.location}
+          关键道具：{item.key_props}
+
+          当前分段对象：
+          {source}
+
+          修改意见：
+          {review.revision_instructions}
+
+          分镜计划标准：
+          - 只根据当前段落、scene_layout、在场角色、地点和关键道具规划 panel_plan，不扩写其他段落剧情。
+          - panel_count 必须严格落实建议分格数；如果建议为 1，只能规划单个大分格或单格整页，不得拆成多格。
+          - 每格都必须有明确叙事功能和可见信息增量，避免重复表达同一动作或同一情绪。
+          - 页面布局、格子大小和阅读顺序必须服务叙事轻重，不做平均罗列。
+          - 每格必须明确入画角色、可见道具、动作瞬间、景别、机位、角度、构图、空间关系、光影氛围和与下一格的衔接。
+          - 每个镜头选择都必须说明服务什么叙事目的，例如人物处境、空间压迫、动作爆发、关系变化或情绪转折。
+          - 必须遵守 scene_layout 的空间约束，保持人物方位、道具位置、行动路径、遮挡关系和光线方向一致。
+          - 不新增不在场角色、未提供地点、未提供道具或未发生事件。
+          - 不写 image_prompt，不写自然语言长篇画面提示词，不加入画风、质量词、模型参数、负面提示词或参考图规则。
+
+          修订要求：
+          1. 必须返回 think，并只额外返回需要修订的 scene_layout、panel_plan 或其它可修订字段；
+          2. 保持当前段落的人物、地点、道具边界；所有修订都必须说明画面选择服务什么叙事目的。
+          3. 只修订 scene_layout 和 panel_plan 中的问题；修订时优先改善空间一致性、信息增量、镜头动机和分格衔接。
+          4. 不加入画面提示词、画风、质量词、模型参数、负面提示词或参考图规则。
+
+          目标 JSON 示例：
+          {
+            "think": "完整推理过程",
+            "scene_layout": {
+              "location_summary": "修订后的场景布局说明",
+              "layout_constraints": ["修订后的空间约束"]
+            },
+            "panel_plan": {
+              "panel_count": 1,
+              "page_layout": "修订后的页面布局",
+              "panels": [
+                {
+                  "panel_index": 1,
+                  "narrative_purpose": "修订后的叙事功能",
+                  "frame_content": "修订后的分格内容"
+                }
+              ]
+            }
+          }
+      review_output_field:
+        value: review
+      review_history_output_field:
+        value: review_history
+      required_input_fields:
+        value: ["scene_layout", "panel_plan"]
+      max_revision_rounds:
+        value: 2
+      max_attempts:
+        value: 2
+      continue_on_item_error:
+        value: true
+    outputs:
+      type: object
+      required: ["results"]
+      properties:
+        results:
+          type: array
+          items:
+            oneOf:
+              - type: object
+                required: ["index", "segment_title", "think", "scene_layout", "panel_plan", "paragraph_text", "panel_count", "present_characters", "location", "key_props", "segment_assignment", "review", "review_history"]
+                properties:
+                  index:
+                    type: integer
+                    minimum: 0
+                  segment_title:
+                    type: string
+                    minLength: 1
+                  think:
+                    type: string
+                  scene_layout:
+                    type: object
+                    additionalProperties: true
+                  panel_plan:
+                    type: object
+                    additionalProperties: true
+                  paragraph_text:
+                    type: string
+                  panel_count:
+                    type: string
+                  present_characters:
+                    type: array
+                    items:
+                      type: string
+                  location:
+                    type: string
+                  key_props:
+                    type: array
+                    items:
+                      type: string
+                  segment_assignment:
+                    type: object
+                    additionalProperties: true
+                  review:
+                    type: object
+                    additionalProperties: true
+                  review_history:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                additionalProperties: true
+              - type: object
+                required: ["index", "status", "error"]
+                properties:
+                  index:
+                    type: integer
+                    minimum: 0
+                  status:
+                    type: string
+                    enum: ["failed"]
+                  error:
+                    type: object
+                    additionalProperties: true
+                additionalProperties: true
+      additionalProperties: false
+
+  - id: convert_storyboard_plan_to_image_prompt
+    ref: ai.parallel_deepseek_structured_json.v1
+    name: 转换画面提示词
+    inputs:
+      system:
+        value: |
+          仅返回合法 JSON。你是图像提示词编辑，只把已通过审查的 scene_layout 和 panel_plan 转换成完整分段画面内容提示词。
+          必须沿链路重新生成完整分段的 image_prompt，不要只改局部；不得改变 panel_plan 中的事件、角色、地点、道具或分格内容。
+          不得生成画风、风格关键词、质量词、模型参数、负面提示词、角色一致性固定约束、参考图规则或程序化说明。
+      items:
+        from: "$nodes.review_and_refine_storyboard_plan.output.results"
+      prompt_template:
+        value: |
+          请把以下结构化分镜计划转换成完整分段画面内容提示词。只写本步骤职责范围内的内容，不要加入固定风格、一致性约束、质量词、负面词、模型参数或参考图规则。
+
+          段落索引：{index}
+          段落标题：{segment_title}
+          当前段落：{paragraph_text}
+
+          场景布局：
+          {scene_layout}
+
+          分格计划：
+          {panel_plan}
+
+          画面提示词标准：
+          - 只把已通过审查的 scene_layout 和 panel_plan 转换为完整 image_prompt，不重新设计分镜。
+          - image_prompt 必须完整覆盖 panel_plan.panels 的每一格，分格数量、分格编号、阅读顺序和逐格内容必须与 panel_plan.panels 一一对应。
+          - 如果 panel_plan 只有 1 格，只能写单个大分格或单格整页，不得因为段落信息多而拆成多格。
+          - 每格必须写清主体动作、场景空间、构图镜头、光影氛围、运动张力和分格衔接。
+          - 每格必须明确画面元素的位置和占比：前景、中景、背景分别占画面多少，主体在画面哪个区域，角色朝向哪里，道具与人物、门窗、桌案、道路、林木等空间边界的相对位置如何。
+          - 不改变 panel_plan 中的事件、角色、地点、道具、分格数量、分格顺序或因果关系。
+          - 不新增不在场角色、未提供地点、未提供道具或未发生事件。
+          - 不写画风、质量词、模型参数、负面词、参考图规则、角色一致性固定约束或程序化说明。
+          - 输出必须是纯自然语言画面内容字符串，不使用 Markdown 标题或列表，不写成摘要。
+
+          转换提问链：
+          1. 整体情节：当前段落在讲什么可见事件？先用简洁自然语言概括本段的情节推进、主要行动和情绪方向，帮助后续分格描述形成统一目标。
+          2. 分格数量：这一页一共有多少格？必须严格等于 panel_plan.panel_count 或 panel_plan.panels 的实际数量；如果 panel_plan 只有 1 格，只能写单个大分格或单格整页，不得因为段落信息多而拆成多格。
+          3. 每格角色：每一格分别出现哪些角色？角色必须来自 panel_plan 和当前段落在场资产；不要加入不在场角色，也不要把地点名中的人名误当角色。
+          4. 格子布局：整页格子如何排布，阅读顺序是什么？格子大小、位置和视觉节奏应服务叙事轻重，而不是平均罗列。
+          5. 逐格描述：按阅读顺序分别描述每个格子的主体动作、空间层级、构图镜头、光影氛围、运动张力和分格衔接；每格都要说清楚画面中哪里有什么、前景/中景/背景各占画面大约多少、主体位于画面左/右/中央或上下哪个区域、角色面对镜头/背对镜头/侧对镜头或朝向哪里、道具与角色和空间边界的相对位置；每个镜头选择都要服务明确画面目的，但要写成可见画面，不写成解释。
+          6. 忠于计划：哪些事件、角色、地点、道具和分格关系必须保持不变？如果自然语言更流畅，也不得改变 panel_plan 已确定的画面内容、分格数量、分格顺序和因果顺序。
+          7. 边界清理：是否删除了画风、质量词、模型参数、负面词、参考图规则和程序化说明？如有越界内容，应改写为纯画面内容。
+
+          输出一个 JSON 对象，只返回本步骤生成的字段：
+          - think：完整推理过程
+          - image_prompt：完整自然语言画面内容提示词字符串，不要拆成多字段对象，不要使用 Markdown 标题、列表或程序化说明。必须按顺序写：先描述整体情节，再说明一共有多少格，再说明每格分别有哪些角色，再描述整页格子布局，最后按 panel_plan.panels 的阅读顺序逐格描述每个格子的主体动作、场景空间、构图镜头、光影氛围、运动张力和分格衔接。逐格描述必须明确画面元素的位置和占比：前景、中景、背景分别占画面多少，主体在画面哪个区域，角色朝向哪里，道具与人物、门窗、桌案、道路、林木等空间边界的相对位置如何。image_prompt 声明的分格数量、分格编号和逐格内容必须与 panel_plan.panels 一一对应；禁止新增分格、删除分格、合并分格、拆分分格或重排分格。后续程序节点会把这段内容组装到“## 画面内容”中。
+
+          目标 JSON 示例：
+          {
+            "think": "完整推理过程",
+            "image_prompt": "当前段落的整体情节说明。一共有1格。第1格出现的角色包括角色名。整页为单格整页，画面主体位于中景区域。第1格描述主体动作、前景/中景/背景占比、角色朝向、道具相对位置、构图镜头、光影氛围、运动张力和分格衔接。"
+          }
+
+          
+      prompt_fields:
+        value: ["index", "segment_title", "paragraph_text", "panel_count", "present_characters", "location", "key_props", "segment_assignment", "scene_layout", "panel_plan", "review", "review_history"]
+      passthrough_fields:
+        value: ["index", "segment_title", "paragraph_text", "panel_count", "present_characters", "location", "scene_description", "key_props", "segment_assignment", "scene_layout", "panel_plan", "review", "review_history"]
+      required_input_fields:
+        value: ["scene_layout", "panel_plan"]
+      max_attempts:
+        value: 2
+      continue_on_item_error:
+        value: true
+    outputs:
+      type: object
+      required: ["results"]
+      properties:
+        results:
+          type: array
+          items:
+            oneOf:
+              - type: object
+                required: ["index", "segment_title", "paragraph_text", "panel_count", "present_characters", "location", "key_props", "segment_assignment", "scene_layout", "panel_plan", "think", "image_prompt"]
+                properties:
+                  index:
+                    type: integer
+                    minimum: 0
+                  segment_title:
+                    type: string
+                    minLength: 1
+                  paragraph_text:
+                    type: string
+                  panel_count:
+                    type: string
+                  present_characters:
+                    type: array
+                    items:
+                      type: string
+                  location:
+                    type: string
+                  key_props:
+                    type: array
+                    items:
+                      type: string
+                  segment_assignment:
+                    type: object
+                    additionalProperties: true
+                  scene_layout:
+                    type: object
+                    additionalProperties: true
+                  panel_plan:
+                    type: object
+                    additionalProperties: true
+                  think:
+                    type: string
+                  image_prompt:
+                    type: string
+                    minLength: 1
+                  review:
+                    type: object
+                    additionalProperties: true
+                  review_history:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                additionalProperties: true
+              - type: object
+                required: ["index", "status", "error"]
+                properties:
+                  index:
+                    type: integer
+                    minimum: 0
+                  status:
+                    type: string
+                    enum: ["failed"]
+                  error:
+                    type: object
+                    additionalProperties: true
+                additionalProperties: true
+      additionalProperties: false
+
+  - id: review_and_refine_image_prompt
+    ref: ai.storyboard_review_refine.v1
+    name: 审查并修订画面提示词
+    inputs:
+      items:
+        from: "$nodes.convert_storyboard_plan_to_image_prompt.output.results"
+      storyboard_items:
+        from: "$nodes.prepare_segment_storyboard_inputs.output.items"
+      shared_context:
+        from: "$nodes.prepare_segment_storyboard_inputs.output.shared_context"
+      review_system:
+        value: |
+          仅返回合法 JSON。你是画面提示词质量监督，只做轻量审查：提示词是否忠于 scene_layout 和 panel_plan，是否越界加入不该出现的内容。
+          你按与“转换画面提示词”相同的画面提示词标准审查和修订，但职责边界只限于 image_prompt 写得对不对；不评价 panel_plan 好不好，不重新设计分镜，不添加画风、质量词、模型参数、负面提示词或参考图规则。
+      review_prompt_template:
+        value: |
+          请审查当前分段的 image_prompt。
+
+          当前段落：{item.paragraph_text}
+          场景布局：{source.scene_layout}
+          分格计划：{source.panel_plan}
+          画面提示词：{source.image_prompt}
+
+          画面提示词标准：
+          - 只把已通过审查的 scene_layout 和 panel_plan 转换为完整 image_prompt，不重新设计分镜。
+          - image_prompt 必须完整覆盖 panel_plan.panels 的每一格，分格数量、分格编号、阅读顺序和逐格内容必须与 panel_plan.panels 一一对应。
+          - 如果 panel_plan 只有 1 格，只能写单个大分格或单格整页，不得因为段落信息多而拆成多格。
+          - 每格必须写清主体动作、场景空间、构图镜头、光影氛围、运动张力和分格衔接。
+          - 每格必须明确画面元素的位置和占比：前景、中景、背景分别占画面多少，主体在画面哪个区域，角色朝向哪里，道具与人物、门窗、桌案、道路、林木等空间边界的相对位置如何。
+          - 不改变 panel_plan 中的事件、角色、地点、道具、分格数量、分格顺序或因果关系。
+          - 不新增不在场角色、未提供地点、未提供道具或未发生事件。
+          - 不写画风、质量词、模型参数、负面词、参考图规则、角色一致性固定约束或程序化说明。
+          - 输出必须是纯自然语言画面内容字符串，不使用 Markdown 标题或列表，不写成摘要。
+
+          审查边界：
+          - 只检查 image_prompt 是否符合画面提示词标准。
+          - 不评价 panel_plan 本身是否最佳，不改变分格数量，不重设镜头设计，不重新判断剧本切段或资产分配。
+          - 如果 panel_plan 本身不理想，也必须以它为既定事实；只指出 image_prompt 与 panel_plan 不一致、遗漏、越界或写得不完整的问题。
+
+          审查问题：
+          1. image_prompt 是否先用自然语言概括当前段落的可见事件、主要行动和情绪方向，并让后续逐格描述围绕同一画面目标展开？如只是散乱罗列，应补足整体情节方向。
+          2. image_prompt 声明的分格数量是否严格等于 panel_plan.panel_count 或 panel_plan.panels 的实际数量？如果 panel_plan 只有 1 格，是否只写单个大分格或单格整页，而没有拆成多格？
+          3. 每格出现的角色是否逐格对应 panel_plan，且只来自当前段落在场资产？如新增不在场角色、漏掉应出现角色，或把地点名中的人名误当角色，应按 panel_plan 修正。
+          4. 整页格子布局、阅读顺序、格子大小和视觉节奏是否忠于 panel_plan？如改变分格数量、分格顺序、合并、拆分或重排分格，应改回与 panel_plan.panels 一一对应。
+          5. image_prompt 是否完整覆盖所有分格，并按阅读顺序完整描述每格的主体动作、空间层级、构图镜头、光影氛围、运动张力和分格衔接？如只写摘要、关键词或局部画面，应补成完整自然语言画面内容。
+          6. 每格是否说清楚画面中哪里有什么：前景、中景、背景各占画面大约多少，主体位于画面左/右/中央或上下哪个区域，角色面对镜头/背对镜头/侧对镜头或朝向哪里？
+          7. 道具与角色、门窗、桌案、道路、林木等空间边界的相对位置是否清楚，并与 scene_layout 保持一致？如位置关系含糊或矛盾，应按 scene_layout 和 panel_plan 收束。
+          8. 每个镜头、空间和运动描述是否能看出画面目的：服务主体、动作方向、情绪变化、关系变化或画面重心？如只是罗列术语，应改为可见且有叙事作用的描述。
+          9. 是否忠于 scene_layout 和 panel_plan，没有改变事件、角色、地点、道具、分格数量、分格顺序或因果关系？如有改写过度，应回到既定计划，不重新设计分镜。
+          10. 是否加入了画风、质量词、模型参数、负面提示词、角色一致性固定约束、参考图规则或程序化说明？如出现，应删除。
+          11. 是否出现不在场角色、未提供道具、腿部、脚部或鞋履描述？如出现，应删除越界对象；腿脚鞋履应改用身体朝向、上半身动作、衣摆、武器、遮挡物或地面痕迹表达动作方向和受力关系。
+
+          如果全部合格，passed=true。否则 passed=false，并给出可执行的修改意见。
+          输出中的 think 写完整推理过程。
+
+          目标 JSON 示例：
+          {
+            "think": "完整推理过程",
+            "passed": false,
+            "issues": ["需要修订的问题"],
+            "revision_instructions": "给修订节点的具体修改意见",
+            "revision_summary": "本轮审查结论摘要"
+          }
+      revision_system:
+        value: |
+          仅返回合法 JSON。你是画面提示词编辑，只根据审查意见重新生成完整分段的 image_prompt。
+          修订必须遵守与“转换画面提示词”相同的画面提示词标准；不改变 scene_layout、panel_plan、原剧本事件、角色、地点或道具；不添加画风、质量词、模型参数、负面提示词或参考图规则。
+      revision_prompt_template:
+        value: |
+          请根据审查意见重新生成画面内容，只返回需要修订的字段。
+
+          当前分段对象：
+          {source}
+
+          修改意见：
+          {review.revision_instructions}
+
+          画面提示词标准：
+          - 只把已通过审查的 scene_layout 和 panel_plan 转换为完整 image_prompt，不重新设计分镜。
+          - image_prompt 必须完整覆盖 panel_plan.panels 的每一格，分格数量、分格编号、阅读顺序和逐格内容必须与 panel_plan.panels 一一对应。
+          - 如果 panel_plan 只有 1 格，只能写单个大分格或单格整页，不得因为段落信息多而拆成多格。
+          - 每格必须写清主体动作、场景空间、构图镜头、光影氛围、运动张力和分格衔接。
+          - 每格必须明确画面元素的位置和占比：前景、中景、背景分别占画面多少，主体在画面哪个区域，角色朝向哪里，道具与人物、门窗、桌案、道路、林木等空间边界的相对位置如何。
+          - 不改变 panel_plan 中的事件、角色、地点、道具、分格数量、分格顺序或因果关系。
+          - 不新增不在场角色、未提供地点、未提供道具或未发生事件。
+          - 不写画风、质量词、模型参数、负面词、参考图规则、角色一致性固定约束或程序化说明。
+          - 输出必须是纯自然语言画面内容字符串，不使用 Markdown 标题或列表，不写成摘要。
+
+          修订要求：
+          1. 只返回 think 和 image_prompt；
+          2. 身份字段、场景布局和分镜计划会由程序从原始分段对象继承，不要尝试改写。
+          3. 重新生成完整的 image_prompt；不能只修正局部，不能压缩成短摘要，不能删减原有分格内容，必须重新覆盖 panel_plan.panels 的全部分格。
+          4. 修订时应让主体、动作、空间、镜头、光影、运动和分格衔接都服务明确的画面目的。
+          5. 不改变分镜计划，不加入固定风格、一致性约束、质量词、负面词、模型参数或参考图规则；发现越界内容时删除或收束为当前计划允许的可见画面。
+
+          目标 JSON 示例：
+          {
+            "think": "完整推理过程",
+            "image_prompt": "重新生成后的完整自然语言画面内容提示词，仍按整体情节、分格数量、每格角色、整页格子布局、逐格画面描述的顺序书写。"
+          }
+      review_output_field:
+        value: prompt_review
+      review_history_output_field:
+        value: prompt_review_history
+      required_input_fields:
+        value: ["scene_layout", "panel_plan", "image_prompt"]
+      max_revision_rounds:
+        value: 1
+      max_attempts:
+        value: 2
+      continue_on_item_error:
+        value: true
+    outputs:
+      type: object
+      required: ["results"]
+      properties:
+        results:
+          type: array
+          items:
+            oneOf:
+              - type: object
+                required: ["index", "segment_title", "paragraph_text", "panel_count", "present_characters", "location", "key_props", "segment_assignment", "scene_layout", "panel_plan", "think", "image_prompt", "prompt_review", "prompt_review_history"]
+                properties:
+                  index:
+                    type: integer
+                    minimum: 0
+                  segment_title:
+                    type: string
+                  paragraph_text:
+                    type: string
+                  panel_count:
+                    type: string
+                  present_characters:
+                    type: array
+                    items:
+                      type: string
+                  location:
+                    type: string
+                  key_props:
+                    type: array
+                    items:
+                      type: string
+                  segment_assignment:
+                    type: object
+                    additionalProperties: true
+                  scene_layout:
+                    type: object
+                    additionalProperties: true
+                  panel_plan:
+                    type: object
+                    additionalProperties: true
+                  think:
+                    type: string
+                  image_prompt:
+                    type: string
+                    minLength: 1
+                  review:
+                    type: object
+                    additionalProperties: true
+                  review_history:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                  prompt_review:
+                    type: object
+                    additionalProperties: true
+                  prompt_review_history:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                additionalProperties: true
+              - type: object
+                required: ["index", "status", "error"]
+                properties:
+                  index:
+                    type: integer
+                    minimum: 0
+                  status:
+                    type: string
+                    enum: ["failed"]
+                  error:
+                    type: object
+                    additionalProperties: true
+                additionalProperties: true
       additionalProperties: false
 
   - id: merge_segment_descriptions
@@ -722,7 +1498,7 @@ nodes:
     name: 合并分镜描述
     inputs:
       results:
-        from: "$nodes.describe_panels.output.results"
+        from: "$nodes.review_and_refine_image_prompt.output.results"
     outputs:
       type: object
       required: ["segment_descriptions"]
@@ -731,7 +1507,7 @@ nodes:
           type: array
           items:
             type: object
-            required: ["index", "segment_title", "thinking", "description"]
+            required: ["index", "segment_title"]
             properties:
               index:
                 type: integer
@@ -739,13 +1515,39 @@ nodes:
               segment_title:
                 type: string
                 minLength: 1
-              thinking:
+              scene_layout:
+                type: object
+                additionalProperties: true
+              panel_plan:
+                type: object
+                additionalProperties: true
+              think:
+                type: string
+              image_prompt:
                 type: string
                 minLength: 1
-              description:
+              review:
+                type: object
+                additionalProperties: true
+              review_history:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
+              prompt_review:
+                type: object
+                additionalProperties: true
+              prompt_review_history:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
+              status:
                 type: string
-                minLength: 1
-            additionalProperties: false
+              error:
+                type: object
+                additionalProperties: true
+            additionalProperties: true
       additionalProperties: false
 
   - id: prepare_storyboard_panel_cards
@@ -871,8 +1673,16 @@ edges:
   - from: resolve_segment_image_refs
     to: prepare_segment_storyboard_inputs
   - from: prepare_segment_storyboard_inputs
-    to: describe_panels
-  - from: describe_panels
+    to: analyze_scene_layout
+  - from: analyze_scene_layout
+    to: plan_storyboard_panels
+  - from: plan_storyboard_panels
+    to: review_and_refine_storyboard_plan
+  - from: review_and_refine_storyboard_plan
+    to: convert_storyboard_plan_to_image_prompt
+  - from: convert_storyboard_plan_to_image_prompt
+    to: review_and_refine_image_prompt
+  - from: review_and_refine_image_prompt
     to: merge_segment_descriptions
   - from: merge_segment_descriptions
     to: prepare_storyboard_panel_cards

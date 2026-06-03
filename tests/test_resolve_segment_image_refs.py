@@ -119,6 +119,7 @@ async def test_resolve_segment_image_refs_resolves_location_and_props() -> None:
                         {
                             "name": "地点_野猪林",
                             "tags": ["地点", "野猪林"],
+                            "description": "野猪林雪路狭窄，两侧密林压迫，前景树干可作遮挡。",
                             "reference_image_ref": {
                                 "kind": "asset",
                                 "asset_id": "asset-boar-forest",
@@ -144,6 +145,7 @@ async def test_resolve_segment_image_refs_resolves_location_and_props() -> None:
     assert assignment["location_asset"] == {
         "asset_type": "scene",
         "asset_name": "野猪林",
+        "description": "野猪林雪路狭窄，两侧密林压迫，前景树干可作遮挡。",
         "image_ref": {"kind": "asset", "asset_id": "asset-boar-forest", "role": "reference"},
         "image_url": "https://cdn.test/forest.png",
     }

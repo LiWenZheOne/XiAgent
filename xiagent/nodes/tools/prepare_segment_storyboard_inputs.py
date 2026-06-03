@@ -21,6 +21,7 @@ class PrepareSegmentStoryboardInputsNode(BaseNode):
                 "required": ["source_script", "segments", "segment_assignments"],
                 "properties": {
                     "source_script": {"type": "string", "minLength": 1},
+                    "world_background": {"type": "string"},
                     "segments": {"type": "array", "items": {"type": "object"}},
                     "segment_assignments": {"type": "array", "items": {"type": "object"}},
                     "storyboard_options": {
@@ -48,6 +49,7 @@ class PrepareSegmentStoryboardInputsNode(BaseNode):
                                 "panel_count",
                                 "present_characters",
                                 "location",
+                                "scene_description",
                                 "key_props",
                                 "segment_assignment",
                             ],
@@ -60,6 +62,7 @@ class PrepareSegmentStoryboardInputsNode(BaseNode):
                                     "items": {"type": "string", "minLength": 1},
                                 },
                                 "location": {"type": "string"},
+                                "scene_description": {"type": "string"},
                                 "key_props": {
                                     "type": "array",
                                     "items": {"type": "string", "minLength": 1},
@@ -71,9 +74,10 @@ class PrepareSegmentStoryboardInputsNode(BaseNode):
                     },
                     "shared_context": {
                         "type": "object",
-                        "required": ["full_script", "prompt_rules"],
+                        "required": ["full_script", "world_background", "prompt_rules"],
                         "properties": {
                             "full_script": {"type": "string", "minLength": 1},
+                            "world_background": {"type": "string"},
                             "storyboard_options": {
                                 "type": "object",
                                 "properties": {
@@ -110,6 +114,7 @@ class PrepareSegmentStoryboardInputsNode(BaseNode):
     async def run(self, ctx: NodeContext | None, inputs: Mapping[str, Any]) -> NodeResult:
         _ = ctx
         source_script = _required_text(inputs.get("source_script"), "source_script_required")
+        world_background = _text(inputs.get("world_background"))
         segments = _required_object_list(inputs.get("segments"), "segments_required")
         segment_assignments = _required_object_list(
             inputs.get("segment_assignments"),
@@ -128,12 +133,11 @@ class PrepareSegmentStoryboardInputsNode(BaseNode):
             if "index" not in segment or not _is_int_like(segment["index"]):
                 continue
             index = int(segment["index"])
-            assignment = _compact_assignment(
-                assignment_by_index.get(
-                    index,
-                    {"segment_index": index, "characters": [], "key_props": []},
-                )
+            raw_assignment = assignment_by_index.get(
+                index,
+                {"segment_index": index, "characters": [], "key_props": []},
             )
+            assignment = _compact_assignment(raw_assignment)
             items.append(
                 {
                     "index": index,
@@ -141,6 +145,7 @@ class PrepareSegmentStoryboardInputsNode(BaseNode):
                     "panel_count": _panel_count(segment),
                     "present_characters": _present_character_names(assignment),
                     "location": _text(assignment.get("location")),
+                    "scene_description": _scene_description(raw_assignment),
                     "key_props": _string_list(assignment.get("key_props")),
                     "segment_assignment": assignment,
                 }
@@ -158,6 +163,7 @@ class PrepareSegmentStoryboardInputsNode(BaseNode):
                 "items": items,
                 "shared_context": {
                     "full_script": source_script,
+                    "world_background": world_background,
                     "storyboard_options": storyboard_options,
                     "prompt_rules": _prompt_rules(storyboard_options),
                 },
@@ -211,7 +217,7 @@ def _prompt_rules(options: Mapping[str, bool]) -> dict[str, str]:
         )
         enrich_thinking = (
             "逐项补充遮挡物、空间深度、物理反馈、建筑陈设、颗粒介质和细小叙事物件，"
-            "并把有效结果写入 description。"
+            "并把有效结果写入 image_prompt。"
         )
     else:
         enrich_rule = "- 保持描述清晰克制，不追加额外密度审查。"
@@ -254,6 +260,15 @@ def _compact_assignment(assignment: Mapping[str, Any]) -> dict[str, Any]:
         if isinstance(value, str):
             result[key] = value.strip()
     return result
+
+
+def _scene_description(assignment: Mapping[str, Any]) -> str:
+    location_asset = assignment.get("location_asset")
+    if isinstance(location_asset, Mapping):
+        description = _text(location_asset.get("description"))
+        if description:
+            return description
+    return _text(assignment.get("scene_description"))
 
 
 def _present_character_names(assignment: Mapping[str, Any]) -> list[str]:

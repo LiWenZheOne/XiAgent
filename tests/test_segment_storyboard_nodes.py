@@ -18,6 +18,7 @@ async def test_prepare_segment_storyboard_inputs_builds_one_item_per_segment() -
         None,
         {
             "source_script": "完整剧本",
+            "world_background": "水浒世界，北宋末年。",
             "segments": [
                 {"index": 0, "text": "第一段", "panel_hint": "1", "panel_count_min": 1, "panel_count_max": 1},
                 {"index": 1, "text": "第二段", "panel_hint": "3-4", "panel_count_min": 3, "panel_count_max": 4},
@@ -40,6 +41,13 @@ async def test_prepare_segment_storyboard_inputs_builds_one_item_per_segment() -
                         }
                     ],
                     "key_props": ["花枪"],
+                    "location": "野猪林",
+                    "location_asset": {
+                        "asset_type": "scene",
+                        "asset_name": "野猪林",
+                        "description": "雪地林道狭窄，两侧密林压迫，前景树干可遮挡视线。",
+                        "image_ref": {"kind": "asset", "asset_id": "asset-forest"},
+                    },
                 },
             ],
             "storyboard_options": {"no_material": True, "enrich_description": True},
@@ -53,7 +61,8 @@ async def test_prepare_segment_storyboard_inputs_builds_one_item_per_segment() -
     assert items[1]["panel_count"] == "3-4"
     assert "panel_count_instruction" not in items[1]
     assert items[1]["present_characters"] == ["林冲"]
-    assert items[1]["location"] == ""
+    assert items[1]["location"] == "野猪林"
+    assert items[1]["scene_description"] == "雪地林道狭窄，两侧密林压迫，前景树干可遮挡视线。"
     assert items[1]["key_props"] == ["花枪"]
     assert "current_segment" not in items[1]
     assert "neighbor_segments" not in items[1]
@@ -66,12 +75,14 @@ async def test_prepare_segment_storyboard_inputs_builds_one_item_per_segment() -
                     "appearance_description": "戴毡笠、穿囚服。",
                     "presence": "present",
                 }
-            ],
+        ],
         "key_props": ["花枪"],
+        "location": "野猪林",
     }
     assert "full_script" not in items[1]
     assert "all_segments" not in items[1]
     assert result.output["shared_context"]["full_script"] == "完整剧本"
+    assert result.output["shared_context"]["world_background"] == "水浒世界，北宋末年。"
     assert "all_segments" not in result.output["shared_context"]
     assert result.output["shared_context"]["storyboard_options"] == {
         "no_material": True,
