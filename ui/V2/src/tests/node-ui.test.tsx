@@ -146,11 +146,14 @@ describe("ValueDisplayControl", () => {
       "完整剧本：{shared_context.full_script}",
       "规则：{material_rule}",
       "场景：{scene_layout.location_summary}",
+      "场景布局：{scene_layout}",
+      "分格计划：{panel_plan}",
       "完整项：{item}",
     ].join("\n");
     const item = {
       paragraph_text: "林冲踏雪进入山神庙。",
       scene_layout: { location_summary: "雪夜破庙" },
+      panel_plan: { panel_count: 1, panels: [{ index: 1, shot: "远景" }] },
       shared_context: {
         world_background: "水浒传雪夜情节。",
         full_script: "完整剧本内容。",
@@ -178,9 +181,13 @@ describe("ValueDisplayControl", () => {
     expect(actualPrompt).toHaveTextContent("完整剧本：完整剧本内容。");
     expect(actualPrompt).toHaveTextContent("规则：不写现代材质。");
     expect(actualPrompt).toHaveTextContent("场景：雪夜破庙");
+    expect(actualPrompt).toHaveTextContent('"location_summary":"雪夜破庙"');
+    expect(actualPrompt).toHaveTextContent('"panel_count":1');
     expect(actualPrompt).not.toHaveTextContent("{paragraph_text}");
     expect(actualPrompt).not.toHaveTextContent("{world_background}");
     expect(actualPrompt).not.toHaveTextContent("{material_rule}");
+    expect(actualPrompt).not.toHaveTextContent("{scene_layout}");
+    expect(actualPrompt).not.toHaveTextContent("{panel_plan}");
   });
 
   it("does not show the LLM prompt panel for non-AI nodes", () => {

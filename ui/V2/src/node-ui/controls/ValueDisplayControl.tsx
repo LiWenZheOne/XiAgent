@@ -134,6 +134,7 @@ function templateValues(value: Record<string, unknown>): Record<string, string> 
   const values: Record<string, string> = {};
   const visit = (prefix: string, current: unknown) => {
     if (isRecord(current)) {
+      if (prefix) values[prefix] = templateValue(current);
       for (const [key, item] of Object.entries(current)) {
         if (!key) continue;
         const nextKey = prefix ? `${prefix}.${key}` : key;
