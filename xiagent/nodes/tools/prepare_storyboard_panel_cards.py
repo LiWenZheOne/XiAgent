@@ -96,6 +96,7 @@ class PrepareStoryboardPanelCardsNode(BaseNode):
                 aspect_ratio=aspect_ratio,
                 resolution=resolution,
                 generation_rules=generation_rules,
+                negative_prompt=negative_prompt,
                 reference_images=reference_images,
             )
             cards.append(
@@ -279,16 +280,23 @@ def _assemble_prompt(
     aspect_ratio: str,
     resolution: str,
     generation_rules: str,
+    negative_prompt: str,
     reference_images: list[Mapping[str, Any]],
 ) -> str:
     _ = aspect_ratio, resolution
     reference_context = _reference_context(reference_images)
     image_prompt = _description_with_reference_numbers(image_prompt, reference_images)
+    style_text, requirement_text = _split_generation_rules(generation_rules)
     parts: list[str] = []
+    if style_text:
+        parts.append(f"画风：\n{style_text}")
     if reference_context:
-        parts.append(f"## 参考图对应关系\n{reference_context}")
-    parts.append(f"## 画面内容\n{image_prompt}")
-    parts.append(f"## 画面风格关键词\n{generation_rules}")
+        parts.append(f"参考图：\n{reference_context}")
+    parts.append(f"画面：\n{image_prompt}")
+    if requirement_text:
+        parts.append(f"要求：\n{requirement_text}")
+    if negative_prompt:
+        parts.append(f"Negative Prompt： {negative_prompt}")
     return "\n\n".join(parts)
 
 
@@ -302,8 +310,36 @@ def _reference_context(reference_images: list[Mapping[str, Any]]) -> str:
         name = _text(reference.get("asset_name")) or _text(reference.get("label"))
         index = _int(reference.get("reference_index"), len(lines) + 1)
         if name:
-            lines.append(f"- {name}：参考图{index}")
+            type_label = _reference_type_label(_text(reference.get("asset_type")))
+            lines.append(f"图{index}是{type_label}{name}")
     return "\n".join(lines)
+
+
+def _reference_type_label(asset_type: str) -> str:
+    return {
+        "character": "角色",
+        "scene": "场景",
+        "location": "场景",
+        "prop": "道具",
+    }.get(asset_type, "")
+
+
+def _split_generation_rules(generation_rules: str) -> tuple[str, str]:
+    style_lines: list[str] = []
+    requirement_lines: list[str] = []
+    for raw_line in generation_rules.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("风格指令："):
+            style_lines.append(line.removeprefix("风格指令：").strip())
+        elif line.startswith("画面风格关键词："):
+            style_lines.append(line.removeprefix("画面风格关键词：").strip())
+        elif line.startswith(("角色一致性：", "时代背景：", "透视与构图：", "场景建筑比例：")):
+            requirement_lines.append(line.split("：", 1)[1].strip())
+        else:
+            style_lines.append(line)
+    return "\n".join(style_lines).strip(), "\n".join(requirement_lines).strip()
 
 
 def _description_with_reference_numbers(
@@ -401,10 +437,11 @@ def _inside_location_phrase(text: str, start: int, end: int) -> bool:
 
 def _default_generation_rules() -> str:
     return (
-        "风格指令：参考《罗小黑战记》的线条、色彩逻辑和视觉质感生成高质量漫画。\n"
-        "角色一致性：保持参考图人物比例、武器和关键服饰一致。\n"
-        "时代背景：中国古代，以水浒传为背景。\n"
-        "透视与构图：强纵深、前中后景分层、漫画分格画面。"
+        "风格指令：请参考《罗小黑战记》的线条、色彩逻辑和视觉质感生成高质量，细节丰富，富有张力的漫画，线条是典型的矢量图风格，干净且流畅，色彩无复杂渐变，轮廓线利落，阴影较浅，边缘锐利，阴影偏冷色调，注意，所有角色都是胶囊形设计（达摩式 / 蛋形），下半身是个球，没有腿。strict perspective with foreshortening, near objects large far objects small, strong depth of field, layered foreground-midground-background composition. digital illustration, chibi style, children's book art style, manhwa style, clean lineart, soft cel shading, vibrant colors, dynamic action atmosphere, masterpiece, best quality, 8k\n"
+        "角色一致性：保持人物武器和参考完全一致，人物比例不变，所有角色为达摩/不倒翁体型：上半身正常比例，下半身为圆润饱满的半球形底部，完全没有腿部、没有膝盖、没有脚踝、没有足部。\n"
+        "时代背景：场景细节丰富，注意！时代背景在中国古代，以水浒传为背景，请根据时代背景和当前情景设计环境和物件，使装饰和场景内的物体丰富，并和角色风格一致。\n"
+        "透视与构图：严格遵守近大远小的透视关系，透视线在体现强烈的空间纵深感，前景遮挡感强烈，注意，每个分格的消失点必须统一，如果有超过一个分格，分格应该采用不规则的梯形与矩形组合排版，打破平庸的视觉节奏。\n"
+        "场景建筑比例：场景建筑比例也要符合 chibi style。"
     )
 
 

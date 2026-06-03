@@ -10,7 +10,7 @@ set "XIAGENT_API_SCRIPT=%XIAGENT_ROOT%\xiagent\api\start-api.bat"
 set "XIAGENT_V2_SCRIPT=%XIAGENT_ROOT%\ui\V2\start-v2.bat"
 
 if not defined XIAGENT_API_HOST set "XIAGENT_API_HOST=127.0.0.1"
-if not defined XIAGENT_API_PORT set "XIAGENT_API_PORT=8000"
+if not defined XIAGENT_API_PORT set "XIAGENT_API_PORT=8008"
 if not defined XIAGENT_V2_HOST set "XIAGENT_V2_HOST=127.0.0.1"
 if not defined XIAGENT_V2_PORT set "XIAGENT_V2_PORT=5174"
 

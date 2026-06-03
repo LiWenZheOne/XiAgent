@@ -707,9 +707,9 @@ def test_asset_catalog_generate_prompt_output_schema(test_settings) -> None:
                     "asset_type": "character",
                     "asset_name": "林冲",
                     "asset_tags": ["囚服"],
-                    "target_appearance_description": "黑灰短发，眉眼锋利，短须明显，上身灰色囚衣，保持大圆头、圆鼓身体、短小四肢、简化五官、粗黑描边、平涂色块和圆润卡通比例。",
+                    "target_appearance_description": "黑灰短发，眉眼锋利，短须明显，上身灰色囚衣，气质沉稳。",
                     "think": "角色当前状态为囚服，默认变体为官服，需将官服改为囚服。",
-                    "prompt": "黑灰短发，眉眼锋利，短须明显，上身灰色囚衣，保持大圆头、圆鼓身体、短小四肢、简化五官、粗黑描边、平涂色块和圆润卡通比例不变",
+                    "prompt": "请将图中角色改成一位黑灰短发、眉眼锋利、短须明显、上身灰色囚衣、气质沉稳的角色",
                     "reference_image_ref": {
                         "kind": "data_uri",
                         "data": "data:image/png;base64,dGVtcGxhdGU=",
@@ -738,67 +738,66 @@ def test_asset_catalog_generate_prompt_is_character_design_text() -> None:
         "asset_type",
         "asset_name",
         "asset_tags",
-        "appearance_description",
-        "description",
+        "target_appearance_description",
         "reference_appearance_description",
     ]
     assert generate_prompt["inputs"]["passthrough_fields"]["value"] == [
         "asset_type",
         "asset_name",
         "asset_tags",
+        "target_appearance_description",
     ]
     assert "reference_image_ref" not in nodes_by_id["generate_prompt"]["outputs"]["properties"]["results"]["items"]["required"]
     assert "视觉资产设定提示词专家" in system_prompt
     assert "图生图使用的修改提示词" in system_prompt
-    assert "只写画面可见的外形特征与气质" in system_prompt
-    assert "发型、眉毛、胡子、眼睛" in system_prompt
-    assert "大圆头、圆鼓身体、无腿，下半身是个类似不倒翁的半球" in system_prompt
-    assert "不得改成写实人体、长身比例或其他体型结构" in system_prompt
-    assert "不写动作、姿态、表情" in system_prompt
-    assert "受伤、疲惫、奔跑、打斗、被绑" in system_prompt
-    assert "腿部、脚部、脚踝、鞋、靴、鞋履" in system_prompt
-    assert "地点描述空间结构、建筑/地貌、时代质感" in system_prompt
-    assert "角色描述不得包含任何材质" in system_prompt
-    assert "道具描述形制、材质、颜色、装饰" in system_prompt
-    assert "必须先根据 asset_type 区分角色、地点、道具" in system_prompt
-    assert "禁止把角色句式套到地点或道具上" in system_prompt
+    assert "只写资产本体的可见目标设定" in system_prompt
+    assert "角色优先写圆形脸/圆形头部轮廓、头面外貌、气质、发型/头饰、上身服装层次、颜色搭配、身份识别性上身装饰和必要上身配件" in system_prompt
+    assert "角色最终提示词必须明确脸部/头部轮廓保持圆形或圆鼓头" in system_prompt
+    assert "在圆形脸基础上设计夸张但简洁的眉眼、极简鼻、图案化胡须等面部识别特征" in system_prompt
+    assert "用眉形、眼型和胡须形状表达身份、年龄与性格气质" in system_prompt
+    assert "五官保持图案化、圆润、清晰" in system_prompt
+    assert "头发和头饰承担身份识别" in system_prompt
+    assert "不得写成长脸、方脸、瘦削脸、尖脸或写实面部轮廓" in system_prompt
+    assert "风格只作为边界约束，不作为输出内容" in system_prompt
+    assert "人名、身份履历、剧情动作、临时状态、表情、镜头、场景气氛" in system_prompt
+    assert "角色最终提示词不得描述任何下半身内容，包括腿、脚、鞋履、下装、下肢、四肢长短" in system_prompt
+    assert "不得用“球形整体”“无腿”等概括说明下半身" in system_prompt
+    assert "这些只作为内部边界，不能写入输出" in system_prompt
+    assert "短小四肢" not in prompt_template
+    assert "材质、布料质感、纹理或面料工艺" in system_prompt
+    assert "地点写空间结构、建筑/地貌、布局、摆设、时代视觉元素" in system_prompt
+    assert "道具写物件本体的形制、颜色、装饰、磨损、用途和可见特征" in system_prompt
+    assert "必须先按 asset_type 区分 character、scene、prop" in system_prompt
     assert "必须保留“图中的道具”这个对象" in system_prompt
     assert "不得写成“图中的{asset_name}改成”" in system_prompt
-    assert "asset_name 为“缆绳”时应写“请将图中的道具改成一条缆绳”" in system_prompt
-    assert "asset_tags 只能作为用途、类别、形制或风格补充" in system_prompt
     assert "当前资产" in prompt_template
-    assert "先读取 asset_type：character 是角色，scene 是地点/场景，prop 是道具" in prompt_template
-    assert "asset_name 只用于理解目标对象" in prompt_template
-    assert "最终外貌描述和 prompt 不得输出人名" in prompt_template
-    assert "渔户、村民、公差、兵丁、随从、店小二" in system_prompt
-    assert "不得因为信息不足输出“或”“可能”“可选”“任选”“一类”等不确定造型" in system_prompt
-    assert "原作对应桥段" in system_prompt
-    assert "必须选择一个确定方案" in prompt_template
-    assert "不得包含“或”“可能”“可选”“任选”“一类”等不确定表达" in prompt_template
-    assert "appearance_description 描述了哪些目标外貌" in prompt_template
-    assert "reference_appearance_description 描述了哪些原始外貌" in prompt_template
-    assert "目标外貌和参考图外貌之间的差异是什么" in prompt_template
-    assert "哪些剧情、动作、状态、腿脚和鞋履信息必须排除" in prompt_template
-    assert "空间、建筑/地貌、时代质感、用途和关键视觉元素" in prompt_template
-    assert "asset_name 指向的物件本体是什么" in prompt_template
-    assert "asset_tags 只说明类别、用途、形制或稳定特征，不改变主体" in prompt_template
-    assert "形制、材质、颜色、装饰、磨损、用途和可见特征" in prompt_template
-    assert "target_appearance_description" in prompt_template
+    assert "请用提问式思维链完成判断" in prompt_template
+    assert "asset_type 是 character、scene 还是 prop" in prompt_template
+    assert "哪些外貌和气质必须替换或补足" in prompt_template
+    assert "如何在圆形脸/圆形头部轮廓不变的前提下" in prompt_template
+    assert "用夸张但简洁的眉形、眼型、极简鼻、图案化胡须、发型/头饰体现身份、气质和年龄" in prompt_template
+    assert "能让角色更具体、更可画" in prompt_template
+    assert "最终 prompt 不得出现任何下半身内容，包括腿、脚、鞋履、下装" in prompt_template
+    assert "不得写球形下半身等概括说明" in prompt_template
+    assert "最合理的一种确定造型是什么" in prompt_template
+    assert "如果是地点：这个场景的空间结构、建筑/地貌、布局、摆设、时代视觉元素和用途分别是什么" in prompt_template
+    assert "如果是道具：这个物件的主体、形制、颜色、装饰、磨损、用途和可见特征分别是什么" in prompt_template
+    assert "最终提示词是否只保留可见目标设定" in prompt_template
+    assert "- asset_name" not in prompt_template
+    assert "- asset_tags" not in prompt_template
+    assert "- target_appearance_description" not in prompt_template
     assert "reference_image_ref" not in prompt_template
-    assert "不包含质量词" in prompt_template
-    assert "脸型、面部轮廓、体型、体貌、身材" in prompt_template
-    assert "材质、布料质感、纹理或面料工艺" in prompt_template
     assert "最终修改用的提示词" in prompt_template
     assert "character：以“请将图中角色改成一位……”开头" in prompt_template
+    assert "只写稳定人物圆形脸/圆形头部轮廓、图案化眉眼、极简鼻、图案化胡须" in prompt_template
+    assert "不输出任何下半身内容" in prompt_template
+    assert "不输出画风词、质量词或模型参数" in prompt_template
     assert "scene：以“请将图中场景改成……”开头" in prompt_template
     assert "prop：以“请将图中的道具改成……”开头" in prompt_template
     assert "例如缆绳必须写成“请将图中的道具改成一条缆绳……”" in prompt_template
     assert "不得写成“请将图中的缆绳改成……”" in prompt_template
     assert "不得写成人物、身份、场景或把“船用、绑扎”等标签当成主体" in prompt_template
     assert "以请将图中（角色/场景/道具）改成一位xx性格" not in prompt_template
-    assert "明确保持大圆头、圆鼓身体、短小四肢、简化五官、粗黑描边、平涂色块和圆润卡通比例不变" in prompt_template
-    assert "不得包含人名、角色名" in prompt_template
-    assert "身份、职业、阶层、官职、称号、人物关系、阵营、剧情身份" in prompt_template
 
 
 def test_asset_catalog_extract_prompt_includes_key_instructions() -> None:
@@ -826,7 +825,16 @@ def test_asset_catalog_extract_prompt_includes_key_instructions() -> None:
     assert "这段剧本中一共出现、在场、发言、行动或被明确提到的角色有哪些" in system_prompt
     assert "候选角色清单" in system_prompt
     assert "当前剧本属于原作的哪个剧情阶段" in system_prompt
+    assert "接收禀报、回应、下令、增派、调拨、任命、带队、押送、审问、指挥" in system_prompt
+    assert "官职称谓、身份称谓或多人合称只要在当前场景中真实发言、被禀报、做出决定或执行命令" in system_prompt
+    assert "最终防漏检查" in system_prompt
+    assert "被禀报者、下令者、调度者、执行者" in system_prompt
     assert "每个角色的长相是什么样的" in system_prompt
+    assert "角色脸部/头部轮廓必须保持圆形或圆鼓头" in system_prompt
+    assert "只在圆形脸的基础上设计夸张但简洁的眉眼、极简鼻、胡须和发型/头饰" in system_prompt
+    assert "眉形、眼型和胡须形状要用于表达身份、年龄和性格气质" in system_prompt
+    assert "五官应图案化、圆润、清晰" in system_prompt
+    assert "圆形脸/圆形头部轮廓" in prompt_template
     assert "在当前情景下应该是什么造型" in system_prompt
     assert "这个稳定造型应该叫什么标签" in system_prompt
     assert "被绑起来" in system_prompt
@@ -837,7 +845,7 @@ def test_asset_catalog_extract_prompt_includes_key_instructions() -> None:
     assert "至少 40 字" in system_prompt
     assert "不要描述任何材质、布料质感、纹理或面料工艺" in system_prompt
     assert "不得包含服装、配件或类型前缀" in prompt_template
-    assert "按 system 中 12 个问题整理" in prompt_template
+    assert "按 system 中 13 个问题整理" in prompt_template
     assert "asset_tags" in prompt_template
     assert "不得包含服装、配件或类型前缀" in prompt_template
     assert "回答\"这个角色的稳定视觉设定是什么？\"" in prompt_template
@@ -1285,9 +1293,9 @@ class FakeAssetCatalogRouter(ChatModelRouter):
             # generate_prompt
             (
                 '{"asset_type": "character", "asset_name": "林冲", "asset_tags": ["囚服"], '
-                '"target_appearance_description": "黑灰短发，眉眼锋利，短须明显，上身灰色囚衣，保持大圆头、圆鼓身体、短小四肢、简化五官、粗黑描边、平涂色块和圆润卡通比例。", '
+                '"target_appearance_description": "黑灰短发，眉眼锋利，短须明显，上身灰色囚衣，气质沉稳。", '
                 '"think": "角色当前状态为囚服，默认变体为官服，需将官服改为囚服。", '
-                '"prompt": "黑灰短发，眉眼锋利，短须明显，上身灰色囚衣，保持大圆头、圆鼓身体、短小四肢、简化五官、粗黑描边、平涂色块和圆润卡通比例不变"}'
+                '"prompt": "请将图中角色改成一位黑灰短发、眉眼锋利、短须明显、上身灰色囚衣、气质沉稳的角色"}'
             ),
             # summarize_episode
             (
@@ -1360,9 +1368,9 @@ class FakeAssetCatalogRouter(ChatModelRouter):
         elif "视觉资产设定提示词专家" in request_text:
             text = (
                 '{"asset_type": "character", "asset_name": "林冲", "asset_tags": ["囚服"], '
-                '"target_appearance_description": "黑灰短发，眉眼锋利，短须明显，上身灰色囚衣，保持大圆头、圆鼓身体、短小四肢、简化五官、粗黑描边、平涂色块和圆润卡通比例。", '
+                '"target_appearance_description": "黑灰短发，眉眼锋利，短须明显，上身灰色囚衣，气质沉稳。", '
                 '"think": "角色当前状态为囚服，默认变体为官服，需将官服改为囚服。", '
-                '"prompt": "黑灰短发，眉眼锋利，短须明显，上身灰色囚衣，保持大圆头、圆鼓身体、短小四肢、简化五官、粗黑描边、平涂色块和圆润卡通比例不变"}'
+                '"prompt": "请将图中角色改成一位黑灰短发、眉眼锋利、短须明显、上身灰色囚衣、气质沉稳的角色"}'
             )
         elif "请为以下剧本生成集剧情概括" in request_text:
             text = (

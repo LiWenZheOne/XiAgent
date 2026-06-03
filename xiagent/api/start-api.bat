@@ -4,7 +4,7 @@ setlocal
 cd /d "%~dp0..\.."
 
 if not defined XIAGENT_API_HOST set "XIAGENT_API_HOST=127.0.0.1"
-if not defined XIAGENT_API_PORT set "XIAGENT_API_PORT=8000"
+if not defined XIAGENT_API_PORT set "XIAGENT_API_PORT=8008"
 
 where python >nul 2>nul
 if errorlevel 1 (

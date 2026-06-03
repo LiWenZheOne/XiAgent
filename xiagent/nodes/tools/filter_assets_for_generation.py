@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -95,7 +96,7 @@ class FilterAssetsForGenerationNode(BaseNode):
                     matched_asset_count += 1
                     continue
                 filtered_items.append(
-                    await _with_reference_context(ctx, dict(item))
+                    await _with_reference_context(ctx, _with_target_appearance_description(dict(item)))
                 )
             filtered[key] = filtered_items
 
@@ -128,6 +129,53 @@ def _is_existing_asset(item: Mapping[str, Any]) -> bool:
         if isinstance(value, str) and value.strip():
             return True
     return False
+
+
+def _with_target_appearance_description(item: dict[str, Any]) -> dict[str, Any]:
+    is_character = _asset_type(item) == "character"
+    existing = _optional_text(item.get("target_appearance_description"))
+    if existing:
+        item["target_appearance_description"] = _clean_target_appearance_description(existing, is_character)
+        return item
+    for key in ("appearance_description", "description"):
+        value = _optional_text(item.get(key))
+        if value:
+            item["target_appearance_description"] = _clean_target_appearance_description(value, is_character)
+            return item
+    for key in ("asset_name", "name"):
+        value = _optional_text(item.get(key))
+        if value:
+            item["target_appearance_description"] = value
+            return item
+    return item
+
+
+def _asset_type(item: Mapping[str, Any]) -> str:
+    for key in ("asset_type", "type"):
+        value = _optional_text(item.get(key))
+        if value:
+            return value
+    return ""
+
+
+_LOWER_BODY_PATTERN = re.compile(r"下半身|下肢|腿|脚|足部|鞋|靴|裤|下装|裙摆|膝|踝|四肢|球形整体")
+
+
+def _clean_target_appearance_description(value: str, is_character: bool) -> str:
+    if not is_character:
+        return value
+
+    parts = re.split(r"([，,；;。！？!?])", value)
+    kept: list[str] = []
+    for index in range(0, len(parts), 2):
+        text = parts[index]
+        separator = parts[index + 1] if index + 1 < len(parts) else ""
+        if not text.strip() or _LOWER_BODY_PATTERN.search(text):
+            continue
+        kept.append(text.strip() + separator)
+
+    cleaned = "".join(kept).strip(" ，,；;。！？!?")
+    return cleaned or "角色头面与上身外貌待补充。"
 
 
 async def _with_reference_context(

@@ -1992,6 +1992,7 @@ dd {
 
 .storyboard-card-workspace {
   align-items: stretch;
+  --storyboard-workspace-height: clamp(420px, 46vh, 540px);
   display: grid;
   grid-template-columns: minmax(280px, 0.88fr) minmax(360px, 1.12fr);
   gap: 14px;
@@ -2001,11 +2002,16 @@ dd {
 .storyboard-editor-column {
   display: grid;
   gap: 12px;
+  height: var(--storyboard-workspace-height);
   min-width: 0;
 }
 
+.storyboard-frame-column {
+  grid-template-rows: minmax(0, 1fr);
+}
+
 .storyboard-editor-column {
-  grid-template-rows: minmax(320px, 1fr) auto;
+  grid-template-rows: minmax(260px, 1fr) auto;
 }
 
 .storyboard-panel-preview {
@@ -2036,7 +2042,8 @@ dd {
   display: grid;
   gap: 10px;
   grid-template-rows: auto minmax(0, 1fr);
-  min-height: 300px;
+  height: 100%;
+  min-height: 0;
   overflow: hidden;
   padding: 10px;
   background: var(--surface-soft);
@@ -2068,7 +2075,8 @@ dd {
   grid-template-columns: 1fr;
   gap: 12px;
   min-height: 0;
-  overflow: auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 0;
 }
 
@@ -2160,11 +2168,41 @@ dd {
   padding: 8px 10px;
 }
 
+.storyboard-prompt-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.storyboard-panel-count-field {
+  align-items: center;
+  color: var(--muted);
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 800;
+  gap: 6px;
+}
+
+.storyboard-panel-count-field input {
+  height: 30px;
+  min-height: 30px;
+  padding: 0 6px;
+  text-align: center;
+  width: 56px;
+}
+
 .storyboard-prompt-editor header span,
 .storyboard-image-pool-head span {
   color: #344054;
   font-size: 13px;
   font-weight: 800;
+}
+
+.storyboard-prompt-editor header .storyboard-panel-count-field span {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .storyboard-mini-button {
@@ -4683,6 +4721,23 @@ textarea.asset-summary-cell-input {
   border-top: 1px solid var(--line);
 }
 
+.asset-script-field textarea {
+  height: clamp(220px, 30vh, 340px);
+  min-height: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  resize: vertical;
+  font: inherit;
+  line-height: 1.65;
+}
+
+.error-text {
+  margin: 0;
+  color: #b42318;
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .asset-field-section {
   display: grid;
   gap: 10px;
@@ -4904,6 +4959,15 @@ textarea.asset-summary-cell-input {
   .episode-catalog-columns,
   .storyboard-card-workspace {
     grid-template-columns: 1fr;
+  }
+
+  .storyboard-generated-pool {
+    height: clamp(300px, 42vh, 520px);
+  }
+
+  .storyboard-frame-column,
+  .storyboard-editor-column {
+    height: auto;
   }
 
   .episode-context-metrics {

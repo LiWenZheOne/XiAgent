@@ -13,6 +13,7 @@ import {
   replaceAssetFile,
   searchAssets,
   updateAsset,
+  updateTextAsset,
   uploadAsset,
   uploadAssetWithMetadataCompletion,
 } from "../api/assets";
@@ -1868,6 +1869,14 @@ type TagAction = "create" | "delete" | null;
 type AssetLibraryScope = "combined" | "project" | "global";
 const ASSET_LIBRARY_PAGE_SIZE = 72;
 
+function isEpisodeMetadataAsset(asset: AssetRecord | null, tags: AssetTag[] = []): asset is AssetRecord {
+  if (!asset || asset.asset_type !== "text") return false;
+  const metadataType = String(asset.metadata?.type ?? "").trim();
+  return metadataType === "episode_metadata"
+    || metadataType === "集信息资产"
+    || tags.some((tag) => tag.name === "集元数据");
+}
+
 function AssetLibraryPage({
   projects,
   project,
@@ -1908,6 +1917,10 @@ function AssetLibraryPage({
   const [assetTagSavingId, setAssetTagSavingId] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
   const [assetDraft, setAssetDraft] = useState<AssetEditorDraft | null>(null);
+  const [assetScriptDraft, setAssetScriptDraft] = useState("");
+  const [assetScriptPayload, setAssetScriptPayload] = useState<Record<string, unknown> | null>(null);
+  const [assetScriptLoading, setAssetScriptLoading] = useState(false);
+  const [assetScriptError, setAssetScriptError] = useState("");
   const [replacingAssetId, setReplacingAssetId] = useState("");
   const [fullscreenAsset, setFullscreenAsset] = useState<AssetRecord | null>(null);
   const [batchMode, setBatchMode] = useState(false);
@@ -1997,6 +2010,7 @@ function AssetLibraryPage({
     return compatibleTags.filter((tag) => tag.name.toLowerCase().includes(keyword));
   }, [assetTagFilter, selectedAsset, tags]);
   const selectedAssetPublicUrl = selectedAsset ? assetPublicUrl(selectedAsset) : "";
+  const selectedAssetIsEpisodeMetadata = isEpisodeMetadataAsset(selectedAsset, currentAssetTags);
   const selectedTagNames = selectedTagIds
     .map((tagId) => tags.find((tag) => tag.tag_id === tagId)?.name)
     .filter((name): name is string => Boolean(name));
@@ -2010,6 +2024,10 @@ function AssetLibraryPage({
     setAssetRenameOpen(false);
     setAssetRenameName("");
     setAssetDraft(selectedAsset ? createAssetEditorDraft(selectedAsset) : null);
+    setAssetScriptDraft("");
+    setAssetScriptPayload(null);
+    setAssetScriptError("");
+    setAssetScriptLoading(false);
   }, [selectedAsset?.asset_id]);
 
   useEffect(() => {
@@ -2031,6 +2049,37 @@ function AssetLibraryPage({
       active = false;
     };
   }, [reloadKey, selectedAsset]);
+
+  useEffect(() => {
+    if (!selectedAssetIsEpisodeMetadata || !selectedAsset) return;
+    let active = true;
+    const projectId = selectedAsset.scope === "project" ? selectedAsset.project_id ?? project?.project_id : undefined;
+    setAssetScriptLoading(true);
+    setAssetScriptError("");
+    downloadAssetContent(selectedAsset.asset_id, projectId)
+      .then((blob) => blob.text())
+      .then((text) => {
+        if (!active) return;
+        const payload = parseEpisodeMetadataText(text);
+        if (!payload) {
+          setAssetScriptPayload(null);
+          setAssetScriptDraft("");
+          setAssetScriptError("集元数据正文不是可编辑的 JSON 结构。");
+          return;
+        }
+        setAssetScriptPayload(payload);
+        setAssetScriptDraft(editableMetadataValue(payload.source_script));
+      })
+      .catch((error) => {
+        if (active) setAssetScriptError(readableError(error, "剧本内容加载失败。"));
+      })
+      .finally(() => {
+        if (active) setAssetScriptLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [project?.project_id, selectedAsset, selectedAssetIsEpisodeMetadata]);
 
   async function handleUpload() {
     const cleanName = uploadName.trim();
@@ -2252,15 +2301,33 @@ function AssetLibraryPage({
   async function handleSaveAssetBusinessFields(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selectedAsset || !assetDraft) return;
+    const asset = selectedAsset;
     setAssetNameSaving(true);
+    setAssetScriptError("");
     setMessage("");
     try {
-      const metadata = applyAssetEditorDraft(selectedAsset.metadata, assetDraft);
-      const updated = await updateAsset({
-        asset_id: selectedAsset.asset_id,
-        name: assetDraft.name.trim() || selectedAsset.name,
-        metadata,
-      });
+      const metadata = applyAssetEditorDraft(asset.metadata, assetDraft);
+      let updated: AssetRecord;
+      if (selectedAssetIsEpisodeMetadata) {
+        if (!assetScriptPayload) {
+          setAssetScriptError("集元数据正文缺少可保存的原剧本结构。");
+          return;
+        }
+        const nextPayload = { ...assetScriptPayload, source_script: assetScriptDraft };
+        updated = await updateTextAsset({
+          asset_id: asset.asset_id,
+          name: assetDraft.name.trim() || asset.name,
+          text: JSON.stringify(nextPayload, null, 2),
+          metadata,
+        });
+        setAssetScriptPayload(nextPayload);
+      } else {
+        updated = await updateAsset({
+          asset_id: asset.asset_id,
+          name: assetDraft.name.trim() || asset.name,
+          metadata,
+        });
+      }
       const syncedTags = await syncAssetTagsFromName(updated, updated.name);
       setAssets((current) => current.map((asset) => asset.asset_id === updated.asset_id ? updated : asset));
       setCurrentAssetTags(syncedTags);
@@ -2842,6 +2909,22 @@ function AssetLibraryPage({
                     )) : (
                       <p className="muted span-2">暂无 metadata 字段。</p>
                     )}
+                    {selectedAssetIsEpisodeMetadata ? (
+                      <label className="compact-field span-2 asset-script-field">
+                        <span>source_script</span>
+                        {assetScriptError ? <small className="error-text">{assetScriptError}</small> : null}
+                        <textarea
+                          aria-label="metadata source_script"
+                          disabled={assetScriptLoading || assetNameSaving || !assetScriptPayload}
+                          placeholder={assetScriptLoading ? "正在加载原剧本..." : "原剧本内容"}
+                          value={assetScriptDraft}
+                          onChange={(event) => {
+                            setAssetScriptDraft(event.target.value);
+                            setAssetScriptError("");
+                          }}
+                        />
+                      </label>
+                    ) : null}
                   </div>
                 </form>
               ) : null}
@@ -3612,6 +3695,18 @@ function applyAssetEditorDraft(metadata: AssetMetadata, draft: AssetEditorDraft)
     else delete next[field.key];
   }
   return next;
+}
+
+function parseEpisodeMetadataText(text: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    return null;
+  }
+  return null;
 }
 
 function metadataSortWeight(key: string): number {

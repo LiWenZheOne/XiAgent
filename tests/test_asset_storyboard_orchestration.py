@@ -367,6 +367,7 @@ def test_resolve_segment_image_refs_output_schema(test_settings) -> None:
                         "asset_type": "scene",
                         "asset_name": "野猪林",
                         "asset_tags": ["雪地"],
+                        "description": "野猪林雪路狭窄，两侧密林压迫，前景树干可作遮挡。",
                         "image_ref": {
                             "kind": "asset",
                             "asset_id": "asset-boar-forest",
@@ -393,6 +394,7 @@ def test_resolve_segment_image_refs_output_schema(test_settings) -> None:
                         {
                             "asset_type": "prop",
                             "asset_name": "花枪",
+                            "description": "林冲在雪地中持用的长柄花枪。",
                             "image_ref": {
                                 "kind": "asset",
                                 "asset_id": "asset-spear",
@@ -690,19 +692,20 @@ def test_review_convert_and_prompt_review_nodes(test_settings) -> None:
     assert "忠于计划" in prompt
     assert "画面提示词标准" in prompt
     assert "think：完整推理过程" in prompt
-    assert "先描述整体情节" in prompt
-    assert "每格分别有哪些角色" in prompt
-    assert "整页格子布局" in prompt
+    assert "成熟漫画分镜说明" in prompt
+    assert "分格形状、镜头机位、角度和景别" in prompt
+    assert "自然空间层级与主要遮挡" in prompt
+    assert "关键物件与材质状态" in prompt
+    assert "光源明暗投影和整体氛围" in prompt
     assert "必须严格等于 panel_plan.panel_count" in prompt
     assert "如果 panel_plan 只有 1 格" in prompt
     assert "必须与 panel_plan.panels 一一对应" in prompt
     assert "禁止新增分格、删除分格、合并分格、拆分分格或重排分格" in prompt
-    assert "前景/中景/背景各占画面大约多少" in prompt
-    assert "主体位于画面左/右/中央或上下哪个区域" in prompt
-    assert "角色面对镜头/背对镜头/侧对镜头或朝向哪里" in prompt
-    assert "道具与人物、门窗、桌案、道路、林木等空间边界的相对位置" in prompt
+    assert "禁止机械写占比" in prompt
+    assert "不要把场景扩写成道具清单" in prompt
+    assert "不写剧情来龙去脉、预示、象征解读" in prompt
     assert "不要使用 Markdown" in prompt
-    assert "组装到“## 画面内容”" in prompt
+    assert "组装到“画面：”" in prompt
     assert "不要拆成多字段对象" in prompt
     assert "目标 JSON 示例" in prompt
     assert convert_node["inputs"]["required_input_fields"]["value"] == ["scene_layout", "panel_plan"]
@@ -768,13 +771,16 @@ def test_review_convert_and_prompt_review_nodes(test_settings) -> None:
     assert "只检查 image_prompt 是否符合画面提示词标准" in prompt_review_prompt
     assert "不评价 panel_plan 本身是否最佳" in prompt_review_prompt
     assert "如果 panel_plan 本身不理想，也必须以它为既定事实" in prompt_review_prompt
-    assert "整体情节方向" in prompt_review_prompt
+    assert "只描述可见画面内容和情绪氛围" in prompt_review_prompt
     assert "声明的分格数量是否严格等于 panel_plan.panel_count" in prompt_review_prompt
     assert "每格出现的角色是否逐格对应 panel_plan" in prompt_review_prompt
-    assert "前景、中景、背景各占画面大约多少" in prompt_review_prompt
-    assert "每个镜头、空间和运动描述是否能看出画面目的" in prompt_review_prompt
+    assert "机械写“前景占多少、中景占多少、背景占多少”" in prompt_review_prompt
+    assert "关键物件是否少而准" in prompt_review_prompt
+    assert "光影是否具体写出光源位置、冷暖关系" in prompt_review_prompt
+    assert "多分格页面是否形成镜头节奏和情绪递进" in prompt_review_prompt
     assert "不能压缩成短摘要" in prompt_revision_prompt
     assert "必须重新覆盖 panel_plan.panels 的全部分格" in prompt_revision_prompt
+    assert "修订时禁止机械区域比例、道具清单" in prompt_revision_prompt
     assert "输出中的 think 写完整推理过程" in prompt_review_prompt
     assert "只返回 think 和 image_prompt" in prompt_revision_prompt
     assert "目标 JSON 示例" in prompt_review_prompt

@@ -138,14 +138,15 @@ async def test_filter_assets_for_generation_removes_existing_assets() -> None:
                         "matched": False,
                         "matched_asset_id": None,
                         "matched_asset_name": "",
+                        "appearance_description": "浓眉圆眼，僧衣上身，脚穿布鞋，气质豪放，下半身为球形整体。",
                     },
                 ],
                 "assets": [
                     {"type": "asset", "name": "野猪林", "matched": True, "matched_asset_name": "野猪林"},
-                    {"type": "asset", "name": "山神庙", "matched": False},
+                    {"type": "asset", "name": "山神庙", "matched": False, "description": "雪夜破庙，梁木倾斜，门窗残旧。"},
                 ],
                 "props": [
-                    {"type": "prop", "name": "水火棍", "matched": False},
+                    {"type": "prop", "name": "水火棍", "matched": False, "description": "长直棍棒，两端颜色深。"},
                 ],
             }
         },
@@ -164,6 +165,13 @@ async def test_filter_assets_for_generation_removes_existing_assets() -> None:
     assert [item["name"] for item in result.output["approved_assets"]["characters"]] == ["鲁智深"]
     assert [item["name"] for item in result.output["approved_assets"]["assets"]] == ["山神庙"]
     assert [item["name"] for item in result.output["approved_assets"]["props"]] == ["水火棍"]
+    character_description = result.output["approved_assets"]["characters"][0]["target_appearance_description"]
+    assert character_description == "浓眉圆眼，僧衣上身，气质豪放"
+    assert "脚" not in character_description
+    assert "鞋" not in character_description
+    assert "下半身" not in character_description
+    assert result.output["approved_assets"]["assets"][0]["target_appearance_description"] == "雪夜破庙，梁木倾斜，门窗残旧。"
+    assert result.output["approved_assets"]["props"][0]["target_appearance_description"] == "长直棍棒，两端颜色深。"
 
 
 async def test_filter_assets_for_generation_reports_empty_generation_branch() -> None:
@@ -533,6 +541,7 @@ async def test_prepare_storyboard_panel_cards_builds_cards() -> None:
                 "storyboard_options": {"no_material": False, "enrich_description": False},
             },
             "generation_rules": "风格指令：参考《罗小黑战记》。",
+            "negative_prompt": "low quality",
         },
     )
 
@@ -574,20 +583,22 @@ async def test_prepare_storyboard_panel_cards_builds_cards() -> None:
             "source": "asset",
         },
     ]
-    assert card["prompt"].startswith("## 参考图对应关系\n- 林冲：参考图1")
-    assert "## 参考图对应关系\n- 林冲：参考图1\n- 鲁智深：参考图2\n- 野猪林：参考图3\n- 花枪：参考图4" in card["prompt"]
-    assert "## 画面内容\n单个大分格" in card["prompt"]
-    assert card["prompt"].endswith("## 画面风格关键词\n风格指令：参考《罗小黑战记》。")
-    assert card["prompt"].index("## 参考图对应关系") < card["prompt"].index("## 画面内容")
-    assert card["prompt"].index("## 画面内容") < card["prompt"].index("## 画面风格关键词")
+    assert card["prompt"].startswith("画风：\n参考《罗小黑战记》。")
+    assert "参考图：\n图1是角色林冲\n图2是角色鲁智深\n图3是场景野猪林\n图4是道具花枪" in card["prompt"]
+    assert "画面：\n单个大分格" in card["prompt"]
+    assert card["prompt"].endswith("Negative Prompt： low quality")
+    assert card["prompt"].index("画风：") < card["prompt"].index("参考图：")
+    assert card["prompt"].index("参考图：") < card["prompt"].index("画面：")
+    assert card["prompt"].index("画面：") < card["prompt"].index("Negative Prompt：")
     assert "林冲（参考图1）背对镜头踏雪前行" in card["prompt"]
     assert "鲁智深（参考图2）侧对镜头守在树后" in card["prompt"]
     assert "画面内容提示词" not in card["prompt"]
+    assert "## 画面内容" not in card["prompt"]
+    assert "## 画面风格关键词" not in card["prompt"]
     assert "低机位远中景" in card["prompt"]
     assert "形成斜向纵深" in card["prompt"]
     assert "style" not in card
     assert "constraints" not in card
-    assert "画风" not in card["prompt"]
     assert "额外约束" not in card["prompt"]
     assert "补充生成规则" not in card["prompt"]
     assert "固定图像生成规则" not in card["prompt"]
@@ -670,9 +681,9 @@ async def test_prepare_storyboard_panel_cards_marks_numbered_group_characters() 
     )
 
     card = result.output["panel_cards"][0]
-    assert "何涛：参考图1" in card["prompt"]
-    assert "捕盗巡检：参考图2" in card["prompt"]
-    assert "官兵：参考图3" in card["prompt"]
+    assert "图1是角色何涛" in card["prompt"]
+    assert "图2是角色捕盗巡检" in card["prompt"]
+    assert "图3是角色官兵" in card["prompt"]
     assert "官兵（参考图3）1背对镜头登船" in card["prompt"]
     assert "官兵（参考图3）2侧对镜头回望" in card["prompt"]
     assert "何涛（参考图1）面对镜头指挥" in card["prompt"]
