@@ -58,7 +58,7 @@ interface AssetNameConflictDialog {
   scopeLabel: string;
 }
 
-interface AssetImagePreview {
+export interface AssetImagePreview {
   name: string;
   url: string;
 }
@@ -969,7 +969,7 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
-function AssetImageFullscreenViewer({ image, onClose }: { image: AssetImagePreview; onClose: () => void }) {
+export function AssetImageFullscreenViewer({ image, onClose }: { image: AssetImagePreview; onClose: () => void }) {
   const [scale, setScale] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [dragging, setDragging] = useState(false);

@@ -255,14 +255,12 @@ const controlPreviewFixtures: Record<string, ControlPreviewFixture[]> = {
         input_snapshot: {
           panel_cards: [
             {
-              card_id: "segment-0-panel-0",
+              card_id: "segment-0",
               segment_index: 0,
               panel_index: 0,
               segment_title: "雪夜野猪林",
               description: "林冲踏雪进入野猪林，远处树影压低。",
-              style: "国风动画漫画分镜，冷色雪夜。",
-              constraints: "保持林冲囚服、毡笠和花枪一致。",
-              prompt: "分镜描述\n林冲踏雪进入野猪林，远处树影压低。\n\n画风\n国风动画漫画分镜，冷色雪夜。",
+              prompt: "分镜描述\n林冲踏雪进入野猪林，远处树影压低。",
               image_refs: [sampleImageRefs[0]],
               reference_images: [
                 {

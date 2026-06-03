@@ -770,6 +770,17 @@ describe("node-ui controls", () => {
 
   it("renders storyboard panel cards and submits edited panel results", async () => {
     const onSubmit = vi.fn();
+    let thumbnailIndex = 0;
+    Object.defineProperty(URL, "createObjectURL", { value: vi.fn(() => `blob:storyboard-thumb-${thumbnailIndex++}`), configurable: true });
+    Object.defineProperty(URL, "revokeObjectURL", { value: vi.fn(), configurable: true });
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/thumbnail?")) {
+        return Promise.resolve(new Response(new Blob(["thumb"], { type: "image/png" })));
+      }
+      return jsonResponse({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
     render(
       <StoryboardPanelCardsControl
         config={{ control_id: "ui.interaction.storyboard_panel_cards.v1", variant: "panel_review", mode: "interactive" }}
@@ -781,13 +792,11 @@ describe("node-ui controls", () => {
           input_snapshot: {
             panel_cards: [
               {
-                card_id: "segment-0-panel-0",
+                card_id: "segment-0",
                 segment_index: 0,
                 panel_index: 0,
                 segment_title: "雪夜",
                 description: "林冲踏雪前行。",
-                style: "国风漫画",
-                constraints: "保持囚服。",
                 prompt: "分镜描述\n林冲踏雪前行。",
                 reference_images: [
                   {
@@ -795,6 +804,87 @@ describe("node-ui controls", () => {
                     asset_type: "character",
                     asset_name: "林冲",
                     asset_tags: ["囚服"],
+                    image_ref: { kind: "asset", asset_id: "asset-linchong-ref", role: "reference" },
+                    source: "asset",
+                  },
+                ],
+                generated_images: [{ image_url: "https://cdn.example.com/storyboard-0.png", source: "ai_generated", asset_id: "asset-storyboard-0" }],
+                selected_image_url: "https://cdn.example.com/storyboard-0.png",
+                aspect_ratio: "16:9",
+                resolution: "2K",
+              },
+            ],
+          },
+        }}
+        onSubmit={onSubmit}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "雪夜" })).toBeInTheDocument();
+    expect(screen.getByLabelText("参考图像池")).toBeInTheDocument();
+    expect(screen.getByLabelText("生成图像池")).toBeInTheDocument();
+    expect(screen.getByText("已定稿")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "一键生成分镜" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "重新生成提示词" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/assets/asset-linchong-ref/thumbnail?size=256", expect.any(Object));
+      expect(fetchMock).toHaveBeenCalledWith("/api/assets/asset-storyboard-0/thumbnail?size=256", expect.any(Object));
+    });
+    expect(screen.getByRole("img", { name: "生成图 1" })).toHaveAttribute("src", expect.stringContaining("blob:storyboard-thumb-"));
+    await userEvent.click(screen.getByRole("button", { name: "全屏查看生成图 1" }));
+    expect(screen.getByRole("dialog", { name: "全屏查看 雪夜 分格 1 生成图 1" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "关闭" }));
+    expect(screen.getByRole("img", { name: "林冲 参考图" })).toHaveAttribute("src", expect.stringContaining("blob:storyboard-thumb-"));
+    expect(screen.getByText("资产")).toBeInTheDocument();
+    await userEvent.clear(screen.getByLabelText("分段提示词"));
+    await userEvent.type(screen.getByLabelText("分段提示词"), "新的分镜提示词");
+    await userEvent.click(screen.getByRole("button", { name: "完成并继续" }));
+
+    expect(onSubmit).toHaveBeenCalledWith({
+      decision: "finish",
+      panel_results: [
+        expect.objectContaining({
+          card_id: "segment-0",
+          prompt: "新的分镜提示词",
+          selected_image_url: "https://cdn.example.com/storyboard-0.png",
+          generated_images: [{ image_url: "https://cdn.example.com/storyboard-0.png", source: "ai_generated", asset_id: "asset-storyboard-0" }],
+          reference_images: [
+            expect.objectContaining({
+              label: "林冲",
+              asset_type: "character",
+              asset_name: "林冲",
+              image_ref: { kind: "asset", asset_id: "asset-linchong-ref", role: "reference" },
+            }),
+          ],
+        }),
+      ],
+    });
+  });
+
+  it("blocks storyboard panel submission until every card has a selected image", async () => {
+    const onSubmit = vi.fn();
+    render(
+      <StoryboardPanelCardsControl
+        config={{ control_id: "ui.interaction.storyboard_panel_cards.v1", variant: "panel_review", mode: "interactive" }}
+        node={{
+          node_execution_id: "exec-storyboard-panel-missing",
+          node_id: "review_storyboard_image",
+          node_ref: "system.human_approval.v1",
+          status: "waiting",
+          input_snapshot: {
+            panel_cards: [
+              {
+                card_id: "segment-0",
+                segment_index: 0,
+                panel_index: 0,
+                segment_title: "雪夜",
+                description: "林冲踏雪前行。",
+                prompt: "分镜描述\n林冲踏雪前行。",
+                reference_images: [
+                  {
+                    label: "林冲",
+                    asset_type: "character",
+                    asset_name: "林冲",
                     image_ref: { kind: "data_uri", data: "data:image/png;base64,cmVm", role: "reference" },
                     source: "asset",
                   },
@@ -809,33 +899,127 @@ describe("node-ui controls", () => {
       />,
     );
 
-    expect(screen.getByRole("heading", { name: "雪夜" })).toBeInTheDocument();
-    expect(screen.getByLabelText("参考图像池")).toBeInTheDocument();
-    expect(screen.getByLabelText("生成图像池")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "重新生成提示词" })).toBeInTheDocument();
-    expect(screen.getByRole("img", { name: "林冲 参考图" })).toHaveAttribute("src", "data:image/png;base64,cmVm");
-    expect(screen.getByText("资产")).toBeInTheDocument();
-    await userEvent.clear(screen.getByLabelText("分段提示词"));
-    await userEvent.type(screen.getByLabelText("分段提示词"), "新的分镜提示词");
+    expect(screen.getByText("缺少图像")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "完成并继续" }));
 
-    expect(onSubmit).toHaveBeenCalledWith({
-      decision: "finish",
-      panel_results: [
-        expect.objectContaining({
-          card_id: "segment-0-panel-0",
-          prompt: "新的分镜提示词",
-          reference_images: [
-            expect.objectContaining({
-              label: "林冲",
-              asset_type: "character",
-              asset_name: "林冲",
-              image_ref: { kind: "data_uri", data: "data:image/png;base64,cmVm", role: "reference" },
-            }),
-          ],
-        }),
-      ],
+    expect(screen.getByRole("dialog", { name: "缺少分镜图像" })).toBeInTheDocument();
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("restores storyboard generated images from saved interaction drafts after refresh", async () => {
+    render(
+      <StoryboardPanelCardsControl
+        config={{ control_id: "ui.interaction.storyboard_panel_cards.v1", variant: "panel_review", mode: "interactive" }}
+        node={{
+          node_execution_id: "exec-storyboard-panel-draft",
+          node_id: "review_storyboard_image",
+          node_ref: "system.human_approval.v1",
+          status: "waiting",
+          input_snapshot: {
+            panel_cards: [
+              {
+                card_id: "segment-0",
+                segment_index: 0,
+                panel_index: 0,
+                segment_title: "雪夜",
+                description: "林冲踏雪前行。",
+                prompt: "原始提示词",
+                reference_images: [],
+                aspect_ratio: "16:9",
+                resolution: "2K",
+              },
+            ],
+            panel_results: [
+              {
+                card_id: "segment-0",
+                segment_index: 0,
+                panel_index: 0,
+                segment_title: "雪夜",
+                prompt: "已保存提示词",
+                reference_images: [],
+                selected_image_url: "https://cdn.example.com/storyboard-draft.png",
+                generated_images: [{ image_url: "https://cdn.example.com/storyboard-draft.png", source: "ai_generated" }],
+              },
+            ],
+          },
+        }}
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("已定稿")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "生成图 1" })).toHaveAttribute("src", "https://cdn.example.com/storyboard-draft.png");
+    expect(screen.getByLabelText("分段提示词")).toHaveValue("已保存提示词");
+  });
+
+  it("appends regenerated storyboard images without replacing the selected image", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/assets/storyboard-panel-image") {
+        expect(JSON.parse(String(init?.body ?? "{}"))).toMatchObject({ card_id: "segment-0" });
+        return jsonResponse({ generation_id: "storyboard-generation-2", status: "queued" });
+      }
+      if (url === "/api/assets/generate-image/storyboard-generation-2") {
+        return jsonResponse({
+          generation_id: "storyboard-generation-2",
+          status: "succeeded",
+          result: {
+            card_id: "segment-0",
+            image_url: "https://cdn.example.com/storyboard-new.png",
+            source: "ai_generated",
+          },
+        });
+      }
+      return jsonResponse({ items: [] });
     });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <StoryboardPanelCardsControl
+        config={{ control_id: "ui.interaction.storyboard_panel_cards.v1", variant: "panel_review", mode: "interactive" }}
+        node={{
+          node_execution_id: "exec-storyboard-panel-regenerate",
+          node_id: "review_storyboard_image",
+          node_ref: "system.human_approval.v1",
+          status: "waiting",
+          input_snapshot: {
+            panel_cards: [
+              {
+                card_id: "segment-0",
+                segment_index: 0,
+                panel_index: 0,
+                segment_title: "雪夜",
+                description: "林冲踏雪前行。",
+                prompt: "分镜提示词",
+                reference_images: [
+                  {
+                    label: "林冲",
+                    asset_type: "character",
+                    asset_name: "林冲",
+                    image_ref: { kind: "data_uri", data: "data:image/png;base64,cmVm", role: "reference" },
+                    source: "asset",
+                  },
+                ],
+                generated_images: [{ image_url: "https://cdn.example.com/storyboard-old.png", source: "ai_generated" }],
+                selected_image_url: "https://cdn.example.com/storyboard-old.png",
+                aspect_ratio: "16:9",
+                resolution: "2K",
+              },
+            ],
+          },
+        }}
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "重新生成" }));
+
+    expect(await screen.findByRole("img", { name: "生成图 2" })).toHaveAttribute("src", "https://cdn.example.com/storyboard-new.png");
+    expect(screen.getByRole("img", { name: "生成图 1" })).toHaveAttribute("src", "https://cdn.example.com/storyboard-old.png");
+    expect(screen.getByText("2 张生成图")).toBeInTheDocument();
+    const selectedButtons = screen.getAllByRole("button").filter((button) => button.textContent?.includes("已选定稿"));
+    expect(selectedButtons).toHaveLength(1);
+    expect(selectedButtons[0].querySelector("img")).toHaveAttribute("src", "https://cdn.example.com/storyboard-old.png");
   });
 
   it("uses configured default reference assets in asset image cards when no match exists", async () => {
