@@ -43,6 +43,7 @@ class ResolveSegmentImageRefsNode(BaseNode):
                             "properties": {
                                 "segment_index": {"type": "integer", "minimum": 0},
                                 "location": {"type": "string"},
+                                "location_asset": _resolved_asset_schema(),
                                 "time": {"type": "string"},
                                 "characters": {
                                     "type": "array",
@@ -67,6 +68,10 @@ class ResolveSegmentImageRefsNode(BaseNode):
                                 "key_props": {
                                     "type": "array",
                                     "items": {"type": "string", "minLength": 1},
+                                },
+                                "prop_assets": {
+                                    "type": "array",
+                                    "items": _resolved_asset_schema(),
                                 },
                             },
                             "additionalProperties": False,
@@ -100,6 +105,18 @@ class ResolveSegmentImageRefsNode(BaseNode):
                     continue
                 resolved_characters.append(_resolve_character(character, catalog_lookup))
             resolved_assignment["characters"] = resolved_characters
+            location_asset = _resolve_named_asset(
+                asset_type="scene",
+                asset_name=_text(resolved_assignment.get("location")),
+                lookup=catalog_lookup,
+            )
+            if location_asset is not None:
+                resolved_assignment["location_asset"] = location_asset
+            resolved_assignment["prop_assets"] = [
+                asset
+                for name in _string_list(resolved_assignment.get("key_props"))
+                if (asset := _resolve_named_asset(asset_type="prop", asset_name=name, lookup=catalog_lookup)) is not None
+            ]
             resolved_assignments.append(resolved_assignment)
 
         return NodeResult(status="succeeded", output={"segment_assignments": resolved_assignments})
@@ -114,6 +131,21 @@ def _image_ref_schema() -> dict[str, Any]:
             "asset_id": {"type": "string", "minLength": 1},
             "data": {"type": "string", "minLength": 1},
             "role": {"type": "string"},
+        },
+        "additionalProperties": False,
+    }
+
+
+def _resolved_asset_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "required": ["asset_type", "asset_name", "image_ref"],
+        "properties": {
+            "asset_type": {"type": "string", "minLength": 1},
+            "asset_name": {"type": "string", "minLength": 1},
+            "asset_tags": {"type": "array", "items": {"type": "string"}},
+            "image_ref": _image_ref_schema(),
+            "image_url": {"type": "string"},
         },
         "additionalProperties": False,
     }
@@ -172,12 +204,39 @@ def _resolve_character(
     return result
 
 
+def _resolve_named_asset(
+    *,
+    asset_type: str,
+    asset_name: str,
+    lookup: Mapping[tuple[str, str], list[dict[str, Any]]],
+) -> dict[str, Any] | None:
+    if not asset_name:
+        return None
+    catalog_item = _best_catalog_item(lookup.get((asset_type, asset_name), []), [])
+    image_ref = _image_ref_from_item(catalog_item) if catalog_item is not None else None
+    if image_ref is None:
+        return None
+    normalized = normalize_asset_record(catalog_item or {}, default_asset_type=asset_type)
+    result: dict[str, Any] = {
+        "asset_type": _text(normalized.get("asset_type")) or asset_type,
+        "asset_name": _text(normalized.get("asset_name")) or asset_name,
+        "image_ref": image_ref,
+    }
+    asset_tags = _string_list(normalized.get("asset_tags"))
+    if asset_tags:
+        result["asset_tags"] = asset_tags
+    image_url = _image_url_from_item(catalog_item)
+    if image_url:
+        result["image_url"] = image_url
+    return result
+
+
 def _build_catalog_lookup(asset_catalog: Mapping[str, Any]) -> dict[tuple[str, str], list[dict[str, Any]]]:
     source = _mapping(asset_catalog.get("approved_assets")) or asset_catalog
     lookup: dict[tuple[str, str], list[dict[str, Any]]] = {}
 
-    for item in _iter_catalog_items(source):
-        normalized = normalize_asset_record(item, default_asset_type="character")
+    for item, default_asset_type in _iter_catalog_items(source):
+        normalized = normalize_asset_record(item, default_asset_type=default_asset_type)
         name = _text(normalized.get("asset_name"))
         if not name:
             continue
@@ -215,12 +274,12 @@ def _best_catalog_item(candidates: list[dict[str, Any]], target_tags: list[str])
     )
 
 
-def _iter_catalog_items(source: Mapping[str, Any]) -> list[Mapping[str, Any]]:
-    items: list[Mapping[str, Any]] = []
-    for key in ("characters", "assets", "props"):
+def _iter_catalog_items(source: Mapping[str, Any]) -> list[tuple[Mapping[str, Any], str]]:
+    items: list[tuple[Mapping[str, Any], str]] = []
+    for key, default_asset_type in (("characters", "character"), ("assets", "scene"), ("props", "prop")):
         value = source.get(key)
         if isinstance(value, list):
-            items.extend(item for item in value if isinstance(item, Mapping))
+            items.extend((item, default_asset_type) for item in value if isinstance(item, Mapping))
     return items
 
 

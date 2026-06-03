@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -79,42 +80,34 @@ class PrepareStoryboardPanelCardsNode(BaseNode):
             segment_index = _int(segment.get("index"), len(cards))
             segment_title = _text(segment.get("segment_title")) or f"段落 {segment_index + 1}"
             assignment = assignments.get(segment_index, {})
-            segment_context = _segment_context(assignment)
             source_item = items_by_index.get(segment_index, {})
 
-            for panel_index, panel in enumerate(_object_list(segment.get("panels"))):
-                description = _text(panel.get("description")) or "分镜画面"
-                style = _text(panel.get("style")) or "高质量漫画分镜"
-                constraints = _text(panel.get("constraints")) or "保持角色、服装、道具和场景连续性。"
-                visible_characters = _visible_character_names(panel.get("visible_characters"))
-                reference_images = _reference_images(assignment, visible_characters=visible_characters)
-                prompt = _assemble_prompt(
-                    description=description,
-                    style=style,
-                    constraints=constraints,
-                    aspect_ratio=aspect_ratio,
-                    resolution=resolution,
-                    generation_rules=generation_rules,
-                    segment_context=segment_context,
-                )
-                cards.append(
-                    {
-                        "card_id": f"segment-{segment_index}-panel-{panel_index}",
-                        "segment_index": segment_index,
-                        "panel_index": panel_index,
-                        "segment_title": segment_title,
-                        "description": description,
-                        "style": style,
-                        "constraints": constraints,
-                        "prompt": prompt,
-                        "negative_prompt": negative_prompt,
-                        "reference_images": reference_images,
-                        "visible_characters": visible_characters,
-                        "aspect_ratio": aspect_ratio,
-                        "resolution": resolution,
-                        "source_item": source_item,
-                    }
-                )
+            description = _text(segment.get("description")) or "分镜画面"
+            visible_characters = _present_character_names(assignment)
+            reference_images = _reference_images(assignment, visible_characters=visible_characters)
+            prompt = _assemble_prompt(
+                description=description,
+                aspect_ratio=aspect_ratio,
+                resolution=resolution,
+                generation_rules=generation_rules,
+                reference_images=reference_images,
+            )
+            cards.append(
+                {
+                    "card_id": f"segment-{segment_index}",
+                    "segment_index": segment_index,
+                    "panel_index": 0,
+                    "segment_title": segment_title,
+                    "description": description,
+                    "prompt": prompt,
+                    "negative_prompt": negative_prompt,
+                    "reference_images": reference_images,
+                    "visible_characters": visible_characters,
+                    "aspect_ratio": aspect_ratio,
+                    "resolution": resolution,
+                    "source_item": source_item,
+                }
+            )
 
         return NodeResult(
             status="succeeded",
@@ -135,8 +128,6 @@ def _panel_card_schema() -> dict[str, Any]:
             "panel_index",
             "segment_title",
             "description",
-            "style",
-            "constraints",
             "prompt",
             "reference_images",
             "aspect_ratio",
@@ -148,8 +139,6 @@ def _panel_card_schema() -> dict[str, Any]:
             "panel_index": {"type": "integer", "minimum": 0},
             "segment_title": {"type": "string", "minLength": 1},
             "description": {"type": "string", "minLength": 1},
-            "style": {"type": "string", "minLength": 1},
-            "constraints": {"type": "string", "minLength": 1},
             "prompt": {"type": "string", "minLength": 1},
             "negative_prompt": {"type": "string"},
             "reference_images": {
@@ -163,6 +152,7 @@ def _panel_card_schema() -> dict[str, Any]:
                         "asset_type": {"type": "string", "minLength": 1},
                         "asset_name": {"type": "string", "minLength": 1},
                         "asset_tags": {"type": "array", "items": {"type": "string"}},
+                        "reference_index": {"type": "integer", "minimum": 1},
                         "source": {"type": "string", "enum": ["asset", "upload"]},
                         "preview_url": {"type": "string"},
                     },
@@ -215,6 +205,7 @@ def _reference_images(
                 "asset_type": _text(normalized.get("asset_type")) or "character",
                 "asset_name": name,
                 "image_ref": dict(image_ref),
+                "reference_index": len(references) + 1,
                 "source": "asset",
             }
             asset_tags = _string_list(normalized.get("asset_tags"))
@@ -224,57 +215,177 @@ def _reference_images(
             if image_url:
                 item["preview_url"] = image_url
             references.append(item)
+    location_reference = _asset_reference(assignment.get("location_asset"), default_asset_type="scene", reference_index=len(references) + 1)
+    if location_reference is not None:
+        references.append(location_reference)
+    for prop in _object_list(assignment.get("prop_assets")):
+        prop_reference = _asset_reference(prop, default_asset_type="prop", reference_index=len(references) + 1)
+        if prop_reference is not None:
+            references.append(prop_reference)
     return references
 
 
-def _visible_character_names(value: Any) -> list[str]:
-    return _string_list(value)
+def _asset_reference(value: Any, *, default_asset_type: str, reference_index: int) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping):
+        return None
+    normalized = normalize_asset_record(value, default_asset_type=default_asset_type)
+    image_ref = value.get("image_ref")
+    name = _text(normalized.get("asset_name"))
+    if not name or not isinstance(image_ref, Mapping):
+        return None
+    item: dict[str, Any] = {
+        "label": name,
+        "asset_type": _text(normalized.get("asset_type")) or default_asset_type,
+        "asset_name": name,
+        "image_ref": dict(image_ref),
+        "reference_index": reference_index,
+        "source": "asset",
+    }
+    asset_tags = _string_list(normalized.get("asset_tags"))
+    if asset_tags:
+        item["asset_tags"] = asset_tags
+    image_url = _text(value.get("image_url"))
+    if image_url:
+        item["preview_url"] = image_url
+    return item
 
 
-def _segment_context(assignment: Mapping[str, Any]) -> str:
-    parts: list[str] = []
-    characters = []
+def _present_character_names(assignment: Mapping[str, Any]) -> list[str]:
+    names: list[str] = []
     for character in _object_list(assignment.get("characters")):
+        if _text(character.get("presence")) not in {"", "present"}:
+            continue
         name = _text(character.get("asset_name"))
-        tags = _string_list(character.get("asset_tags"))
         if name:
-            characters.append(f"{name}（{'、'.join(tags)}）" if tags else name)
-    if characters:
-        parts.append(f"出场角色：{'、'.join(characters)}")
-    location = _text(assignment.get("location"))
-    if location:
-        parts.append(f"地点：{location}")
-    key_props = [_text(item) for item in _list(assignment.get("key_props"))]
-    key_props = [item for item in key_props if item]
-    if key_props:
-        parts.append(f"关键道具：{'、'.join(key_props)}")
-    return "\n- ".join(parts)
+            names.append(name)
+    return names
 
 
 def _assemble_prompt(
     *,
     description: str,
-    style: str,
-    constraints: str,
     aspect_ratio: str,
     resolution: str,
     generation_rules: str,
-    segment_context: str,
+    reference_images: list[Mapping[str, Any]],
 ) -> str:
+    _ = aspect_ratio, resolution
+    reference_context = _reference_context(reference_images)
+    description = _description_with_reference_numbers(description, reference_images)
     parts = [
-        f"分镜描述\n{description}",
-        f"画风\n{style}",
-        f"额外约束\n{constraints}",
-        "固定图像生成规则\n"
-        f"- 画幅比例：{aspect_ratio}\n"
-        f"- 输出清晰度：{resolution}\n"
-        "- 严格参考输入图片中的角色、服装、道具和场景一致性。\n"
-        "- 不要在画面中添加文字、字幕、水印或无关标识。",
-        f"补充生成规则\n{generation_rules}",
+        f"画面风格约束\n{generation_rules}",
     ]
-    if segment_context:
-        parts.append(f"在场资产约束\n- {segment_context}")
+    if reference_context:
+        parts.append(f"参考图对应关系\n{reference_context}")
+    parts.extend(
+        [
+            f"分镜描述\n{description}",
+        ]
+    )
     return "\n\n".join(parts)
+
+
+def _reference_context(reference_images: list[Mapping[str, Any]]) -> str:
+    lines: list[str] = []
+    for reference in reference_images:
+        name = _text(reference.get("asset_name")) or _text(reference.get("label"))
+        index = _int(reference.get("reference_index"), len(lines) + 1)
+        if name:
+            lines.append(f"- {name}：参考图{index}")
+    return "\n".join(lines)
+
+
+def _description_with_reference_numbers(
+    description: str,
+    reference_images: list[Mapping[str, Any]],
+) -> str:
+    result = description
+    references = sorted(
+        [
+            (
+                _text(reference.get("asset_name")) or _text(reference.get("label")),
+                _int(reference.get("reference_index"), index + 1),
+                _text(reference.get("asset_type")),
+            )
+            for index, reference in enumerate(reference_images)
+        ],
+        key=lambda item: len(item[0]),
+        reverse=True,
+    )
+    for name, index, asset_type in references:
+        if not name:
+            continue
+        result = _annotate_reference_name(
+            result,
+            name=name,
+            reference_index=index,
+            asset_type=asset_type,
+        )
+    return result
+
+
+def _annotate_reference_name(
+    text: str,
+    *,
+    name: str,
+    reference_index: int,
+    asset_type: str,
+) -> str:
+    pattern = re.compile(rf"{re.escape(name)}(?!（参考图\d+）)")
+    parts: list[str] = []
+    cursor = 0
+    for match in pattern.finditer(text):
+        parts.append(text[cursor:match.start()])
+        if asset_type == "character" and _inside_location_phrase(text, match.start(), match.end()):
+            parts.append(match.group(0))
+        else:
+            parts.append(f"{match.group(0)}（参考图{reference_index}）")
+        cursor = match.end()
+    parts.append(text[cursor:])
+    return "".join(parts)
+
+
+_LOCATION_SUFFIXES = (
+    "庄院",
+    "宅院",
+    "院内",
+    "村",
+    "庄",
+    "院",
+    "宅",
+    "府",
+    "馆",
+    "楼",
+    "寺",
+    "庙",
+    "堂",
+    "寨",
+    "营",
+    "城",
+    "门",
+    "街",
+    "巷",
+    "桥",
+    "岸",
+    "湖",
+    "港",
+    "泊",
+    "岛",
+    "山",
+    "林",
+    "屋",
+    "房",
+)
+
+
+def _inside_location_phrase(text: str, start: int, end: int) -> bool:
+    prefix = text[max(0, start - 6):start]
+    suffix = text[end:end + 6]
+    if any(suffix.startswith(item) for item in _LOCATION_SUFFIXES):
+        return True
+    if any(item in suffix for item in _LOCATION_SUFFIXES) and any(item in prefix for item in ("村", "庄", "府", "院", "宅", "寺", "庙", "店", "寨")):
+        return True
+    return False
 
 
 def _default_generation_rules() -> str:

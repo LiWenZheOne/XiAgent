@@ -81,12 +81,10 @@ class AssembleSegmentContextNode(BaseNode):
             index = int(segment.get("index", 0))
             text = str(segment.get("text", "")).strip()
             panel_hint = str(segment.get("panel_hint", "1"))
-            panel_min = int(segment.get("panel_count_min", 1))
-            panel_max = int(segment.get("panel_count_max", 1))
 
             parts.append(f"--- 段落 {index} ---")
             parts.append(f"原文：{text}")
-            parts.append(f"建议分格数：{panel_hint}（最少 {panel_min} 格，最多 {panel_max} 格）")
+            parts.append(f"建议分格数：{panel_hint}")
 
             analysis = analysis_by_index.get(index)
             if analysis is not None:

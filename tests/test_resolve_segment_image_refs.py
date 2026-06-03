@@ -99,6 +99,65 @@ async def test_resolve_segment_image_refs_uses_catalog_structured_ref() -> None:
 
 
 @pytest.mark.asyncio
+async def test_resolve_segment_image_refs_resolves_location_and_props() -> None:
+    node = ResolveSegmentImageRefsNode()
+
+    result = await node.run(
+        None,
+        {
+            "segment_assignments": [
+                {
+                    "segment_index": 0,
+                    "location": "野猪林",
+                    "characters": [],
+                    "key_props": ["花枪"],
+                }
+            ],
+            "asset_catalog": {
+                "approved_assets": {
+                    "assets": [
+                        {
+                            "name": "地点_野猪林",
+                            "tags": ["地点", "野猪林"],
+                            "reference_image_ref": {
+                                "kind": "asset",
+                                "asset_id": "asset-boar-forest",
+                                "role": "reference",
+                            },
+                            "public_url": "https://cdn.test/forest.png",
+                        }
+                    ],
+                    "props": [
+                        {
+                            "name": "道具_花枪",
+                            "tags": ["道具", "花枪"],
+                            "asset_id": "asset-spear",
+                            "image_url": "https://cdn.test/spear.png",
+                        }
+                    ],
+                },
+            },
+        },
+    )
+
+    assignment = result.output["segment_assignments"][0]
+    assert assignment["location_asset"] == {
+        "asset_type": "scene",
+        "asset_name": "野猪林",
+        "image_ref": {"kind": "asset", "asset_id": "asset-boar-forest", "role": "reference"},
+        "image_url": "https://cdn.test/forest.png",
+    }
+    assert assignment["prop_assets"] == [
+        {
+            "asset_type": "prop",
+            "asset_name": "花枪",
+            "image_ref": {"kind": "asset", "asset_id": "asset-spear", "role": "reference"},
+            "image_url": "https://cdn.test/spear.png",
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_resolve_segment_image_refs_falls_back_to_asset_id() -> None:
     node = ResolveSegmentImageRefsNode()
 

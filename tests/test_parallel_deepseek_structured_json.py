@@ -173,6 +173,49 @@ async def test_parallel_node_template_interpolation() -> None:
 
 
 @pytest.mark.asyncio
+async def test_parallel_node_expands_item_and_shared_context_placeholders() -> None:
+    responses = ['{"name": "test"}']
+    router = FakeParallelRouter(responses)
+    node = ParallelDeepSeekStructuredJsonNode(
+        model_router=router,
+        provider="deepseek",
+        model="test-model",
+    )
+
+    await node.run(
+        None,
+        {
+            "items": [{"paragraph_text": "林冲踏雪。", "panel_count": "3-4"}],
+            "shared_context": {
+                "full_script": "完整剧本",
+                "prompt_rules": {
+                    "material_rule": "- 不写材质。",
+                    "enrich_rule": "- 增加空间深度。",
+                },
+            },
+            "prompt_template": (
+                "完整：{full_script}\n"
+                "原文：{paragraph_text}\n"
+                "建议分格数：{panel_count}\n"
+                "{material_rule}\n"
+                "{enrich_rule}\n"
+                "未知：{missing_value}"
+            ),
+            "prompt_fields": ["paragraph_text", "panel_count"],
+            "max_attempts": 1,
+        },
+    )
+
+    user_prompt = router.requests[0].messages[-1].content
+    assert "完整：完整剧本" in user_prompt
+    assert "原文：林冲踏雪。" in user_prompt
+    assert "建议分格数：3-4" in user_prompt
+    assert "- 不写材质。" in user_prompt
+    assert "- 增加空间深度。" in user_prompt
+    assert "{missing_value}" in user_prompt
+
+
+@pytest.mark.asyncio
 async def test_parallel_node_merges_shared_context_into_prompt_item() -> None:
     responses = ['{"name": "test"}']
     router = FakeParallelRouter(responses)

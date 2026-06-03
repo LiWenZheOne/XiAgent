@@ -44,12 +44,26 @@ class PrepareSegmentStoryboardInputsNode(BaseNode):
                             "type": "object",
                             "required": [
                                 "index",
-                                "current_segment",
+                                "paragraph_text",
+                                "panel_count",
+                                "present_characters",
+                                "location",
+                                "key_props",
                                 "segment_assignment",
                             ],
                             "properties": {
                                 "index": {"type": "integer", "minimum": 0},
-                                "current_segment": {"type": "object"},
+                                "paragraph_text": {"type": "string", "minLength": 1},
+                                "panel_count": {"type": "string", "minLength": 1},
+                                "present_characters": {
+                                    "type": "array",
+                                    "items": {"type": "string", "minLength": 1},
+                                },
+                                "location": {"type": "string"},
+                                "key_props": {
+                                    "type": "array",
+                                    "items": {"type": "string", "minLength": 1},
+                                },
                                 "segment_assignment": {"type": "object"},
                             },
                             "additionalProperties": False,
@@ -57,7 +71,7 @@ class PrepareSegmentStoryboardInputsNode(BaseNode):
                     },
                     "shared_context": {
                         "type": "object",
-                        "required": ["full_script"],
+                        "required": ["full_script", "prompt_rules"],
                         "properties": {
                             "full_script": {"type": "string", "minLength": 1},
                             "storyboard_options": {
@@ -65,6 +79,22 @@ class PrepareSegmentStoryboardInputsNode(BaseNode):
                                 "properties": {
                                     "no_material": {"type": "boolean"},
                                     "enrich_description": {"type": "boolean"},
+                                },
+                                "additionalProperties": False,
+                            },
+                            "prompt_rules": {
+                                "type": "object",
+                                "required": [
+                                    "material_rule",
+                                    "enrich_rule",
+                                    "material_thinking",
+                                    "enrich_thinking",
+                                ],
+                                "properties": {
+                                    "material_rule": {"type": "string"},
+                                    "enrich_rule": {"type": "string"},
+                                    "material_thinking": {"type": "string"},
+                                    "enrich_thinking": {"type": "string"},
                                 },
                                 "additionalProperties": False,
                             },
@@ -98,16 +128,21 @@ class PrepareSegmentStoryboardInputsNode(BaseNode):
             if "index" not in segment or not _is_int_like(segment["index"]):
                 continue
             index = int(segment["index"])
+            assignment = _compact_assignment(
+                assignment_by_index.get(
+                    index,
+                    {"segment_index": index, "characters": [], "key_props": []},
+                )
+            )
             items.append(
                 {
                     "index": index,
-                    "current_segment": dict(segment),
-                    "segment_assignment": _compact_assignment(
-                        assignment_by_index.get(
-                            index,
-                            {"segment_index": index, "characters": [], "key_props": []},
-                        )
-                    ),
+                    "paragraph_text": _text(segment.get("text")),
+                    "panel_count": _panel_count(segment),
+                    "present_characters": _present_character_names(assignment),
+                    "location": _text(assignment.get("location")),
+                    "key_props": _string_list(assignment.get("key_props")),
+                    "segment_assignment": assignment,
                 }
             )
 
@@ -124,6 +159,7 @@ class PrepareSegmentStoryboardInputsNode(BaseNode):
                 "shared_context": {
                     "full_script": source_script,
                     "storyboard_options": storyboard_options,
+                    "prompt_rules": _prompt_rules(storyboard_options),
                 },
             },
         )
@@ -133,6 +169,10 @@ def _required_text(value: Any, code: str) -> str:
     if isinstance(value, str) and value.strip():
         return value.strip()
     raise ValidationError(code=code, message=f"{code} must be a non-empty string")
+
+
+def _text(value: Any) -> str:
+    return value.strip() if isinstance(value, str) and value.strip() else ""
 
 
 def _required_object_list(value: Any, code: str) -> list[dict[str, Any]]:
@@ -153,6 +193,51 @@ def _storyboard_options(value: Any) -> dict[str, bool]:
     }
 
 
+def _prompt_rules(options: Mapping[str, bool]) -> dict[str, str]:
+    if options.get("no_material") is True:
+        material_rule = (
+            "- 删除所有材质和质感审查，只保留空间、结构、色彩、光影、功能和动作信息。"
+        )
+        material_thinking = "不讨论材质、质地、面料、纹理、锈蚀、丝滑、粗糙等质感信息。"
+    else:
+        material_rule = "- 可以描述对画面叙事必要的材质和表面质感，但不要堆砌材质词。"
+        material_thinking = "如材质或表面状态能服务身份、年代、动作或情绪，可以简洁说明。"
+
+    if options.get("enrich_description") is True:
+        enrich_rule = (
+            "- 额外落实：能否增加遮挡物强化窥视感和空间深度；动作是否造成飘动、飞溅、"
+            "散落、震动等物理反馈；建筑结构和陈设是否足够具体；空气中是否有尘、雪、烟、"
+            "雾、火星等颗粒介质；是否有能暗示身份、地位或心境的细小物件。"
+        )
+        enrich_thinking = (
+            "逐项补充遮挡物、空间深度、物理反馈、建筑陈设、颗粒介质和细小叙事物件，"
+            "并把有效结果写入 description。"
+        )
+    else:
+        enrich_rule = "- 保持描述清晰克制，不追加额外密度审查。"
+        enrich_thinking = "不额外扩写空间深度、物理反馈、复杂陈设、颗粒介质或细小叙事物件。"
+
+    return {
+        "material_rule": material_rule,
+        "enrich_rule": enrich_rule,
+        "material_thinking": material_thinking,
+        "enrich_thinking": enrich_thinking,
+    }
+
+
+def _panel_count(segment: Mapping[str, Any]) -> str:
+    hint = _text(segment.get("panel_hint"))
+    if hint:
+        return hint
+    minimum = segment.get("panel_count_min")
+    maximum = segment.get("panel_count_max")
+    if _is_int_like(minimum) and _is_int_like(maximum):
+        if minimum == maximum:
+            return str(minimum)
+        return f"{minimum}-{maximum}"
+    return "1"
+
+
 def _compact_assignment(assignment: Mapping[str, Any]) -> dict[str, Any]:
     characters = [
         character
@@ -169,6 +254,18 @@ def _compact_assignment(assignment: Mapping[str, Any]) -> dict[str, Any]:
         if isinstance(value, str):
             result[key] = value.strip()
     return result
+
+
+def _present_character_names(assignment: Mapping[str, Any]) -> list[str]:
+    names: list[str] = []
+    for character in _object_list(assignment.get("characters")):
+        presence = _text(character.get("presence"))
+        if presence and presence != "present":
+            continue
+        name = _text(character.get("asset_name"))
+        if name:
+            names.append(name)
+    return names
 
 
 def _compact_character(character: Mapping[str, Any]) -> dict[str, Any]:

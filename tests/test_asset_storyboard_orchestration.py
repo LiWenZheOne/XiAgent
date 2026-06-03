@@ -308,7 +308,11 @@ def test_prepare_segment_storyboard_inputs_output_schema(test_settings) -> None:
             "items": [
                 {
                     "index": 0,
-                    "current_segment": {"index": 0, "text": "林冲踏雪而来。"},
+                    "paragraph_text": "林冲踏雪而来。",
+                    "panel_count": "1",
+                    "present_characters": ["林冲"],
+                    "location": "野猪林",
+                    "key_props": [],
                     "segment_assignment": {
                         "segment_index": 0,
                         "characters": [
@@ -326,6 +330,12 @@ def test_prepare_segment_storyboard_inputs_output_schema(test_settings) -> None:
             "shared_context": {
                 "full_script": "完整剧本",
                 "storyboard_options": {"no_material": True, "enrich_description": True},
+                "prompt_rules": {
+                    "material_rule": "- 删除所有材质和质感审查，只保留空间、结构、色彩、光影、功能和动作信息。",
+                    "enrich_rule": "- 额外落实遮挡物、空间深度和物理反馈。",
+                    "material_thinking": "不讨论材质。",
+                    "enrich_thinking": "逐项补充遮挡物。",
+                },
             },
         },
     )
@@ -348,23 +358,36 @@ def test_describe_panels_uses_parallel_segment_items(test_settings) -> None:
     assert describe_node["inputs"]["shared_context"] == {
         "from": "$nodes.prepare_segment_storyboard_inputs.output.shared_context",
     }
-    assert "{item}" in describe_node["inputs"]["prompt_template"]["value"]
-    assert "每次只为当前 item" in describe_node["inputs"]["system"]["value"]
-    assert "shared_context.storyboard_options" in describe_node["inputs"]["system"]["value"]
-    assert "no_material=true" in describe_node["inputs"]["system"]["value"]
-    assert "enrich_description=true" in describe_node["inputs"]["system"]["value"]
-    assert "空间深度、物理反馈、建筑陈设复杂度、颗粒感介质和琐碎叙事细节" in describe_node["inputs"]["system"]["value"]
-    assert "当 shared_context.storyboard_options.no_material=true" in describe_node["inputs"]["prompt_template"]["value"]
-    assert "当 shared_context.storyboard_options.enrich_description=true" in describe_node["inputs"]["prompt_template"]["value"]
+    assert "每次只为当前段落" in describe_node["inputs"]["system"]["value"]
+    assert "{paragraph_text}" in describe_node["inputs"]["prompt_template"]["value"]
+    assert "{material_rule}" in describe_node["inputs"]["prompt_template"]["value"]
+    assert "{enrich_rule}" in describe_node["inputs"]["prompt_template"]["value"]
+    assert "{material_thinking}" in describe_node["inputs"]["prompt_template"]["value"]
+    assert "{enrich_thinking}" in describe_node["inputs"]["prompt_template"]["value"]
+    assert "shared_context.prompt_rules" not in describe_node["inputs"]["system"]["value"]
+    assert "no_material=true" not in describe_node["inputs"]["system"]["value"]
+    assert "enrich_description=true" not in describe_node["inputs"]["system"]["value"]
+    assert "当 shared_context.storyboard_options" not in describe_node["inputs"]["prompt_template"]["value"]
+    assert "item.shared_context.prompt_rules.material_rule" not in describe_node["inputs"]["prompt_template"]["value"]
+    assert "item.shared_context.prompt_rules.enrich_rule" not in describe_node["inputs"]["prompt_template"]["value"]
     assert describe_node["inputs"]["prompt_fields"]["value"] == [
         "index",
-        "current_segment",
-        "segment_assignment",
+        "paragraph_text",
+        "panel_count",
+        "present_characters",
+        "location",
+        "key_props",
     ]
     assert "neighbor_segments" not in describe_node["inputs"]["prompt_template"]["value"]
     assert "all_segments" not in describe_node["inputs"]["system"]["value"]
-    assert "panel_count_min 和 panel_count_max" in describe_node["inputs"]["prompt_template"]["value"]
-    assert "visible_characters" in describe_node["inputs"]["prompt_template"]["value"]
+    assert "panel_count_min 和 panel_count_max" not in describe_node["inputs"]["prompt_template"]["value"]
+    assert "item.current_segment" not in describe_node["inputs"]["prompt_template"]["value"]
+    assert "item.segment_assignment" not in describe_node["inputs"]["prompt_template"]["value"]
+    assert "item.present_characters" not in describe_node["inputs"]["prompt_template"]["value"]
+    assert "item.panel_count" not in describe_node["inputs"]["prompt_template"]["value"]
+    assert "item.paragraph_text" not in describe_node["inputs"]["prompt_template"]["value"]
+    assert "description 必须先说明一共有几个分格和整体布局" in describe_node["inputs"]["prompt_template"]["value"]
+    assert "visible_characters" not in describe_node["inputs"]["prompt_template"]["value"]
     assert "visibility 为 off_frame 或 reference_only" not in describe_node["inputs"]["prompt_template"]["value"]
     assert describe_node["outputs"]["required"] == ["results"]
 
@@ -376,14 +399,7 @@ def test_describe_panels_uses_parallel_segment_items(test_settings) -> None:
                     "index": 0,
                     "segment_title": "雪夜",
                     "thinking": "承接风雪氛围。",
-                    "panels": [
-                        {
-                            "description": "林冲在雪中行走。",
-                            "style": "国风动画",
-                            "constraints": "保持角色服饰一致。",
-                            "visible_characters": ["林冲"],
-                        }
-                    ],
+                    "description": "一共 1 个分格。林冲背对镜头在雪中行走。",
                 }
             ]
         },
@@ -406,14 +422,7 @@ def test_merge_segment_descriptions_output_schema(test_settings) -> None:
                     "index": 0,
                     "segment_title": "雪夜",
                     "thinking": "承接风雪氛围。",
-                    "panels": [
-                        {
-                            "description": "林冲在雪中行走。",
-                            "style": "国风动画",
-                            "constraints": "保持角色服饰一致。",
-                            "visible_characters": ["林冲"],
-                        }
-                    ],
+                    "description": "一共 1 个分格。林冲背对镜头在雪中行走。",
                 }
             ]
         },
@@ -441,13 +450,11 @@ def test_prepare_storyboard_panel_cards_output_schema(test_settings) -> None:
         {
             "panel_cards": [
                 {
-                    "card_id": "segment-0-panel-0",
+                    "card_id": "segment-0",
                     "segment_index": 0,
                     "panel_index": 0,
                     "segment_title": "雪夜",
                     "description": "林冲披旧毡笠在风雪中前行。",
-                    "style": "电影感国风动画",
-                    "constraints": "保持角色服装发型一致。",
                     "prompt": "分镜描述\n林冲披旧毡笠在风雪中前行。",
                     "reference_images": [
                         {
@@ -491,7 +498,7 @@ def test_review_storyboard_image_output_schema(test_settings) -> None:
             "decision": "finish",
             "panel_results": [
                 {
-                    "card_id": "segment-0-panel-0",
+                    "card_id": "segment-0",
                     "segment_index": 0,
                     "panel_index": 0,
                     "prompt": "分镜提示词",

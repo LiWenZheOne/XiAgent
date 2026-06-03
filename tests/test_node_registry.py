@@ -404,10 +404,25 @@ def test_segment_storyboard_tool_descriptors() -> None:
         "no_material": {"type": "boolean"},
         "enrich_description": {"type": "boolean"},
     }
+    assert prepare_descriptor.output_schema["properties"]["shared_context"]["properties"]["prompt_rules"]["required"] == [
+        "material_rule",
+        "enrich_rule",
+        "material_thinking",
+        "enrich_thinking",
+    ]
     assert "all_segments" not in prepare_descriptor.output_schema["properties"]["shared_context"]["properties"]
+    item_properties = prepare_descriptor.output_schema["properties"]["items"]["items"]["properties"]
+    assert {
+        "paragraph_text",
+        "panel_count",
+        "present_characters",
+        "location",
+        "key_props",
+    }.issubset(item_properties)
+    assert "current_segment" not in item_properties
     assert (
         "neighbor_segments"
-        not in prepare_descriptor.output_schema["properties"]["items"]["items"]["properties"]
+        not in item_properties
     )
     assert merge_descriptor.ref == "tool.merge_segment_storyboard_descriptions.v1"
     assert merge_descriptor.kind == "tool"
@@ -428,20 +443,18 @@ async def test_prepare_storyboard_panel_cards_builds_cards() -> None:
                     "index": 0,
                     "segment_title": "雪夜",
                     "thinking": "风雪推进。",
-                    "panels": [
-                        {
-                            "description": "林冲踏雪前行。",
-                            "style": "国风漫画",
-                            "constraints": "保持囚服和毡笠。",
-                            "visible_characters": ["林冲"],
-                        }
-                    ],
+                    "description": "一共 1 个分格。林冲背对镜头踏雪前行，鲁智深侧对镜头守在树后。",
                 }
             ],
             "segment_assignments": [
                 {
                     "segment_index": 0,
                     "location": "野猪林",
+                    "location_asset": {
+                        "asset_type": "scene",
+                        "asset_name": "野猪林",
+                        "image_ref": {"kind": "asset", "asset_id": "asset-boar-forest", "role": "reference"},
+                    },
                     "characters": [
                         {
                             "asset_type": "character",
@@ -457,18 +470,35 @@ async def test_prepare_storyboard_panel_cards_builds_cards() -> None:
                         }
                     ],
                     "key_props": ["花枪"],
+                    "prop_assets": [
+                        {
+                            "asset_type": "prop",
+                            "asset_name": "花枪",
+                            "image_ref": {"kind": "asset", "asset_id": "asset-spear", "role": "reference"},
+                        }
+                    ],
                 }
             ],
-            "storyboard_items": [{"index": 0, "current_segment": {"text": "林冲踏雪。"}}],
+            "storyboard_items": [
+                {
+                    "index": 0,
+                    "paragraph_text": "林冲踏雪。",
+                    "panel_count": "1",
+                    "present_characters": ["林冲", "鲁智深"],
+                    "location": "野猪林",
+                    "key_props": ["花枪"],
+                }
+            ],
             "shared_context": {
                 "full_script": "完整剧本",
                 "storyboard_options": {"no_material": False, "enrich_description": False},
             },
+            "generation_rules": "风格指令：参考《罗小黑战记》。",
         },
     )
 
     card = result.output["panel_cards"][0]
-    assert card["card_id"] == "segment-0-panel-0"
+    assert card["card_id"] == "segment-0"
     assert card["reference_images"] == [
         {
             "label": "林冲",
@@ -476,12 +506,141 @@ async def test_prepare_storyboard_panel_cards_builds_cards() -> None:
             "asset_name": "林冲",
             "asset_tags": ["囚服"],
             "image_ref": {"kind": "asset", "asset_id": "asset-linchong", "role": "reference"},
+            "reference_index": 1,
             "source": "asset",
-        }
+        },
+        {
+            "label": "鲁智深",
+            "asset_type": "character",
+            "asset_name": "鲁智深",
+            "asset_tags": ["僧衣"],
+            "image_ref": {"kind": "asset", "asset_id": "asset-luzhishen", "role": "reference"},
+            "reference_index": 2,
+            "source": "asset",
+        },
+        {
+            "label": "野猪林",
+            "asset_type": "scene",
+            "asset_name": "野猪林",
+            "image_ref": {"kind": "asset", "asset_id": "asset-boar-forest", "role": "reference"},
+            "reference_index": 3,
+            "source": "asset",
+        },
+        {
+            "label": "花枪",
+            "asset_type": "prop",
+            "asset_name": "花枪",
+            "image_ref": {"kind": "asset", "asset_id": "asset-spear", "role": "reference"},
+            "reference_index": 4,
+            "source": "asset",
+        },
     ]
-    assert "林冲踏雪前行" in card["prompt"]
-    assert "出场角色：林冲（囚服）、鲁智深（僧衣）" in card["prompt"]
-    assert card["visible_characters"] == ["林冲"]
+    assert card["prompt"].startswith("画面风格约束\n风格指令：参考《罗小黑战记》。")
+    assert "参考图对应关系\n- 林冲：参考图1\n- 鲁智深：参考图2\n- 野猪林：参考图3\n- 花枪：参考图4" in card["prompt"]
+    assert "林冲（参考图1）背对镜头踏雪前行" in card["prompt"]
+    assert "鲁智深（参考图2）侧对镜头守在树后" in card["prompt"]
+    assert "style" not in card
+    assert "constraints" not in card
+    assert "画风" not in card["prompt"]
+    assert "额外约束" not in card["prompt"]
+    assert "补充生成规则" not in card["prompt"]
+    assert "固定图像生成规则" not in card["prompt"]
+    assert "在场资产约束" not in card["prompt"]
+    assert "画幅比例" not in card["prompt"]
+    assert "输出清晰度" not in card["prompt"]
+    assert "出场角色：林冲（囚服）、鲁智深（僧衣）" not in card["prompt"]
+    assert card["visible_characters"] == ["林冲", "鲁智深"]
+
+
+async def test_prepare_storyboard_panel_cards_marks_numbered_group_characters() -> None:
+    node = PrepareStoryboardPanelCardsNode()
+
+    result = await node.run(
+        None,
+        {
+            "segment_descriptions": [
+                {
+                    "index": 0,
+                    "segment_title": "登船",
+                    "thinking": "大规模行动。",
+                    "description": "官兵1背对镜头登船，官兵2侧对镜头回望，何涛面对镜头指挥。",
+                }
+            ],
+            "segment_assignments": [
+                {
+                    "segment_index": 0,
+                    "characters": [
+                        {
+                            "asset_type": "character",
+                            "asset_name": "何涛",
+                            "image_ref": {"kind": "asset", "asset_id": "asset-hetao", "role": "reference"},
+                        },
+                        {
+                            "asset_type": "character",
+                            "asset_name": "捕盗巡检",
+                            "image_ref": {"kind": "asset", "asset_id": "asset-xunjian", "role": "reference"},
+                        },
+                        {
+                            "asset_type": "character",
+                            "asset_name": "官兵",
+                            "image_ref": {"kind": "asset", "asset_id": "asset-guanbing", "role": "reference"},
+                        },
+                    ],
+                    "key_props": [],
+                }
+            ],
+        },
+    )
+
+    card = result.output["panel_cards"][0]
+    assert "何涛：参考图1" in card["prompt"]
+    assert "捕盗巡检：参考图2" in card["prompt"]
+    assert "官兵：参考图3" in card["prompt"]
+    assert "官兵（参考图3）1背对镜头登船" in card["prompt"]
+    assert "官兵（参考图3）2侧对镜头回望" in card["prompt"]
+    assert "何涛（参考图1）面对镜头指挥" in card["prompt"]
+
+
+async def test_prepare_storyboard_panel_cards_does_not_mark_character_inside_location_phrase() -> None:
+    node = PrepareStoryboardPanelCardsNode()
+
+    result = await node.run(
+        None,
+        {
+            "segment_descriptions": [
+                {
+                    "index": 0,
+                    "segment_title": "庄院议事",
+                    "thinking": "室内议事。",
+                    "description": "画面：石碣村阮小五庄院内，粗木梁下，阮小五居中，吴用侧对镜头。",
+                }
+            ],
+            "segment_assignments": [
+                {
+                    "segment_index": 0,
+                    "characters": [
+                        {
+                            "asset_type": "character",
+                            "asset_name": "阮小五",
+                            "image_ref": {"kind": "asset", "asset_id": "asset-ruan5", "role": "reference"},
+                        },
+                        {
+                            "asset_type": "character",
+                            "asset_name": "吴用",
+                            "image_ref": {"kind": "asset", "asset_id": "asset-wuyong", "role": "reference"},
+                        },
+                    ],
+                    "key_props": [],
+                }
+            ],
+        },
+    )
+
+    prompt = result.output["panel_cards"][0]["prompt"]
+    assert "石碣村阮小五庄院内" in prompt
+    assert "石碣村阮小五（参考图1）庄院内" not in prompt
+    assert "阮小五（参考图1）居中" in prompt
+    assert "吴用（参考图2）侧对镜头" in prompt
 
 
 async def test_resolve_accessory_asset_refs_uses_match_or_first_variant_asset() -> None:

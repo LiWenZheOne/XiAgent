@@ -7,7 +7,8 @@ from typing import Any
 from xiagent.core.errors import ValidationError
 from xiagent.nodes.base import BaseNode, NodeContext, NodeDescriptor, NodeResult
 
-_PANEL_HINT_PATTERN = re.compile(r"^\s*[\(（](\d+)(?:\s*-\s*(\d+))?[\)）]\s*")
+_PANEL_HINT_PATTERN = re.compile(r"^\s*[\(（]\s*([0-9０-９]*)(?:\s*[-－—–~～]\s*([0-9０-９]+))?\s*[\)）]\s*")
+_PANEL_MARKER_PATTERN = re.compile(r"[\(（]\s*([0-9０-９]*)(?:\s*[-－—–~～]\s*([0-9０-９]+))?\s*[\)）]")
 
 
 class ScriptSplitNode(BaseNode):
@@ -81,23 +82,31 @@ class ScriptSplitNode(BaseNode):
             )
 
         segments: list[dict[str, Any]] = []
-        for raw_part in re.split(r"(?:\r?\n){2,}", script):
+        raw_segments = _split_marked_segments(script)
+        if not raw_segments:
+            raw_segments = [(None, None, raw_part) for raw_part in re.split(r"(?:\r?\n){2,}", script)]
+
+        for marker_min, marker_max, raw_part in raw_segments:
             text = raw_part.strip()
             if not text:
                 continue
 
-            hint_match = _PANEL_HINT_PATTERN.match(text)
-            if hint_match is None:
+            if marker_min is None:
+                hint_match = _PANEL_HINT_PATTERN.match(text)
+            else:
+                hint_match = None
+
+            if marker_min is not None:
+                panel_min, panel_max, panel_hint = _panel_counts(marker_min, marker_max)
+            elif hint_match is None:
                 panel_hint = "1"
                 panel_min = 1
                 panel_max = 1
             else:
-                first = int(hint_match.group(1))
-                second_text = hint_match.group(2)
-                second = int(second_text) if second_text is not None else first
-                panel_min = min(first, second)
-                panel_max = max(first, second)
-                panel_hint = str(first) if second_text is None else f"{first}-{second}"
+                panel_min, panel_max, panel_hint = _panel_counts(
+                    hint_match.group(1),
+                    hint_match.group(2),
+                )
                 text = text[hint_match.end() :].strip()
                 if not text:
                     continue
@@ -118,3 +127,40 @@ class ScriptSplitNode(BaseNode):
             status="succeeded",
             output={"count": len(segments), "segments": segments},
         )
+
+
+def _split_marked_segments(script: str) -> list[tuple[str | None, str | None, str]]:
+    matches = list(_PANEL_MARKER_PATTERN.finditer(script))
+    if not matches:
+        return []
+
+    segments: list[tuple[str | None, str | None, str]] = []
+    prefix = script[: matches[0].start()].strip()
+    if prefix:
+        segments.append((None, None, prefix))
+
+    for index, match in enumerate(matches):
+        start = match.end()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(script)
+        segments.append((match.group(1), match.group(2), script[start:end]))
+    return segments
+
+
+def _panel_counts(first_text: str | None, second_text: str | None) -> tuple[int, int, str]:
+    first = _panel_number(first_text) or 1
+    second = _panel_number(second_text) if second_text is not None else first
+    if second is None:
+        second = first
+    panel_min = min(first, second)
+    panel_max = max(first, second)
+    panel_hint = str(first) if second_text is None else f"{first}-{second}"
+    return panel_min, panel_max, panel_hint
+
+
+def _panel_number(value: str | None) -> int | None:
+    if value is None:
+        return None
+    normalized = value.strip().translate(str.maketrans("０１２３４５６７８９", "0123456789"))
+    if not normalized:
+        return None
+    return int(normalized)

@@ -353,6 +353,39 @@ nodes:
                 minimum: 0
               location:
                 type: string
+              location_asset:
+                type: object
+                required: ["asset_type", "asset_name", "image_ref"]
+                properties:
+                  asset_type:
+                    type: string
+                    minLength: 1
+                  asset_name:
+                    type: string
+                    minLength: 1
+                  asset_tags:
+                    type: array
+                    items:
+                      type: string
+                  image_ref:
+                    type: object
+                    required: ["kind"]
+                    properties:
+                      kind:
+                        type: string
+                        enum: ["asset", "data_uri"]
+                      asset_id:
+                        type: string
+                        minLength: 1
+                      data:
+                        type: string
+                        minLength: 1
+                      role:
+                        type: string
+                    additionalProperties: false
+                  image_url:
+                    type: string
+                additionalProperties: false
               time:
                 type: string
               characters:
@@ -373,6 +406,41 @@ nodes:
                 items:
                   type: string
                   minLength: 1
+              prop_assets:
+                type: array
+                items:
+                  type: object
+                  required: ["asset_type", "asset_name", "image_ref"]
+                  properties:
+                    asset_type:
+                      type: string
+                      minLength: 1
+                    asset_name:
+                      type: string
+                      minLength: 1
+                    asset_tags:
+                      type: array
+                      items:
+                        type: string
+                    image_ref:
+                      type: object
+                      required: ["kind"]
+                      properties:
+                        kind:
+                          type: string
+                          enum: ["asset", "data_uri"]
+                        asset_id:
+                          type: string
+                          minLength: 1
+                        data:
+                          type: string
+                          minLength: 1
+                        role:
+                          type: string
+                      additionalProperties: false
+                    image_url:
+                      type: string
+                  additionalProperties: false
             additionalProperties: false
       additionalProperties: false
 
@@ -469,21 +537,43 @@ nodes:
           type: array
           items:
             type: object
-            required: ["index", "current_segment", "segment_assignment"]
+            required:
+              - index
+              - paragraph_text
+              - panel_count
+              - present_characters
+              - location
+              - key_props
+              - segment_assignment
             properties:
               index:
                 type: integer
                 minimum: 0
-              current_segment:
-                type: object
-                additionalProperties: true
+              paragraph_text:
+                type: string
+                minLength: 1
+              panel_count:
+                type: string
+                minLength: 1
+              present_characters:
+                type: array
+                items:
+                  type: string
+                  minLength: 1
+              location:
+                type: string
+              key_props:
+                type: array
+                items:
+                  type: string
+                  minLength: 1
               segment_assignment:
                 type: object
                 additionalProperties: true
             additionalProperties: false
         shared_context:
           type: object
-          required: ["full_script"]
+          required: ["full_script", "prompt_rules"]
           properties:
             full_script:
               type: string
@@ -496,6 +586,19 @@ nodes:
                 enrich_description:
                   type: boolean
               additionalProperties: false
+            prompt_rules:
+              type: object
+              required: ["material_rule", "enrich_rule", "material_thinking", "enrich_thinking"]
+              properties:
+                material_rule:
+                  type: string
+                enrich_rule:
+                  type: string
+                material_thinking:
+                  type: string
+                enrich_thinking:
+                  type: string
+              additionalProperties: false
           additionalProperties: false
       additionalProperties: false
 
@@ -505,49 +608,88 @@ nodes:
     inputs:
       system:
         value: |
-          仅返回合法 JSON。你是漫画分镜导演。每次只为当前 item 中的 current_segment 设计分镜画面。
-          必须参考 full_script 理解完整剧情连续性，参考 current_segment 设计当前段落，参考 segment_assignment 保持角色、地点、道具和外观描述一致。
-          必须读取 shared_context.storyboard_options：
-          - no_material=true 时，画面描述、thinking、style、constraints 均不得区分或强调材质、质地、面料、纹理、金属锈蚀、丝滑、粗糙等材质信息；只能描述结构、形状、颜色、光影、空间、动作和陈设功能。
-          - no_material=false 时，可以描述对画面叙事必要的材质和表面质感，但不要堆砌材质词。
-          - enrich_description=true 时，thinking 必须额外审查空间深度、物理反馈、建筑陈设复杂度、颗粒感介质和琐碎叙事细节，并把有效结果自然写入 panel.description。
-          - enrich_description=false 时，保持描述清晰克制，不追加额外密度审查。
-          不要输出其他段落，不要返回数组，不要包含 Markdown 或解释文字。
+          仅返回合法 JSON。你是一位专业的分镜脚本师。每次只为当前段落输出一段完整、详细、自然的漫画分镜描述。
+          必须参考完整剧本理解剧情连续性，但描述内容只能依据当前段落、建议分格数、在场角色、地点和关键道具生成，不得扩写成其他段落剧情。
+          描述分镜画面时，只写分段内容、在场角色、地点、道具和每个分格画面中实际出现的事物；不得包含画风、风格关键词、图像生成技术参数、模型参数、质量词或生成指令。
+          画面中只能出现本段在场角色，不得描写或提及不在场角色；如果出现复数次要角色，必须先确定数量并编号，再分别描述动作。
       items:
         from: "$nodes.prepare_segment_storyboard_inputs.output.items"
       shared_context:
         from: "$nodes.prepare_segment_storyboard_inputs.output.shared_context"
       prompt_template:
         value: |
-          请只为以下 item.current_segment 设计分镜画面。
+          你是一位专业的分镜脚本师，请基于以下输入为我设计漫画的分镜描述。
 
-          输入 item JSON：
-          {item}
+          ## 输入
+          完整剧本（仅用于理解剧情连续性，不得扩写当前段落之外的剧情）：
+          {full_script}
 
-          分镜设计要求：
-          - 只生成分镜描述，不生成图像；描述从宏观到微观，保证镜头整体性和合理性。
-          - 当前段落可设计为一页漫画中的多个分格；分格大小不要平均，布局应有节奏和设计感。
-          - 必须根据 item.current_segment.panel_count_min 和 panel_count_max 决定 panels 数量：二者相等时 panels 数量必须等于该值；二者不同则 panels 数量必须落在范围内，并在 thinking 中说明选择该数量的理由。
-          - 描述中不写对话，不写角色服装和外貌细节，不出现腿部、脚部、鞋履相关描写。
-          - segment_assignment.characters 表示当前段在场或持续处于同一场景的角色；请根据当前分格的镜头意图决定哪些角色真正入画，并写入 visible_characters。
-          - 没有写入 visible_characters 的在场角色只能作为剧情连续性参考，不得默认画进该分格。
-          - 如果出现复数次要角色，先确定数量并给每个次要角色编号，再分别描述动作。
-          - 先读情绪，再定镜头：根据水浒传剧情、当前段落情绪和前后段承接，选择最能放大情绪的镜头语言。
-          - 禁止默认构图：不得无理由使用正中平视、角色左右对称或平面布局；每格必须有明确视觉意图。
-          - 每格必须标注机位、角度、景别、构图、光影和氛围；多使用仰视、俯视、倾斜、大透视、前景遮挡和前中后景分层。
-          - thinking 至少回答：前景/中景/背景的深度层级；环境中用于叙事的物件；光线如何刻画冲突；动作定格在哪个瞬间；镜头角度的情绪潜台词。
-          - 当 shared_context.storyboard_options.no_material=true 时，删除所有材质和质感审查，只保留空间、结构、色彩、光影、功能和动作信息。
-          - 当 shared_context.storyboard_options.enrich_description=true 时，额外回答并落实：能否增加遮挡物强化窥视感和空间深度；动作是否造成飘动、飞溅、散落、震动等物理反馈；建筑结构和陈设是否足够具体；空气中是否有尘、雪、烟、雾、火星等颗粒介质；是否有能暗示身份、地位或心境的细小物件。
+          当前段落索引：{index}
+          当前段落：{paragraph_text}
+          建议分格数：{panel_count}
+          本段在场角色：{present_characters}
+          地点：{location}
+          关键道具：{key_props}
+
+          ## 要求
+          - 只生成分镜描述，不要生成图像，描述时从宏观到微观，确保画面的整体性及合理性。
+          - 漫画为一页，可以有多个分格；每个分格大小不要一样，不要平均，要富有设计感。
+          - 根据建议分格数设计分格；description 必须先说明一共有几个分格和整体布局，再生成完整、流畅、统一的详细分镜画面描述。
+          - 描述中不需要包含对话，不包含角色服装和外貌描写。
+          - 不要有任何腿部、脚部、鞋履相关描述，并注意标注角色朝向，例如面对镜头、背对镜头或侧对镜头。
+          - 画面中只能出现本段在场角色，不得描写或提及不在场角色。
+          - 如果出现复数形式的次要角色，请先确定次要角色数量，并给每个次要角色编号命名，每个次要角色分别描述动作。
+          - 严格按建议分格数设计分格；如果建议分格数为 1，只能写“单格整页”或“单个大分格”，不得写“跨页式分格”。
+          - 每个分格必须先确定镜头位置、视线方向和空间关系，再描述前景、中景、背景；前景遮挡、人物站位、光线落点和视觉重心必须互相兼容，不能出现镜头角度与画面组织互相矛盾的描述。
+          - 不得用“刚说出”“似乎刚陈述”“仿佛回应”等不可见的对话状态代替画面动作；只能描述当前画面中可见的姿态、视线、动作、物件和空间关系。
+          - 地点名称中如果包含角色名，例如“某某庄院”“某某宅”“某某村”，应整体视为地点；不得把地点名中的角色名当作入画角色来描写动作或情绪。
+          {material_rule}
+          {enrich_rule}
+
+          ## 核心原则
+          ### 先读情绪，再定镜头
+          设计每个镜头前，请依据水浒传对应章节的剧情，判断这场戏的核心情绪和情景，然后选择最能放大该情绪的镜头语言。一定要标注机位、角度、景别，特别强调镜头角度，多使用仰视、俯视、大透视等冲击力较强的镜头，并利用前后景突出透视。
+
+          ### 禁止默认构图
+          不得无理由使用正中平视、角色左右对称等缺乏设计感的构图。每个镜头都必须有明确的视觉意图。不要在描述中写预示等未发生的事。
+
+          ## 分镜决策自审清单（写入 thinking）
+          请输出简洁、可检查的分镜决策记录，不要写与画面无关的创作闲聊。thinking 用于帮助后续检查 description 是否合理；最终 description 必须只保留自然、完整、可见的画面描述。
+
+          ### A. 整体分格设计
+          1. 当前段落的核心剧情动作是什么？观众看完这一页应获得什么信息或情绪？
+          2. 建议分格数是多少？本页应该如何排版？请说明阅读顺序，并避免平均切分。
+          3. 哪些剧情瞬间必须入格？哪些信息可以省略或合并？
+          4. 每个分格分别承担什么叙事功能：建立环境、交代动作、强调反应、突出道具、制造悬念、承接转折，还是收束情绪？
+          5. 这些分格之间如何衔接？是动作连续、视线引导、空间方向承接、情绪递进，还是反差切换？
+
+          ### B. 每个分格逐项判断
+          对每个分格分别回答以下问题：
+          1. 画面目的：这一格为什么存在？它比前一格新增了什么可见信息？
+          2. 入画对象：这一格中出现哪些本段在场角色、地点元素和关键道具？不得加入不在场角色。
+          3. 角色调度：每个角色的位置、朝向、视线、动作和姿态是什么？如果有复数次要角色，必须编号并分别描述。
+          4. 镜头选择：这一格使用什么景别、机位高度和镜头角度？为什么这种镜头最能服务当前情绪或动作？
+          5. 空间关系：摄影机位于场景哪一侧？前景、中景、背景分别是什么？遮挡、透视、视线方向和人物站位是否互相兼容？
+          6. 构图意图：视觉重心在哪里？是否使用留白、前景遮挡、斜线构图、俯视、仰视或大透视来增强叙事？不得无理由使用正中平视和左右对称。
+          7. 动作瞬间：这一格表现的是动作开始、动作中段、动作结果，还是反应瞬间？画面中是否有可见的物理扰动？不得写不可见的对话状态。
+          8. 光影与氛围：光源从哪里来？光线能否实际照到主体？明暗如何引导第一眼视觉落点？
+          9. 环境细节：除了角色之外，画面中有哪些能说明地点、身份、时代或当前处境的具体陈设？{material_thinking}
+          10. 逻辑自检：是否出现不可见的对话状态？是否误把地点名中的角色名当成人物？是否出现腿部、脚部、鞋履描述？是否存在机位、遮挡、光线、人物位置互相矛盾的问题？
+          11. 强化审查：{enrich_thinking}
+
+          ### C. 整页统一性检查
+          1. 整页分镜是否从宏观到微观推进，既讲清剧情，又有画面节奏？
+          2. 每格大小和布局是否有设计感，是否避免机械平均？
+          3. 角色、地点、道具是否严格来自当前段落输入？
+          4. description 是否能直接作为后续漫画画面提示词使用，且不包含画风、模型参数、质量词或生成技术指令？
 
           输出一个 JSON 对象，必须包含：
-          - index：当前段落索引，必须等于 item.index
+          - index：当前段落索引
           - segment_title：当前段落标题
-          - thinking：按上述审查项简洁说明分镜设计依据
-          - panels：当前段落的分格数组
-
-          每个 panel 必须包含 description、style、constraints、visible_characters，可选 character_focus、environment_details、shot_type、camera_angle、composition、lighting、mood、action、key_props、continuity_notes。
+          - thinking：按照“分镜决策自审清单”输出简洁的分镜决策记录，用于检查画面安排是否合理
+          - description：最终的画面提示词，不得少于500字，先说明一共有几个分格和整体布局，然后根据 thinking 的内容生成详细且自然的分镜画面描述文本；描述整体，流畅确保画面完整、内容统一，每格最后描述氛围。
       prompt_fields:
-        value: ["index", "current_segment", "segment_assignment"]
+        value: ["index", "paragraph_text", "panel_count", "present_characters", "location", "key_props"]
       max_attempts:
         value: 2
     outputs:
@@ -558,7 +700,7 @@ nodes:
           type: array
           items:
             type: object
-            required: ["index", "segment_title", "thinking", "panels"]
+            required: ["index", "segment_title", "thinking", "description"]
             properties:
               index:
                 type: integer
@@ -569,47 +711,9 @@ nodes:
               thinking:
                 type: string
                 minLength: 1
-              panels:
-                type: array
-                items:
-                  type: object
-                  required: ["description", "style", "constraints", "visible_characters"]
-                  properties:
-                    description:
-                      type: string
-                      minLength: 1
-                    style:
-                      type: string
-                      minLength: 1
-                    constraints:
-                      type: string
-                      minLength: 1
-                    visible_characters:
-                      type: array
-                      items:
-                        type: string
-                        minLength: 1
-                    character_focus:
-                      type: string
-                    environment_details:
-                      type: string
-                    shot_type:
-                      type: string
-                    camera_angle:
-                      type: string
-                    composition:
-                      type: string
-                    lighting:
-                      type: string
-                    mood:
-                      type: string
-                    action:
-                      type: string
-                    key_props:
-                      type: string
-                    continuity_notes:
-                      type: string
-                  additionalProperties: false
+              description:
+                type: string
+                minLength: 1
             additionalProperties: false
       additionalProperties: false
 
@@ -627,7 +731,7 @@ nodes:
           type: array
           items:
             type: object
-            required: ["index", "segment_title", "thinking", "panels"]
+            required: ["index", "segment_title", "thinking", "description"]
             properties:
               index:
                 type: integer
@@ -638,47 +742,9 @@ nodes:
               thinking:
                 type: string
                 minLength: 1
-              panels:
-                type: array
-                items:
-                  type: object
-                  required: ["description", "style", "constraints", "visible_characters"]
-                  properties:
-                    description:
-                      type: string
-                      minLength: 1
-                    style:
-                      type: string
-                      minLength: 1
-                    constraints:
-                      type: string
-                      minLength: 1
-                    visible_characters:
-                      type: array
-                      items:
-                        type: string
-                        minLength: 1
-                    character_focus:
-                      type: string
-                    environment_details:
-                      type: string
-                    shot_type:
-                      type: string
-                    camera_angle:
-                      type: string
-                    composition:
-                      type: string
-                    lighting:
-                      type: string
-                    mood:
-                      type: string
-                    action:
-                      type: string
-                    key_props:
-                      type: string
-                    continuity_notes:
-                      type: string
-                  additionalProperties: false
+              description:
+                type: string
+                minLength: 1
             additionalProperties: false
       additionalProperties: false
 

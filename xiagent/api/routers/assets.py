@@ -264,18 +264,41 @@ async def regenerate_storyboard_panel_prompt(
         ),
         {
             "system": (
-                "仅返回合法 JSON。你是漫画分镜导演。每次只为当前 item 中的 current_segment 设计分镜画面。"
-                "必须参考 full_script 理解完整剧情连续性，参考 all_segments 和 neighbor_segments 理解前后承接，"
-                "参考 segment_assignment 保持角色、地点、道具和参考图一致。不要输出其他段落。"
+                "仅返回合法 JSON。你是一位专业的分镜脚本师。每次只为当前段落"
+                "输出一段完整、详细、自然的漫画分镜描述。必须参考完整剧本理解剧情连续性，但描述内容只能依据"
+                "当前段落、建议分格数、在场角色、地点和关键道具生成，不得扩写成其他段落剧情。"
+                "描述分镜画面时，只写分段内容、在场角色、地点、道具和每个分格画面中实际出现的事物；"
+                "不得包含画风、风格关键词、图像生成技术参数、模型参数、质量词或生成指令。"
+                "画面中只能出现本段在场角色，不得描写或提及不在场角色。不要输出其他段落。"
             ),
             "items": [item],
             "shared_context": request.shared_context,
             "prompt_template": (
-                "请只为以下 item.current_segment 设计分镜画面。\n\n"
-                "输入 item JSON：\n{item}\n\n"
-                "输出一个 JSON 对象，必须包含 index、segment_title、thinking、panels。"
+                "请只为以下当前段落设计分镜画面。\n\n"
+                "完整剧本（仅用于理解剧情连续性，不得扩写当前段落之外的剧情）：\n{full_script}\n\n"
+                "当前段落索引：{index}\n"
+                "当前段落：{paragraph_text}\n"
+                "建议分格数：{panel_count}\n"
+                "本段在场角色：{present_characters}\n"
+                "地点：{location}\n"
+                "关键道具：{key_props}\n\n"
+                "分镜设计要求：\n"
+                "- 只输出分镜画面的自然语言描述，不生成图像，不写画风、风格关键词、技术参数、模型参数、质量词或生成指令。\n"
+                "- 根据建议分格数设计分格；description 必须先说明一共有几个分格和整体布局，然后逐格生成完整、详细、自然、统一的分镜画面描述。\n"
+                "- 画面中只能出现本段在场角色，不得描写或提及不在场角色。\n"
+                "- 不要写对话、角色服装、外貌、腿部、脚部或鞋履描写；必须标注角色朝向。\n\n"
+                "{material_rule}\n"
+                "{enrich_rule}\n"
+                "输出一个 JSON 对象，必须包含 index、segment_title、thinking、description。"
             ),
-            "prompt_fields": ["index", "current_segment", "neighbor_segments", "segment_assignment"],
+            "prompt_fields": [
+                "index",
+                "paragraph_text",
+                "panel_count",
+                "present_characters",
+                "location",
+                "key_props",
+            ],
             "max_attempts": 2,
         },
     )
@@ -962,34 +985,12 @@ def _segment_storyboard_output_schema() -> dict[str, Any]:
                 "type": "array",
                 "items": {
                     "type": "object",
-                    "required": ["index", "segment_title", "thinking", "panels"],
+                    "required": ["index", "segment_title", "thinking", "description"],
                     "properties": {
                         "index": {"type": "integer", "minimum": 0},
                         "segment_title": {"type": "string", "minLength": 1},
                         "thinking": {"type": "string", "minLength": 1},
-                        "panels": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "required": ["description", "style", "constraints"],
-                                "properties": {
-                                    "description": {"type": "string", "minLength": 1},
-                                    "style": {"type": "string", "minLength": 1},
-                                    "constraints": {"type": "string", "minLength": 1},
-                                    "character_focus": {"type": "string"},
-                                    "environment_details": {"type": "string"},
-                                    "shot_type": {"type": "string"},
-                                    "camera_angle": {"type": "string"},
-                                    "composition": {"type": "string"},
-                                    "lighting": {"type": "string"},
-                                    "mood": {"type": "string"},
-                                    "action": {"type": "string"},
-                                    "key_props": {"type": "string"},
-                                    "continuity_notes": {"type": "string"},
-                                },
-                                "additionalProperties": False,
-                            },
-                        },
+                        "description": {"type": "string", "minLength": 1},
                     },
                     "additionalProperties": False,
                 },

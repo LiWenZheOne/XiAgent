@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -133,7 +134,7 @@ class ParallelDeepSeekStructuredJsonNode(BaseNode):
             if shared_context:
                 prompt_item = {"shared_context": dict(shared_context), **prompt_item}
             item_json = json.dumps(prompt_item, ensure_ascii=False)
-            prompt = prompt_template.replace("{item}", item_json)
+            prompt = _render_prompt_template(prompt_template, prompt_item, item_json)
 
             schema_instruction = _schema_instruction(llm_item_schema)
             last_error: ValidationError | None = None
@@ -236,6 +237,46 @@ def _project_item(item: dict[str, Any], fields: list[str]) -> dict[str, Any]:
     if not fields:
         return item
     return {field: item[field] for field in fields if field in item}
+
+
+def _render_prompt_template(template: str, prompt_item: Mapping[str, Any], item_json: str) -> str:
+    values = _template_values(prompt_item)
+    values["item"] = item_json
+
+    def replace(match: re.Match[str]) -> str:
+        key = match.group(1)
+        if key not in values:
+            return match.group(0)
+        return values[key]
+
+    return re.sub(r"\{([A-Za-z_][A-Za-z0-9_.]*)\}", replace, template)
+
+
+def _template_values(value: Mapping[str, Any]) -> dict[str, str]:
+    values: dict[str, str] = {}
+
+    def visit(prefix: str, current: Any) -> None:
+        if isinstance(current, Mapping):
+            for key, item in current.items():
+                if not isinstance(key, str) or not key:
+                    continue
+                next_key = f"{prefix}.{key}" if prefix else key
+                visit(next_key, item)
+                if prefix == "shared_context" and not isinstance(item, Mapping):
+                    values.setdefault(key, _template_value(item))
+                if prefix.endswith("prompt_rules"):
+                    values.setdefault(key, _template_value(item))
+            return
+        values[prefix] = _template_value(current)
+
+    visit("", value)
+    return values
+
+
+def _template_value(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False)
 
 
 def _schema_without_passthrough_fields(schema: Any, passthrough_fields: list[str]) -> Any:

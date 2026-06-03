@@ -9,6 +9,8 @@ from xiagent.core.errors import ValidationError
 from xiagent.models import ChatModelRouter, ChatResponse
 from xiagent.nodes import build_node_registry
 from xiagent.nodes.base import NodeContext
+from xiagent.nodes.tools.assemble_segment_context import AssembleSegmentContextNode
+from xiagent.nodes.tools.assemble_storyboard_context import AssembleStoryboardContextNode
 
 
 class FakeStructuredJsonRouter(ChatModelRouter):
@@ -40,7 +42,7 @@ def test_storyboard_nodes_are_registered(test_settings) -> None:
     }.issubset(refs)
 
 
-async def test_script_split_parses_marked_and_unmarked_segments(test_settings) -> None:
+async def test_script_split_uses_markers_over_blank_lines(test_settings) -> None:
     node = build_node_registry(test_settings).get("tool.script_split.v1")
 
     result = await node.run(
@@ -56,7 +58,7 @@ async def test_script_split_parses_marked_and_unmarked_segments(test_settings) -
 
     assert result.status == "succeeded"
     assert result.output == {
-        "count": 3,
+        "count": 2,
         "segments": [
             {
                 "index": 0,
@@ -67,14 +69,58 @@ async def test_script_split_parses_marked_and_unmarked_segments(test_settings) -
             },
             {
                 "index": 1,
-                "text": "The chase crosses the market.",
+                "text": "The chase crosses the market.\n\n没有标记的收束段落。",
                 "panel_hint": "2-3",
                 "panel_count_min": 2,
                 "panel_count_max": 3,
             },
+        ],
+    }
+
+
+async def test_script_split_uses_parentheses_as_segment_markers(test_settings) -> None:
+    node = build_node_registry(test_settings).get("tool.script_split.v1")
+
+    result = await node.run(
+        ctx=None,
+        inputs={
+            "script": (
+                "()鲁智深说何涛领了命，随即下厅，来到桃花山商议。"
+                "（3）林冲踏雪进入野猪林，花枪横在身侧。"
+                "(2-4)两个公差互看一眼，悄悄靠近。"
+                "（ ）山神庙门前风雪更急。"
+            )
+        },
+    )
+
+    assert result.status == "succeeded"
+    assert result.output == {
+        "count": 4,
+        "segments": [
+            {
+                "index": 0,
+                "text": "鲁智深说何涛领了命，随即下厅，来到桃花山商议。",
+                "panel_hint": "1",
+                "panel_count_min": 1,
+                "panel_count_max": 1,
+            },
+            {
+                "index": 1,
+                "text": "林冲踏雪进入野猪林，花枪横在身侧。",
+                "panel_hint": "3",
+                "panel_count_min": 3,
+                "panel_count_max": 3,
+            },
             {
                 "index": 2,
-                "text": "没有标记的收束段落。",
+                "text": "两个公差互看一眼，悄悄靠近。",
+                "panel_hint": "2-4",
+                "panel_count_min": 2,
+                "panel_count_max": 4,
+            },
+            {
+                "index": 3,
+                "text": "山神庙门前风雪更急。",
                 "panel_hint": "1",
                 "panel_count_min": 1,
                 "panel_count_max": 1,
@@ -103,6 +149,38 @@ async def test_script_split_can_limit_segment_count(test_settings) -> None:
 
     assert result.output["count"] == 1
     assert [segment["text"] for segment in result.output["segments"]] == ["第一段"]
+
+
+async def test_context_assemblers_use_raw_panel_hint_without_min_max() -> None:
+    segments = [
+        {
+            "index": 0,
+            "text": "林冲踏雪。",
+            "panel_hint": "3-4",
+            "panel_count_min": 3,
+            "panel_count_max": 4,
+        }
+    ]
+
+    segment_result = await AssembleSegmentContextNode().run(
+        None,
+        {
+            "segments": segments,
+            "segment_analyses": [{"index": 0, "characters": {}}],
+        },
+    )
+    storyboard_result = await AssembleStoryboardContextNode().run(
+        None,
+        {
+            "segments": segments,
+            "segment_assignments": [{"segment_index": 0, "characters": []}],
+        },
+    )
+
+    assert "建议分格数：3-4" in segment_result.output["context_string"]
+    assert "建议分格数：3-4" in storyboard_result.output["context_string"]
+    assert "最少" not in segment_result.output["context_string"]
+    assert "最多" not in storyboard_result.output["context_string"]
 
 
 async def test_storyboard_prompt_assembler_builds_prompt_and_defaults(test_settings) -> None:

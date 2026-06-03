@@ -58,38 +58,12 @@ class MergeSegmentStoryboardDescriptionsNode(BaseNode):
 def _segment_description_schema() -> dict[str, Any]:
     return {
         "type": "object",
-        "required": ["index", "segment_title", "thinking", "panels"],
+        "required": ["index", "segment_title", "thinking", "description"],
         "properties": {
             "index": {"type": "integer", "minimum": 0},
             "segment_title": {"type": "string", "minLength": 1},
             "thinking": {"type": "string", "minLength": 1},
-            "panels": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "required": ["description", "style", "constraints"],
-                    "properties": {
-                        "description": {"type": "string", "minLength": 1},
-                        "style": {"type": "string", "minLength": 1},
-                        "constraints": {"type": "string", "minLength": 1},
-                        "visible_characters": {
-                            "type": "array",
-                            "items": {"type": "string", "minLength": 1},
-                        },
-                        "character_focus": {"type": "string"},
-                        "environment_details": {"type": "string"},
-                        "shot_type": {"type": "string"},
-                        "camera_angle": {"type": "string"},
-                        "composition": {"type": "string"},
-                        "lighting": {"type": "string"},
-                        "mood": {"type": "string"},
-                        "action": {"type": "string"},
-                        "key_props": {"type": "string"},
-                        "continuity_notes": {"type": "string"},
-                    },
-                    "additionalProperties": False,
-                },
-            },
+            "description": {"type": "string", "minLength": 1},
         },
         "additionalProperties": False,
     }
