@@ -8,6 +8,7 @@ from xiagent.core.errors import ValidationError
 from xiagent.core.schemas import validate_json_value
 from xiagent.models import ChatMessage, ChatModelRouter, ChatRequest
 from xiagent.nodes.ai.deepseek_structured_json import (
+    _json_object_response_metadata,
     _parse_json_object,
     _schema_instruction,
     _system_messages,
@@ -211,6 +212,7 @@ class AssignAssetsToSegmentsNode(BaseNode):
                     provider=self._provider,
                     model=self._model,
                     messages=messages,
+                    metadata=_json_object_response_metadata(),
                 )
             )
 

@@ -21,6 +21,7 @@ from xiagent.nodes.ai.deepseek_structured_json import DeepSeekStructuredJsonNode
 from xiagent.nodes.ai.parallel_deepseek_structured_json import (
     ParallelDeepSeekStructuredJsonNode,
 )
+from xiagent.nodes.ai.storyboard_review_refine import StoryboardReviewRefineNode
 from xiagent.nodes.ai.gemini_vision import GeminiVisionNode
 from xiagent.nodes.ai.assign_assets_to_segments import AssignAssetsToSegmentsNode
 from xiagent.nodes.ai.asset_draft_from_description import AssetDraftFromDescriptionNode
@@ -204,6 +205,13 @@ def build_node_registry(settings: Settings) -> NodeRegistry:
     )
     registry.register(
         ParallelDeepSeekStructuredJsonNode(
+            model_router=router,
+            provider="deepseek",
+            model=deepseek_config.model,
+        )
+    )
+    registry.register(
+        StoryboardReviewRefineNode(
             model_router=router,
             provider="deepseek",
             model=deepseek_config.model,

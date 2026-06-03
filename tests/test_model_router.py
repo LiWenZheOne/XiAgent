@@ -189,6 +189,32 @@ async def test_deepseek_provider_uses_client_factory_and_disables_thinking() -> 
     assert response.usage == {"prompt_tokens": 3, "completion_tokens": 5}
 
 
+async def test_deepseek_provider_passes_json_response_format_from_metadata() -> None:
+    from xiagent.models import ChatMessage, ChatRequest, DeepSeekModelConfig
+    from xiagent.models.providers.deepseek import DeepSeekChatProvider
+
+    fake_client = FakeClient()
+    provider = DeepSeekChatProvider(
+        config=DeepSeekModelConfig(
+            api_key="test-key",
+            base_url="https://api.deepseek.com",
+            model="deepseek-test-model",
+        ),
+        client_factory=lambda **_: fake_client,
+    )
+    request = ChatRequest(
+        provider="deepseek",
+        model="deepseek-test-model",
+        messages=[ChatMessage(role="user", content="return json")],
+        metadata={"response_format": {"type": "json_object"}},
+    )
+
+    await provider.chat(request)
+
+    assert fake_client.chat.completions.kwargs is not None
+    assert fake_client.chat.completions.kwargs["response_format"] == {"type": "json_object"}
+
+
 async def test_deepseek_provider_wraps_request_failures() -> None:
     from xiagent.models import ChatMessage, ChatRequest, DeepSeekModelConfig
     from xiagent.models.providers.deepseek import DeepSeekChatProvider

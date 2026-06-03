@@ -81,12 +81,18 @@ class PrepareStoryboardPanelCardsNode(BaseNode):
             segment_title = _text(segment.get("segment_title")) or f"段落 {segment_index + 1}"
             assignment = assignments.get(segment_index, {})
             source_item = items_by_index.get(segment_index, {})
+            status = _text(segment.get("status")) or "ready"
+            error = _error_text(segment.get("error"))
 
-            description = _text(segment.get("description")) or "分镜画面"
+            image_prompt = _image_prompt_text(segment.get("image_prompt"))
+            if status == "failed" and not image_prompt:
+                image_prompt = "当前段落画面提示词生成失败，请重新生成提示词或手动编辑后再生成分镜图。"
+            image_prompt = image_prompt or "分镜画面"
+            description = image_prompt
             visible_characters = _present_character_names(assignment)
             reference_images = _reference_images(assignment, visible_characters=visible_characters)
             prompt = _assemble_prompt(
-                description=description,
+                image_prompt=image_prompt,
                 aspect_ratio=aspect_ratio,
                 resolution=resolution,
                 generation_rules=generation_rules,
@@ -99,6 +105,7 @@ class PrepareStoryboardPanelCardsNode(BaseNode):
                     "panel_index": 0,
                     "segment_title": segment_title,
                     "description": description,
+                    "image_prompt": image_prompt,
                     "prompt": prompt,
                     "negative_prompt": negative_prompt,
                     "reference_images": reference_images,
@@ -106,6 +113,8 @@ class PrepareStoryboardPanelCardsNode(BaseNode):
                     "aspect_ratio": aspect_ratio,
                     "resolution": resolution,
                     "source_item": source_item,
+                    "status": status,
+                    "error": error,
                 }
             )
 
@@ -139,6 +148,7 @@ def _panel_card_schema() -> dict[str, Any]:
             "panel_index": {"type": "integer", "minimum": 0},
             "segment_title": {"type": "string", "minLength": 1},
             "description": {"type": "string", "minLength": 1},
+            "image_prompt": {"type": "string", "minLength": 1},
             "prompt": {"type": "string", "minLength": 1},
             "negative_prompt": {"type": "string"},
             "reference_images": {
@@ -163,6 +173,8 @@ def _panel_card_schema() -> dict[str, Any]:
             "aspect_ratio": {"type": "string", "minLength": 1},
             "resolution": {"type": "string", "minLength": 1},
             "source_item": {"type": "object", "additionalProperties": True},
+            "status": {"type": "string"},
+            "error": {"type": "string"},
         },
         "additionalProperties": False,
     }
@@ -263,7 +275,7 @@ def _present_character_names(assignment: Mapping[str, Any]) -> list[str]:
 
 def _assemble_prompt(
     *,
-    description: str,
+    image_prompt: str,
     aspect_ratio: str,
     resolution: str,
     generation_rules: str,
@@ -271,18 +283,17 @@ def _assemble_prompt(
 ) -> str:
     _ = aspect_ratio, resolution
     reference_context = _reference_context(reference_images)
-    description = _description_with_reference_numbers(description, reference_images)
-    parts = [
-        f"画面风格约束\n{generation_rules}",
-    ]
+    image_prompt = _description_with_reference_numbers(image_prompt, reference_images)
+    parts: list[str] = []
     if reference_context:
-        parts.append(f"参考图对应关系\n{reference_context}")
-    parts.extend(
-        [
-            f"分镜描述\n{description}",
-        ]
-    )
+        parts.append(f"## 参考图对应关系\n{reference_context}")
+    parts.append(f"## 画面内容\n{image_prompt}")
+    parts.append(f"## 画面风格关键词\n{generation_rules}")
     return "\n\n".join(parts)
+
+
+def _image_prompt_text(value: Any) -> str:
+    return _text(value)
 
 
 def _reference_context(reference_images: list[Mapping[str, Any]]) -> str:
@@ -435,6 +446,18 @@ def _string_list(value: Any) -> list[str]:
 
 def _text(value: Any) -> str:
     return value.strip() if isinstance(value, str) and value.strip() else ""
+
+
+def _error_text(value: Any) -> str:
+    if isinstance(value, str):
+        return _text(value)
+    if isinstance(value, Mapping):
+        message = _text(value.get("message"))
+        code = _text(value.get("code"))
+        if message and code:
+            return f"{message}（{code}）"
+        return message or code
+    return ""
 
 
 def _int(value: Any, fallback: int) -> int:

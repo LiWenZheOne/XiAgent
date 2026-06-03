@@ -11,6 +11,7 @@ from xiagent.models import ChatMessage, ChatModelRouter, ChatRequest
 from xiagent.nodes.base import BaseNode, NodeContext, NodeDescriptor, NodeResult
 
 _JSON_FENCE_PATTERN = re.compile(r"```(?:json)?\s*(.*?)```", re.IGNORECASE | re.DOTALL)
+_JSON_OBJECT_RESPONSE_FORMAT = {"type": "json_object"}
 
 
 class DeepSeekStructuredJsonNode(BaseNode):
@@ -79,6 +80,7 @@ class DeepSeekStructuredJsonNode(BaseNode):
                     provider=self._provider,
                     model=self._model,
                     messages=messages,
+                    metadata=_json_object_response_metadata(),
                 )
             )
 
@@ -146,6 +148,10 @@ def _parse_json_object(text: str) -> dict[str, Any]:
 def _schema_instruction(schema: dict[str, Any]) -> str:
     schema_text = json.dumps(schema, ensure_ascii=False, sort_keys=True)
     return f"Target JSON Schema:\n{schema_text}"
+
+
+def _json_object_response_metadata() -> dict[str, dict[str, str]]:
+    return {"response_format": dict(_JSON_OBJECT_RESPONSE_FORMAT)}
 
 
 def _system_messages(system: Any, schema_instruction: str) -> list[ChatMessage]:

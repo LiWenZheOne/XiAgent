@@ -8,6 +8,7 @@ from typing import Any
 from xiagent.core.errors import ValidationError
 from xiagent.core.schemas import validate_json_value
 from xiagent.models import ChatMessage, ChatModelRouter, ChatRequest
+from xiagent.nodes.ai.deepseek_structured_json import _json_object_response_metadata
 from xiagent.nodes.base import BaseNode, NodeContext, NodeDescriptor, NodeResult
 
 _JSON_FENCE_PATTERN = re.compile(r"```(?:json)?\s*(.*?)```", re.IGNORECASE | re.DOTALL)
@@ -75,6 +76,7 @@ class AssetMetadataFromUploadNode(BaseNode):
                         ChatMessage(role="system", content=f"{_system_prompt(asset_type)}\n\n{schema_instruction}"),
                         ChatMessage(role="user", content=current_prompt),
                     ],
+                    metadata=_json_object_response_metadata(),
                 )
             )
             try:

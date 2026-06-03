@@ -4,6 +4,7 @@ import pytest
 from typing import Any
 
 from xiagent.core.errors import ConflictError, ValidationError
+from xiagent.models import ChatModelRouter
 from xiagent.nodes import build_node_registry
 from xiagent.nodes.base import BaseNode, NodeContext, NodeDescriptor, NodeResult
 from xiagent.nodes.registry import NodeRegistry
@@ -33,6 +34,7 @@ from xiagent.nodes.tools.prepare_storyboard_asset_index import (
 from xiagent.nodes.tools.resolve_accessory_asset_refs import ResolveAccessoryAssetRefsNode
 from xiagent.nodes.tools.resolve_character_variant_refs import ResolveCharacterVariantRefsNode
 from xiagent.nodes.tools.resolve_segment_image_refs import ResolveSegmentImageRefsNode
+from xiagent.nodes.ai.storyboard_review_refine import StoryboardReviewRefineNode
 
 
 def test_register_and_get_node() -> None:
@@ -104,6 +106,7 @@ def test_build_node_registry_registers_builtin_nodes(test_settings) -> None:
         "ai.asset_draft_from_description.v1",
         "ai.asset_metadata_from_upload.v1",
         "ai.parallel_deepseek_structured_json.v1",
+        "ai.storyboard_review_refine.v1",
         "ai.runninghub_image_to_image.v1",
         "ai.runninghub_image_to_image.v2",
         "ai.runninghub_image_to_image.v3",
@@ -386,6 +389,11 @@ def test_segment_storyboard_tool_descriptors() -> None:
     prepare_descriptor = PrepareSegmentStoryboardInputsNode().describe()
     merge_descriptor = MergeSegmentStoryboardDescriptionsNode().describe()
     panel_cards_descriptor = PrepareStoryboardPanelCardsNode().describe()
+    review_descriptor = StoryboardReviewRefineNode(
+        model_router=ChatModelRouter(),
+        provider="deepseek",
+        model="test-model",
+    ).describe()
 
     assert prepare_descriptor.ref == "tool.prepare_segment_storyboard_inputs.v1"
     assert prepare_descriptor.kind == "tool"
@@ -430,6 +438,36 @@ def test_segment_storyboard_tool_descriptors() -> None:
     assert panel_cards_descriptor.ref == "tool.prepare_storyboard_panel_cards.v1"
     assert panel_cards_descriptor.kind == "tool"
     assert panel_cards_descriptor.output_schema["required"] == ["panel_cards"]
+    assert review_descriptor.ref == "ai.storyboard_review_refine.v1"
+    assert review_descriptor.kind == "ai"
+
+
+async def test_merge_segment_storyboard_descriptions_keeps_failed_segments() -> None:
+    node = MergeSegmentStoryboardDescriptionsNode()
+
+    result = await node.run(
+        None,
+        {
+            "results": [
+                {
+                    "index": 1,
+                    "segment_title": "失败段",
+                    "status": "failed",
+                    "error": {"code": "structured_json_parse_failed", "message": "DeepSeek response is not valid JSON"},
+                },
+                {
+                    "index": 0,
+                    "segment_title": "成功段",
+                    "image_prompt": "林冲踏雪前行。",
+                },
+            ]
+        },
+    )
+
+    assert [item["index"] for item in result.output["segment_descriptions"]] == [0, 1]
+    failed = result.output["segment_descriptions"][1]
+    assert failed["status"] == "failed"
+    assert failed["error"]["code"] == "structured_json_parse_failed"
 
 
 async def test_prepare_storyboard_panel_cards_builds_cards() -> None:
@@ -443,7 +481,7 @@ async def test_prepare_storyboard_panel_cards_builds_cards() -> None:
                     "index": 0,
                     "segment_title": "雪夜",
                     "thinking": "风雪推进。",
-                    "description": "一共 1 个分格。林冲背对镜头踏雪前行，鲁智深侧对镜头守在树后。",
+                    "image_prompt": "单个大分格，低机位远中景。林冲背对镜头踏雪前行，鲁智深侧对镜头守在树后；野猪林雪地以前景树干遮挡、中景人物穿行、背景林木延伸形成斜向纵深，冷月光从画面右上方落下，风雪斜扫，花枪在人物身侧形成方向线。",
                 }
             ],
             "segment_assignments": [
@@ -491,6 +529,7 @@ async def test_prepare_storyboard_panel_cards_builds_cards() -> None:
             ],
             "shared_context": {
                 "full_script": "完整剧本",
+                "world_background": "水浒世界，北宋末年。",
                 "storyboard_options": {"no_material": False, "enrich_description": False},
             },
             "generation_rules": "风格指令：参考《罗小黑战记》。",
@@ -535,10 +574,17 @@ async def test_prepare_storyboard_panel_cards_builds_cards() -> None:
             "source": "asset",
         },
     ]
-    assert card["prompt"].startswith("画面风格约束\n风格指令：参考《罗小黑战记》。")
-    assert "参考图对应关系\n- 林冲：参考图1\n- 鲁智深：参考图2\n- 野猪林：参考图3\n- 花枪：参考图4" in card["prompt"]
+    assert card["prompt"].startswith("## 参考图对应关系\n- 林冲：参考图1")
+    assert "## 参考图对应关系\n- 林冲：参考图1\n- 鲁智深：参考图2\n- 野猪林：参考图3\n- 花枪：参考图4" in card["prompt"]
+    assert "## 画面内容\n单个大分格" in card["prompt"]
+    assert card["prompt"].endswith("## 画面风格关键词\n风格指令：参考《罗小黑战记》。")
+    assert card["prompt"].index("## 参考图对应关系") < card["prompt"].index("## 画面内容")
+    assert card["prompt"].index("## 画面内容") < card["prompt"].index("## 画面风格关键词")
     assert "林冲（参考图1）背对镜头踏雪前行" in card["prompt"]
     assert "鲁智深（参考图2）侧对镜头守在树后" in card["prompt"]
+    assert "画面内容提示词" not in card["prompt"]
+    assert "低机位远中景" in card["prompt"]
+    assert "形成斜向纵深" in card["prompt"]
     assert "style" not in card
     assert "constraints" not in card
     assert "画风" not in card["prompt"]
@@ -550,6 +596,37 @@ async def test_prepare_storyboard_panel_cards_builds_cards() -> None:
     assert "输出清晰度" not in card["prompt"]
     assert "出场角色：林冲（囚服）、鲁智深（僧衣）" not in card["prompt"]
     assert card["visible_characters"] == ["林冲", "鲁智深"]
+    assert card["status"] == "ready"
+    assert card["error"] == ""
+
+
+async def test_prepare_storyboard_panel_cards_marks_failed_segments() -> None:
+    node = PrepareStoryboardPanelCardsNode()
+
+    result = await node.run(
+        None,
+        {
+            "segment_descriptions": [
+                {
+                    "index": 1,
+                    "segment_title": "失败段",
+                    "status": "failed",
+                    "error": {
+                        "code": "structured_json_parse_failed",
+                        "message": "DeepSeek response is not valid JSON",
+                    },
+                }
+            ],
+            "segment_assignments": [{"segment_index": 1, "characters": [], "key_props": []}],
+            "generation_rules": "风格指令。",
+        },
+    )
+
+    card = result.output["panel_cards"][0]
+    assert card["card_id"] == "segment-1"
+    assert card["status"] == "failed"
+    assert card["error"] == "DeepSeek response is not valid JSON（structured_json_parse_failed）"
+    assert "当前段落画面提示词生成失败" in card["prompt"]
 
 
 async def test_prepare_storyboard_panel_cards_marks_numbered_group_characters() -> None:
@@ -563,7 +640,7 @@ async def test_prepare_storyboard_panel_cards_marks_numbered_group_characters() 
                     "index": 0,
                     "segment_title": "登船",
                     "thinking": "大规模行动。",
-                    "description": "官兵1背对镜头登船，官兵2侧对镜头回望，何涛面对镜头指挥。",
+                    "image_prompt": "官兵1背对镜头登船，官兵2侧对镜头回望，何涛面对镜头指挥。",
                 }
             ],
             "segment_assignments": [
@@ -612,7 +689,7 @@ async def test_prepare_storyboard_panel_cards_does_not_mark_character_inside_loc
                     "index": 0,
                     "segment_title": "庄院议事",
                     "thinking": "室内议事。",
-                    "description": "画面：石碣村阮小五庄院内，粗木梁下，阮小五居中，吴用侧对镜头。",
+                    "image_prompt": "画面：石碣村阮小五庄院内，粗木梁下，阮小五居中，吴用侧对镜头。",
                 }
             ],
             "segment_assignments": [

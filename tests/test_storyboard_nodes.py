@@ -286,6 +286,7 @@ async def test_deepseek_structured_json_parses_plain_json(test_settings) -> None
     assert result.output == {"characters": [{"name": "阿宁"}]}
     assert router.requests[0].messages[0].role == "system"
     assert router.requests[0].messages[-1].content == "extract characters"
+    assert router.requests[0].metadata == {"response_format": {"type": "json_object"}}
 
 
 async def test_deepseek_structured_json_includes_output_schema_in_model_instruction(

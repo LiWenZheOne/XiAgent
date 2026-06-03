@@ -58,14 +58,29 @@ class MergeSegmentStoryboardDescriptionsNode(BaseNode):
 def _segment_description_schema() -> dict[str, Any]:
     return {
         "type": "object",
-        "required": ["index", "segment_title", "thinking", "description"],
+        "required": ["index"],
         "properties": {
             "index": {"type": "integer", "minimum": 0},
             "segment_title": {"type": "string", "minLength": 1},
             "thinking": {"type": "string", "minLength": 1},
             "description": {"type": "string", "minLength": 1},
+            "scene_layout": {"type": "object", "additionalProperties": True},
+            "panel_plan": {"type": "object", "additionalProperties": True},
+            "image_prompt": {"type": "string", "minLength": 1},
+            "review": {"type": "object", "additionalProperties": True},
+            "review_history": {
+                "type": "array",
+                "items": {"type": "object", "additionalProperties": True},
+            },
+            "prompt_review": {"type": "object", "additionalProperties": True},
+            "prompt_review_history": {
+                "type": "array",
+                "items": {"type": "object", "additionalProperties": True},
+            },
+            "status": {"type": "string"},
+            "error": {"type": "object", "additionalProperties": True},
         },
-        "additionalProperties": False,
+        "additionalProperties": True,
     }
 
 

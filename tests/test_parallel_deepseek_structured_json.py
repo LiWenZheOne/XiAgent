@@ -38,6 +38,7 @@ def test_parallel_node_describe() -> None:
     desc = node.describe()
     assert desc.ref == "ai.parallel_deepseek_structured_json.v1"
     assert desc.input_schema["required"] == ["items", "prompt_template"]
+    assert "required_input_fields" in desc.input_schema["properties"]
 
 
 @pytest.mark.asyncio
@@ -70,6 +71,7 @@ async def test_parallel_node_processes_all_items() -> None:
         {"result": "c"},
     ]
     assert len(router.requests) == 3
+    assert all(request.metadata == {"response_format": {"type": "json_object"}} for request in router.requests)
 
 
 @pytest.mark.asyncio
@@ -377,3 +379,67 @@ async def test_parallel_node_retry_on_parse_failure() -> None:
     assert result.status == "succeeded"
     assert result.output["results"] == [{"result": "ok"}]
     assert len(router.requests) == 2
+
+
+@pytest.mark.asyncio
+async def test_parallel_node_can_continue_after_single_item_failure() -> None:
+    responses = [
+        '{"result": "ok"}',
+        "not json",
+    ]
+    router = FakeParallelRouter(responses)
+    node = ParallelDeepSeekStructuredJsonNode(
+        model_router=router,
+        provider="deepseek",
+        model="test-model",
+    )
+
+    result = await node.run(
+        None,
+        {
+            "items": [{"index": 0, "name": "成功段"}, {"index": 1, "name": "失败段"}],
+            "prompt_template": "Process: {item}",
+            "passthrough_fields": ["index", "name"],
+            "max_attempts": 1,
+            "continue_on_item_error": True,
+        },
+    )
+
+    assert result.status == "succeeded"
+    assert result.output["results"][0] == {"result": "ok", "index": 0, "name": "成功段"}
+    failed = result.output["results"][1]
+    assert failed["index"] == 1
+    assert failed["name"] == "失败段"
+    assert failed["status"] == "failed"
+    assert failed["error"]["code"] == "structured_json_parse_failed"
+    assert failed["error"]["message"] == "DeepSeek response is not valid JSON"
+
+
+@pytest.mark.asyncio
+async def test_parallel_node_fails_item_when_required_input_field_missing() -> None:
+    router = FakeParallelRouter(['{"result": "unused"}'])
+    node = ParallelDeepSeekStructuredJsonNode(
+        model_router=router,
+        provider="deepseek",
+        model="test-model",
+    )
+
+    result = await node.run(
+        None,
+        {
+            "items": [{"index": 0, "name": "缺场景"}],
+            "prompt_template": "Process: {item}",
+            "passthrough_fields": ["index", "name"],
+            "required_input_fields": ["scene_layout", "panel_plan"],
+            "continue_on_item_error": True,
+            "max_attempts": 1,
+        },
+    )
+
+    failed = result.output["results"][0]
+    assert failed["index"] == 0
+    assert failed["name"] == "缺场景"
+    assert failed["status"] == "failed"
+    assert failed["error"]["code"] == "parallel_llm_required_input_missing"
+    assert failed["error"]["details"]["missing_fields"] == ["scene_layout", "panel_plan"]
+    assert router.requests == []

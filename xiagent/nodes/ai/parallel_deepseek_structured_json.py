@@ -10,6 +10,7 @@ from xiagent.core.errors import ValidationError
 from xiagent.core.schemas import validate_json_value
 from xiagent.models import ChatMessage, ChatModelRouter, ChatRequest
 from xiagent.nodes.ai.deepseek_structured_json import (
+    _json_object_response_metadata,
     _parse_json_object,
     _schema_instruction,
     _system_messages,
@@ -69,6 +70,11 @@ class ParallelDeepSeekStructuredJsonNode(BaseNode):
                         "type": "array",
                         "items": {"type": "string", "minLength": 1},
                     },
+                    "required_input_fields": {
+                        "type": "array",
+                        "items": {"type": "string", "minLength": 1},
+                    },
+                    "continue_on_item_error": {"type": "boolean"},
                     "max_attempts": {"type": "integer", "minimum": 1},
                 },
                 "required": ["items", "prompt_template"],
@@ -125,11 +131,26 @@ class ParallelDeepSeekStructuredJsonNode(BaseNode):
 
         prompt_fields = _string_list(inputs.get("prompt_fields"))
         passthrough_fields = _string_list(inputs.get("passthrough_fields"))
+        required_input_fields = _string_list(inputs.get("required_input_fields"))
+        continue_on_item_error = bool(inputs.get("continue_on_item_error"))
         schema = ctx.output_schema if ctx is not None else self.describe().output_schema
         item_schema = schema.get("properties", {}).get("results", {}).get("items", {})
-        llm_item_schema = _schema_without_passthrough_fields(item_schema, passthrough_fields)
+        llm_item_schema = _schema_without_passthrough_fields(_success_item_schema(item_schema), passthrough_fields)
 
         async def process_one(item: dict[str, Any]) -> dict[str, Any]:
+            if _item_failed(item):
+                return _failed_item(item, item.get("error"), passthrough_fields)
+            missing_fields = _missing_required_fields(item, required_input_fields)
+            if missing_fields:
+                error = ValidationError(
+                    code="parallel_llm_required_input_missing",
+                    message="Required input fields are missing.",
+                    details={"missing_fields": missing_fields},
+                )
+                if continue_on_item_error:
+                    return _failed_item(item, error, passthrough_fields)
+                raise error
+
             prompt_item = _project_item(item, prompt_fields)
             if shared_context:
                 prompt_item = {"shared_context": dict(shared_context), **prompt_item}
@@ -149,6 +170,7 @@ class ParallelDeepSeekStructuredJsonNode(BaseNode):
                         provider=self._provider,
                         model=self._model,
                         messages=messages,
+                        metadata=_json_object_response_metadata(),
                     )
                 )
 
@@ -188,6 +210,8 @@ class ParallelDeepSeekStructuredJsonNode(BaseNode):
                     "Return only one valid JSON object. Do not include explanations or Markdown."
                 )
 
+            if continue_on_item_error:
+                return _failed_item(item, last_error, passthrough_fields)
             if last_error is not None:
                 raise last_error
             raise ValidationError(
@@ -296,6 +320,22 @@ def _schema_without_passthrough_fields(schema: Any, passthrough_fields: list[str
     return next_schema
 
 
+def _success_item_schema(schema: Any) -> Any:
+    if not isinstance(schema, Mapping):
+        return schema
+    variants = schema.get("oneOf")
+    if not isinstance(variants, list):
+        return schema
+    for variant in variants:
+        if not isinstance(variant, Mapping):
+            continue
+        required = variant.get("required")
+        if isinstance(required, list) and "status" in required and "error" in required:
+            continue
+        return dict(variant)
+    return schema
+
+
 def _with_passthrough_fields(
     parsed: dict[str, Any],
     source: dict[str, Any],
@@ -324,3 +364,65 @@ def _inherited_field_value(source: dict[str, Any], field: str) -> Any:
     if field in source:
         return source[field]
     return None
+
+
+def _item_failed(item: Mapping[str, Any]) -> bool:
+    return item.get("status") == "failed"
+
+
+def _missing_required_fields(item: Mapping[str, Any], fields: list[str]) -> list[str]:
+    return [field for field in fields if not _field_has_value(item, field)]
+
+
+def _field_has_value(item: Mapping[str, Any], field: str) -> bool:
+    current: Any = item
+    for part in field.split("."):
+        if not isinstance(current, Mapping) or part not in current:
+            return False
+        current = current[part]
+    if current is None:
+        return False
+    if isinstance(current, str):
+        return bool(current.strip())
+    if isinstance(current, list | dict):
+        return bool(current)
+    return True
+
+
+def _failed_item(
+    source: dict[str, Any],
+    error: Any,
+    passthrough_fields: list[str],
+) -> dict[str, Any]:
+    result = dict(source)
+    if passthrough_fields:
+        for field in passthrough_fields:
+            inherited = _inherited_field_value(source, field)
+            if inherited is not None:
+                result[field] = inherited
+    result["status"] = "failed"
+    result["error"] = _error_payload(error)
+    return result
+
+
+def _error_payload(error: Any) -> dict[str, Any]:
+    if isinstance(error, ValidationError):
+        return {
+            "code": error.code,
+            "message": error.message,
+            "details": dict(error.details),
+        }
+    if isinstance(error, Mapping):
+        code = error.get("code")
+        message = error.get("message")
+        details = error.get("details")
+        return {
+            "code": code if isinstance(code, str) and code else "item_failed",
+            "message": message if isinstance(message, str) and message else "Item failed in an upstream step.",
+            "details": dict(details) if isinstance(details, Mapping) else {},
+        }
+    return {
+        "code": "item_failed",
+        "message": str(error) if error else "Item failed in an upstream step.",
+        "details": {},
+    }

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from openai import AsyncOpenAI
@@ -39,6 +39,9 @@ class DeepSeekChatProvider(ChatModelProvider):
                 "stream": False,
                 "extra_body": {"thinking": {"type": "disabled"}},
             }
+            response_format = request.metadata.get("response_format")
+            if _is_json_object_response_format(response_format):
+                payload["response_format"] = {"type": "json_object"}
             log_api_request(
                 provider="deepseek",
                 url=f"{self._config.base_url.rstrip('/')}/chat/completions",
@@ -70,3 +73,7 @@ class DeepSeekChatProvider(ChatModelProvider):
             usage=usage,
             metadata={"provider": "deepseek"},
         )
+
+
+def _is_json_object_response_format(value: Any) -> bool:
+    return isinstance(value, Mapping) and value.get("type") == "json_object"
