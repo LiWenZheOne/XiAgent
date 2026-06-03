@@ -451,6 +451,16 @@ def test_episode_metadata_text_asset_gets_type_tag_on_create_and_update(test_set
         )
         asset_id = create_response.json()["asset_id"]
         created_tags_response = client.get(f"/api/assets/{asset_id}/tags", headers=headers)
+        text_update_response = client.put(
+            f"/api/assets/{asset_id}/text",
+            headers=headers,
+            json={
+                "name": "23、私放晁天王",
+                "text": "修改后的集剧情概括、原剧本内容和资产目录。",
+                "metadata": {"type": "episode_metadata", "episode_name": "私放晁天王"},
+            },
+        )
+        content_response = client.get(f"/api/assets/{asset_id}/content", headers=headers)
 
         normal_response = client.post(
             "/api/assets/text",
@@ -476,6 +486,10 @@ def test_episode_metadata_text_asset_gets_type_tag_on_create_and_update(test_set
     assert create_response.status_code == 200
     assert created_tags_response.status_code == 200
     assert [tag["name"] for tag in created_tags_response.json()["items"]] == ["集元数据"]
+    assert text_update_response.status_code == 200
+    assert text_update_response.json()["metadata"]["episode_name"] == "私放晁天王"
+    assert content_response.status_code == 200
+    assert content_response.text == "修改后的集剧情概括、原剧本内容和资产目录。"
     assert normal_response.status_code == 200
     assert update_response.status_code == 200
     assert [tag["name"] for tag in updated_tags_response.json()["items"]] == ["集元数据"]
@@ -619,7 +633,36 @@ def test_storyboard_panel_prompt_regeneration_runs_full_segment_chain(test_setti
             headers=headers,
             json={
                 "project_id": "global",
-                "card": {"card_id": "segment-0", "segment_index": 0, "panel_index": 0},
+                "card": {
+                    "card_id": "segment-0",
+                    "segment_index": 0,
+                    "panel_index": 0,
+                    "reference_images": [
+                        {
+                            "label": "何涛",
+                            "asset_type": "character",
+                            "asset_name": "何涛",
+                            "asset_tags": ["官差"],
+                            "image_ref": {
+                                "kind": "asset",
+                                "asset_id": "asset-hetao",
+                                "role": "reference",
+                            },
+                            "source": "asset",
+                        },
+                        {
+                            "label": "众公差",
+                            "asset_type": "character",
+                            "asset_name": "众公差",
+                            "image_ref": {
+                                "kind": "asset",
+                                "asset_id": "asset-gongchai",
+                                "role": "reference",
+                            },
+                            "source": "asset",
+                        },
+                    ],
+                },
                 "item": {
                     "index": 0,
                     "paragraph_text": "何涛来到机密房里和众公差商议。",
@@ -647,7 +690,11 @@ def test_storyboard_panel_prompt_regeneration_runs_full_segment_chain(test_setti
     assert body["segment_description"]["segment_title"] == "机密房密议"
     assert body["segment_description"]["panel_plan"]["panel_count"] == 1
     assert body["segment_description"]["prompt_review"]["passed"] is True
-    assert "何涛与众公差在机密房内围着方桌密议" in body["card"]["prompt"]
+    assert "何涛（参考图1）与众公差（参考图2）在机密房内围着方桌密议" in body["card"]["prompt"]
+    assert "图1是角色何涛" in body["card"]["prompt"]
+    assert "图2是角色众公差" in body["card"]["prompt"]
+    assert "何涛（参考图1）" in body["card"]["prompt"]
+    assert "众公差（参考图2）" in body["card"]["prompt"]
     assert len(fake_router.requests) == 5
     prompts = ["\n".join(str(message.content) for message in request.messages) for request in fake_router.requests]
     assert "请分析当前段落的实际场景布局" in prompts[0]

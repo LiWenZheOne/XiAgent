@@ -68,6 +68,14 @@ class UpdateAssetRequest(BaseModel):
     metadata: dict[str, Any] | None = None
 
 
+class UpdateTextAssetRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    text: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class DraftAssetFromDescriptionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -248,7 +256,24 @@ async def regenerate_storyboard_panel_prompt(
             code="storyboard_panel_item_required",
             message="重新生成分镜提示词需要当前段落上下文。",
         )
-
+    if "reference_images" in request.card:
+        item = {
+            **item,
+            "segment_assignment": _segment_assignment_with_reference_images(
+                {"segment_index": item.get("index")},
+                _object_list(request.card.get("reference_images")),
+            ),
+        }
+    else:
+        current_reference_images = _object_list(item.get("reference_images"))
+        if current_reference_images:
+            item = {
+                **item,
+                "segment_assignment": _segment_assignment_with_reference_images(
+                    item.get("segment_assignment"),
+                    current_reference_images,
+                ),
+            }
     project_id = request.project_id or "global"
     workflow_nodes = _workflow_nodes_by_id(services.workflows.get(_STORYBOARD_WORKFLOW_ID))
     context_base = {
@@ -861,6 +886,23 @@ async def update_asset(
     return asdict(asset)
 
 
+@router.put("/{asset_id}/text")
+async def update_text_asset(
+    asset_id: str,
+    request: UpdateTextAssetRequest,
+    services: Annotated[ApiServices, Depends(get_services)],
+    current_user: Annotated[UserRecord, Depends(get_current_user)],
+) -> dict:
+    asset = await services.assets.update_text_asset(
+        user_id=current_user.user_id,
+        asset_id=asset_id,
+        name=request.name,
+        text=request.text,
+        metadata=request.metadata,
+    )
+    return asdict(asset)
+
+
 @router.put("/{asset_id}/file")
 async def replace_asset_file(
     asset_id: str,
@@ -993,6 +1035,65 @@ def _split_ids(value: str | None) -> list[str]:
 
 def _workflow_nodes_by_id(contract: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return {node["id"]: node for node in contract.get("nodes", []) if isinstance(node, dict) and isinstance(node.get("id"), str)}
+
+
+def _segment_assignment_with_reference_images(
+    value: Any,
+    reference_images: list[dict[str, Any]],
+) -> dict[str, Any]:
+    assignment = dict(value) if isinstance(value, dict) else {}
+    characters: list[dict[str, Any]] = []
+    prop_assets: list[dict[str, Any]] = []
+    location_asset: dict[str, Any] | None = None
+    for reference in reference_images:
+        reference_asset = _reference_image_as_assignment_asset(reference)
+        if reference_asset is None:
+            continue
+        asset_type = str(reference_asset.get("asset_type") or "")
+        if asset_type == "character":
+            characters.append({**reference_asset, "presence": "present"})
+        elif asset_type in {"scene", "location"} and location_asset is None:
+            location_asset = reference_asset
+        elif asset_type == "prop":
+            prop_assets.append(reference_asset)
+    if characters:
+        assignment["characters"] = characters
+    if location_asset is not None:
+        assignment["location_asset"] = location_asset
+    if prop_assets:
+        assignment["prop_assets"] = prop_assets
+    return assignment
+
+
+def _reference_image_as_assignment_asset(reference: dict[str, Any]) -> dict[str, Any] | None:
+    image_ref = reference.get("image_ref")
+    if not isinstance(image_ref, dict):
+        return None
+    asset_name = _text(reference.get("asset_name")) or _text(reference.get("label"))
+    if not asset_name:
+        return None
+    item: dict[str, Any] = {
+        "asset_type": _text(reference.get("asset_type")) or "character",
+        "asset_name": asset_name,
+        "image_ref": dict(image_ref),
+    }
+    asset_tags = [tag for tag in reference.get("asset_tags", []) if isinstance(tag, str) and tag]
+    if asset_tags:
+        item["asset_tags"] = asset_tags
+    preview_url = _text(reference.get("preview_url"))
+    if preview_url:
+        item["image_url"] = preview_url
+    return item
+
+
+def _object_list(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
+def _text(value: Any) -> str:
+    return value.strip() if isinstance(value, str) and value.strip() else ""
 
 
 async def _run_workflow_node(

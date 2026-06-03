@@ -336,6 +336,19 @@ export async function updateAsset(input: {
   });
 }
 
+export async function updateTextAsset(input: {
+  asset_id: string;
+  name: string;
+  text: string;
+  metadata?: Record<string, unknown>;
+}): Promise<AssetRecord> {
+  return apiRequest<AssetRecord>(`/api/assets/${encodeURIComponent(input.asset_id)}/text`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: input.name, text: input.text, metadata: input.metadata ?? {} }),
+  });
+}
+
 export async function getAsset(assetId: string, projectId?: string): Promise<AssetRecord> {
   const params = new URLSearchParams();
   if (projectId) params.set("project_id", projectId);

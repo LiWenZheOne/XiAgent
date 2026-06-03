@@ -1,4 +1,4 @@
-import { type ChangeEvent, useEffect, useMemo, useState } from "react";
+import { type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { draftAssetFromDescription, uploadAsset } from "../../api/assets";
 import type { AssetScope } from "../../api/types";
@@ -43,6 +43,8 @@ type DraftState = {
   reasoning: string;
 } | null;
 
+const hiddenTableFields = new Set(["variant_description"]);
+
 const tabLabels: Record<TabKey, string> = {
   character: "角色",
   asset: "地点",
@@ -53,6 +55,7 @@ export function AssetSummaryTableControl({
   busy,
   config,
   node,
+  onDraft,
   projectId,
   onSubmit,
 }: NodeUiControlProps) {
@@ -73,14 +76,19 @@ export function AssetSummaryTableControl({
   const [pickerRow, setPickerRow] = useState<AssetSummaryRow | null>(null);
   const [draftOpen, setDraftOpen] = useState(false);
   const [draftDescription, setDraftDescription] = useState("");
-  const [additionalAssetRequest, setAdditionalAssetRequest] = useState("");
+  const [additionalAssetRequest, setAdditionalAssetRequest] = useState(() => textValue(source?.additional_asset_request) ?? "");
   const [draftResult, setDraftResult] = useState<DraftState>(null);
   const [draftLoading, setDraftLoading] = useState(false);
   const [draftError, setDraftError] = useState("");
+  const draftPersistQueueRef = useRef<Promise<void>>(Promise.resolve());
 
   useEffect(() => {
     setRows(sourceRows);
   }, [sourceRows]);
+
+  useEffect(() => {
+    setAdditionalAssetRequest(textValue(source?.additional_asset_request) ?? "");
+  }, [source]);
 
   useEffect(() => {
     setMatches((current) => ({ ...initialMatches(rows), ...current }));
@@ -109,6 +117,19 @@ export function AssetSummaryTableControl({
     });
   }
 
+  async function persistDraft(
+    nextRows = rows,
+    nextMatches = matches,
+    nextImages = images,
+    nextAdditionalAssetRequest = additionalAssetRequest,
+  ) {
+    if (readonly || !onDraft) return;
+    const payload = draftPayload(nextRows, nextMatches, nextImages, nextAdditionalAssetRequest);
+    const nextPersist = draftPersistQueueRef.current.then(() => onDraft(payload), () => onDraft(payload));
+    draftPersistQueueRef.current = nextPersist.catch(() => undefined);
+    await nextPersist;
+  }
+
   async function uploadImageFile(row: AssetSummaryRow, file: File | undefined) {
     if (!file) return;
     setUploading((current) => ({ ...current, [row.key]: "上传中" }));
@@ -127,7 +148,11 @@ export function AssetSummaryTableControl({
         setError("图片已上传，但没有可用于工作流的公开地址。");
         return;
       }
-      setImages((current) => ({ ...current, [row.key]: url }));
+      setImages((current) => {
+        const next = { ...current, [row.key]: url };
+        void persistDraft(rows, matches, next);
+        return next;
+      });
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "图片上传失败。");
     } finally {
@@ -146,15 +171,34 @@ export function AssetSummaryTableControl({
 
   function addRow(type: TabKey) {
     const key = `${type}:manual:${Date.now()}`;
-    setRows((current) => [
-      ...current,
-      {
-        key,
-        type,
-        name: "",
-        fields: defaultFieldsForType(type),
-      },
-    ]);
+    setRows((current) => {
+      const next = [
+        ...current,
+        {
+          key,
+          type,
+          name: "",
+          fields: defaultFieldsForType(type),
+        },
+      ];
+      void persistDraft(next);
+      return next;
+    });
+  }
+
+  function mergeDraftAssetsIntoRows() {
+    if (!draftResult?.assets.length) return;
+    const timestamp = Date.now();
+    setRows((current) => {
+      const next = [
+        ...current,
+        ...draftResult.assets.map((asset, index) => rowFromDraft(asset, `${timestamp}:${index}`)),
+      ];
+      void persistDraft(next);
+      return next;
+    });
+    setDraftResult(null);
+    setDraftOpen(false);
   }
 
   function openDraftDialog() {
@@ -188,6 +232,7 @@ export function AssetSummaryTableControl({
         reasoning: result.reasoning,
       });
       setAdditionalAssetRequest(description);
+      void persistDraft(rows, matches, images, description);
     } catch (nextError) {
       setDraftError(nextError instanceof Error ? nextError.message : "AI 新增资产失败。");
     } finally {
@@ -196,27 +241,33 @@ export function AssetSummaryTableControl({
   }
 
   function deleteRow(row: AssetSummaryRow) {
-    setRows((current) => current.filter((item) => item.key !== row.key));
-    setMatches((current) => {
-      const next = { ...current };
-      delete next[row.key];
+    const nextMatches = withoutKey(matches, row.key);
+    const nextImages = withoutKey(images, row.key);
+    setRows((current) => {
+      const next = current.filter((item) => item.key !== row.key);
+      void persistDraft(next, nextMatches, nextImages);
       return next;
     });
-    setImages((current) => {
-      const next = { ...current };
-      delete next[row.key];
-      return next;
-    });
+    setMatches(nextMatches);
+    setImages(nextImages);
   }
 
   function updateRowName(row: AssetSummaryRow, name: string) {
-    setRows((current) => current.map((item) => item.key === row.key ? { ...item, name } : item));
+    setRows((current) => {
+      const next = current.map((item) => item.key === row.key ? { ...item, name } : item);
+      void persistDraft(next);
+      return next;
+    });
   }
 
   function updateRowField(row: AssetSummaryRow, field: string, value: string) {
-    setRows((current) => current.map((item) => (
-      item.key === row.key ? { ...item, fields: { ...item.fields, [field]: value } } : item
-    )));
+    setRows((current) => {
+      const next = current.map((item) => (
+        item.key === row.key ? { ...item, fields: { ...item.fields, [field]: value } } : item
+      ));
+      void persistDraft(next);
+      return next;
+    });
   }
 
   return (
@@ -382,9 +433,11 @@ export function AssetSummaryTableControl({
                 rows={4}
                 value={draftDescription}
                 onChange={(event) => {
-                  setDraftDescription(event.target.value);
-                  setAdditionalAssetRequest(event.target.value);
+                  const nextDescription = event.target.value;
+                  setDraftDescription(nextDescription);
+                  setAdditionalAssetRequest(nextDescription);
                   setDraftResult(null);
+                  void persistDraft(rows, matches, images, nextDescription);
                 }}
               />
             </label>
@@ -430,8 +483,8 @@ export function AssetSummaryTableControl({
                   </div>
                 ))}
                 <div className="button-row end">
-                  <button className="secondary-button" disabled={busy} type="button" onClick={() => setDraftOpen(false)}>
-                    保留修改意见
+                  <button className="primary-button" disabled={busy} type="button" onClick={mergeDraftAssetsIntoRows}>
+                    合并到资产表格
                   </button>
                 </div>
               </div>
@@ -448,21 +501,26 @@ export function AssetSummaryTableControl({
           tagName={tagNameForRowType(pickerRow.type)}
           targetName={pickerRow.name}
           onClear={() => {
-            setMatches((current) => ({ ...current, [pickerRow.key]: null }));
+            const nextMatches = { ...matches, [pickerRow.key]: null };
+            setMatches(nextMatches);
+            void persistDraft(rows, nextMatches);
             setPickerRow(null);
           }}
           onClose={() => setPickerRow(null)}
           onSelect={(asset) => {
-            setMatches((current) => ({
-              ...current,
+            const imageRef: ImageRef = { kind: "asset", asset_id: asset.asset_id, role: "reference" };
+            const nextMatches = {
+              ...matches,
               [pickerRow.key]: {
                 asset_id: asset.asset_id,
                 name: asset.name,
-                imageRef: { kind: "asset", asset_id: asset.asset_id, role: "reference" },
+                imageRef,
                 imageUrl: assetImageUrl(asset),
                 appearanceDescription: assetAppearanceDescription(asset),
               },
-            }));
+            };
+            setMatches(nextMatches);
+            void persistDraft(rows, nextMatches);
             setPickerRow(null);
           }}
         />
@@ -561,18 +619,53 @@ function currentApprovedAssets(rows: AssetSummaryRow[], matches: MatchState): Re
   };
 }
 
+function draftPayload(
+  rows: AssetSummaryRow[],
+  matches: MatchState,
+  images: ImageState,
+  additionalAssetRequest: string,
+): Record<string, unknown> {
+  return {
+    approved_assets: currentApprovedAssets(rows, matches),
+    additional_asset_request: additionalAssetRequest.trim(),
+    asset_images: rows
+      .map((row) => {
+        const imageUrl = (images[row.key] || row.imageUrl || "").trim();
+        if (!imageUrl) return null;
+        return {
+          asset_type: row.type === "asset" ? "scene" : row.type,
+          asset_name: row.name,
+          asset_tags: stringList(row.fields.asset_tags),
+          image_url: imageUrl,
+          source: "manual_upload",
+        };
+      })
+      .filter(Boolean),
+  };
+}
+
+function withoutKey<T>(source: Record<string, T>, key: string): Record<string, T> {
+  const next = { ...source };
+  delete next[key];
+  return next;
+}
+
 function normalizeAssetSummarySource(value: unknown): Record<string, unknown> | null {
   const source = recordValue(value);
   if (!source) return null;
   const approvedAssets = recordValue(source.approved_assets);
   if (!approvedAssets) return source;
   return {
-    ...approvedAssets,
+    ...source,
+    characters: approvedAssets.characters,
+    scenes: approvedAssets.assets,
+    assets: approvedAssets.assets,
+    props: approvedAssets.props,
     asset_images: source.asset_images,
   };
 }
 
-function rowFromDraft(asset: Record<string, unknown>): AssetSummaryRow {
+function rowFromDraft(asset: Record<string, unknown>, keySuffix = String(Date.now())): AssetSummaryRow {
   const type = rowTypeFromDraft(asset);
   const name = textValue(asset.asset_name) || textValue(asset.name) || `${tabLabels[type]} ${Date.now()}`;
   const fields = {
@@ -587,7 +680,7 @@ function rowFromDraft(asset: Record<string, unknown>): AssetSummaryRow {
   delete fields.matched_asset_id;
   delete fields.matched_asset_name;
   return {
-    key: `${type}:ai:${Date.now()}:${name}`,
+    key: `${type}:ai:${keySuffix}:${name}`,
     type,
     name,
     fields,
@@ -612,10 +705,10 @@ function tableColumns(rows: AssetSummaryRow[]): string[] {
   const seen = new Set<string>();
   for (const row of rows) {
     for (const key of Object.keys(defaultFieldsForType(row.type))) {
-      seen.add(key);
+      if (!hiddenTableFields.has(key)) seen.add(key);
     }
     for (const key of Object.keys(row.fields)) {
-      seen.add(key);
+      if (!hiddenTableFields.has(key)) seen.add(key);
     }
   }
   return [...seen];
@@ -623,7 +716,7 @@ function tableColumns(rows: AssetSummaryRow[]): string[] {
 
 function defaultFieldsForType(type: TabKey): Record<string, string> {
   if (type === "character") {
-    return { asset_tags: "", aliases: "", summary: "", character_status: "", variant_description: "" };
+    return { asset_tags: "", aliases: "", summary: "", character_status: "" };
   }
   if (type === "asset") {
     return { description: "", location_type: "", time_of_day: "" };

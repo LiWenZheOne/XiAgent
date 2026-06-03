@@ -117,7 +117,44 @@ function readPromptPreview(value: unknown): PromptPreview | null {
 
 function renderPromptTemplate(template: string, items: unknown): string[] {
   if (!Array.isArray(items)) return [];
-  return items.slice(0, 20).map((item) => template.split("{item}").join(stableStringify(item)));
+  return items.slice(0, 20).map((item) => renderPromptForItem(template, item));
+}
+
+function renderPromptForItem(template: string, item: unknown): string {
+  if (!isRecord(item)) return template.split("{item}").join(stableStringify(item));
+  const values = templateValues(item);
+  values.item = stableStringify(item);
+  return template.replace(/\{([A-Za-z_][A-Za-z0-9_.]*)\}/g, (match, key: string) => {
+    const value = values[key];
+    return value === undefined ? match : value;
+  });
+}
+
+function templateValues(value: Record<string, unknown>): Record<string, string> {
+  const values: Record<string, string> = {};
+  const visit = (prefix: string, current: unknown) => {
+    if (isRecord(current)) {
+      for (const [key, item] of Object.entries(current)) {
+        if (!key) continue;
+        const nextKey = prefix ? `${prefix}.${key}` : key;
+        visit(nextKey, item);
+        if (prefix === "shared_context" && !isRecord(item)) {
+          values[key] ??= templateValue(item);
+        }
+        if (prefix.endsWith("prompt_rules")) {
+          values[key] ??= templateValue(item);
+        }
+      }
+      return;
+    }
+    values[prefix] = templateValue(current);
+  };
+  visit("", value);
+  return values;
+}
+
+function templateValue(value: unknown): string {
+  return typeof value === "string" ? value : stableStringify(value);
 }
 
 function stableStringify(value: unknown): string {

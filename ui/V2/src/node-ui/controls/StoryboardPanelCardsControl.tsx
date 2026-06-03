@@ -57,6 +57,7 @@ interface GeneratedImage {
 
 interface PanelDraft {
   prompt: string;
+  panel_count: string;
   reference_images: ReferenceImage[];
   generated_images: GeneratedImage[];
   selected_image_url: string;
@@ -292,16 +293,23 @@ export function StoryboardPanelCardsControl({
   }
 
   async function regeneratePrompt(card: PanelCard) {
-    const item = card.source_item ?? {};
-    if (!Object.keys(item).length) {
+    const draft = draftsRef.current[card.card_id] ?? draftFromCard(card);
+    const panelCount = normalizedPanelCount(draft.panel_count);
+    if (!panelCount) {
+      updateCard(card.card_id, (current) => ({ ...current, error: "请先填写有效的分格数量。" }));
+      return;
+    }
+    const sourceItem = card.source_item ?? {};
+    if (!Object.keys(sourceItem).length) {
       updateCard(card.card_id, (current) => ({ ...current, error: "缺少当前段落上下文，无法重新生成提示词。" }));
       return;
     }
+    const item = { ...sourceItem, panel_count: panelCount };
     setPrompting((current) => ({ ...current, [card.card_id]: true }));
     try {
       const result = await regenerateStoryboardPanelPrompt({
         project_id: projectId,
-        card: { ...card },
+        card: { ...card, ...draft },
         item,
         shared_context: sharedContext,
         negative_prompt: card.negative_prompt,
@@ -532,14 +540,28 @@ export function StoryboardPanelCardsControl({
                     <header>
                       <span>分段提示词</span>
                       {!readonly ? (
-                        <button
-                          className="secondary-button storyboard-mini-button"
-                          type="button"
-                          disabled={Boolean(prompting[card.card_id])}
-                          onClick={() => regeneratePrompt(card)}
-                        >
-                          {prompting[card.card_id] ? "提示词生成中" : "重新生成提示词"}
-                        </button>
+                        <div className="storyboard-prompt-actions">
+                          <label className="storyboard-panel-count-field">
+                            <span>分格数</span>
+                            <input
+                              aria-label={`${card.segment_title} 分格数量`}
+                              inputMode="numeric"
+                              min={1}
+                              step={1}
+                              type="number"
+                              value={draft.panel_count}
+                              onChange={(event) => updateCard(card.card_id, (current) => ({ ...current, panel_count: event.target.value }))}
+                            />
+                          </label>
+                          <button
+                            className="secondary-button storyboard-mini-button"
+                            type="button"
+                            disabled={Boolean(prompting[card.card_id])}
+                            onClick={() => regeneratePrompt(card)}
+                          >
+                            {prompting[card.card_id] ? "提示词生成中" : "重新生成提示词"}
+                          </button>
+                        </div>
                       ) : null}
                     </header>
                     <textarea
@@ -715,6 +737,7 @@ function initialDrafts(cards: PanelCard[], source: Record<string, unknown>, outp
 function draftFromCard(card?: PanelCard): PanelDraft {
   return {
     prompt: card?.prompt ?? "",
+    panel_count: panelCountFromCard(card),
     reference_images: card?.reference_images ?? [],
     generated_images: card?.generated_images ?? [],
     selected_image_url: card?.selected_image_url || card?.generated_images[card.generated_images.length - 1]?.image_url || "",
@@ -729,6 +752,7 @@ function draftFromSubmitted(card: PanelCard, value: Record<string, unknown>): Pa
   const submittedReferences = referenceImages(value.reference_images);
   return {
     prompt: text(value.prompt) || card.prompt,
+    panel_count: text(value.panel_count) || panelCountFromCard(card),
     reference_images: submittedReferences.length ? submittedReferences : card.reference_images,
     generated_images: generated,
     selected_image_url: selected || generated[generated.length - 1]?.image_url || "",
@@ -739,6 +763,17 @@ function draftFromSubmitted(card: PanelCard, value: Record<string, unknown>): Pa
 
 function selectedImageUrl(draft: PanelDraft): string {
   return draft.selected_image_url || draft.generated_images[draft.generated_images.length - 1]?.image_url || "";
+}
+
+function panelCountFromCard(card?: PanelCard): string {
+  const sourceCount = card?.source_item ? text(card.source_item.panel_count) : "";
+  return normalizedPanelCount(sourceCount) || "1";
+}
+
+function normalizedPanelCount(value: string): string {
+  const parsed = Number.parseInt(value.trim(), 10);
+  if (!Number.isFinite(parsed) || parsed < 1) return "";
+  return String(parsed);
 }
 
 function payloadFromDrafts(cards: PanelCard[], drafts: DraftMap): Record<string, unknown> {
@@ -752,6 +787,7 @@ function payloadFromDrafts(cards: PanelCard[], drafts: DraftMap): Record<string,
         panel_index: card.panel_index,
         segment_title: card.segment_title,
         prompt: draft.prompt,
+        panel_count: normalizedPanelCount(draft.panel_count) || panelCountFromCard(card),
         reference_images: draft.reference_images,
         selected_image_url: selectedImageUrl(draft),
         generated_images: draft.generated_images,

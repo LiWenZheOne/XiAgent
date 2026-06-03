@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -137,6 +137,50 @@ describe("ValueDisplayControl", () => {
     expect(within(promptPanel).getByText("实际提示词 1")).toBeInTheDocument();
     expect(within(promptPanel).getAllByText(/请为以下角色匹配变体/).length).toBeGreaterThanOrEqual(2);
     expect(within(promptPanel).getByText(/"full_name":"林冲"/)).toBeInTheDocument();
+  });
+
+  it("renders fully substituted prompt templates for parallel AI node inputs", () => {
+    const promptTemplate = [
+      "段落：{paragraph_text}",
+      "世界背景：{world_background}",
+      "完整剧本：{shared_context.full_script}",
+      "规则：{material_rule}",
+      "场景：{scene_layout.location_summary}",
+      "完整项：{item}",
+    ].join("\n");
+    const item = {
+      paragraph_text: "林冲踏雪进入山神庙。",
+      scene_layout: { location_summary: "雪夜破庙" },
+      shared_context: {
+        world_background: "水浒传雪夜情节。",
+        full_script: "完整剧本内容。",
+        prompt_rules: { material_rule: "不写现代材质。" },
+      },
+    };
+
+    render(
+      <ValueDisplayControl
+        config={{ control_id: "ui.display.value.v1", variant: "default", mode: "readonly" }}
+        node={{
+          node_execution_id: "exec-llm-fields",
+          node_id: "analyze_scene_layout",
+          node_ref: "ai.parallel_deepseek_structured_json.v1",
+          status: "succeeded",
+          input_snapshot: { prompt_template: promptTemplate, items: [item] },
+        }}
+        slot="input"
+        value={{ prompt_template: promptTemplate, items: [item] }}
+      />,
+    );
+
+    const actualPrompt = within(screen.getByLabelText("LLM 提示词")).getByText(/段落：林冲踏雪进入山神庙/);
+    expect(actualPrompt).toHaveTextContent("世界背景：水浒传雪夜情节。");
+    expect(actualPrompt).toHaveTextContent("完整剧本：完整剧本内容。");
+    expect(actualPrompt).toHaveTextContent("规则：不写现代材质。");
+    expect(actualPrompt).toHaveTextContent("场景：雪夜破庙");
+    expect(actualPrompt).not.toHaveTextContent("{paragraph_text}");
+    expect(actualPrompt).not.toHaveTextContent("{world_background}");
+    expect(actualPrompt).not.toHaveTextContent("{material_rule}");
   });
 
   it("does not show the LLM prompt panel for non-AI nodes", () => {
@@ -906,6 +950,95 @@ describe("node-ui controls", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
+  it("uses the edited panel count when regenerating storyboard prompts", async () => {
+    const promptRequests: Array<Record<string, unknown>> = [];
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/assets/storyboard-panel-prompt") {
+        promptRequests.push(JSON.parse(String(init?.body ?? "{}")));
+        return jsonResponse({
+          card: {
+            card_id: "segment-0",
+            segment_index: 0,
+            panel_index: 0,
+            segment_title: "雪夜",
+            prompt: "三格新版提示词",
+            reference_images: [],
+            generated_images: [],
+            selected_image_url: "",
+            aspect_ratio: "16:9",
+            resolution: "2K",
+          },
+          segment_description: { panel_count: "3" },
+        });
+      }
+      return jsonResponse({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <StoryboardPanelCardsControl
+        config={{ control_id: "ui.interaction.storyboard_panel_cards.v1", variant: "panel_review", mode: "interactive" }}
+        node={{
+          node_execution_id: "exec-storyboard-panel-prompt-count",
+          node_id: "review_storyboard_image",
+          node_ref: "system.human_approval.v1",
+          status: "waiting",
+          input_snapshot: {
+            panel_cards: [
+              {
+                card_id: "segment-0",
+                segment_index: 0,
+                panel_index: 0,
+                segment_title: "雪夜",
+                description: "林冲踏雪前行。",
+                prompt: "原始提示词",
+                reference_images: [
+                  {
+                    label: "林冲",
+                    asset_type: "character",
+                    asset_name: "林冲",
+                    asset_tags: ["囚服"],
+                    image_ref: { kind: "asset", asset_id: "asset-linchong-ref", role: "reference" },
+                    source: "asset",
+                  },
+                ],
+                generated_images: [],
+                selected_image_url: "",
+                aspect_ratio: "16:9",
+                resolution: "2K",
+                source_item: {
+                  index: 0,
+                  paragraph_text: "林冲踏雪。",
+                  panel_count: "1",
+                },
+              },
+            ],
+            shared_context: { full_script: "完整剧本" },
+          },
+        }}
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    const panelCountInput = screen.getByLabelText("雪夜 分格数量");
+    expect(panelCountInput).toHaveValue(1);
+    await userEvent.clear(panelCountInput);
+    await userEvent.type(panelCountInput, "3");
+    await userEvent.click(screen.getByRole("button", { name: "重新生成提示词" }));
+
+    await waitFor(() => expect(screen.getByLabelText("分段提示词")).toHaveValue("三格新版提示词"));
+    expect((promptRequests[0].item as Record<string, unknown>).panel_count).toBe("3");
+    expect(promptRequests[0].card).toMatchObject({
+      reference_images: [
+        expect.objectContaining({
+          asset_name: "林冲",
+          image_ref: { kind: "asset", asset_id: "asset-linchong-ref", role: "reference" },
+        }),
+      ],
+    });
+  });
+
   it("marks storyboard cards that failed during prompt generation", async () => {
     render(
       <StoryboardPanelCardsControl
@@ -1635,6 +1768,7 @@ describe("node-ui controls", () => {
 
   it("renders the P3 asset summary table with tabs and submitted image rows", async () => {
     const onSubmit = vi.fn();
+    const onDraft = vi.fn();
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
       if (url.startsWith("/api/assets/tags")) {
@@ -1752,6 +1886,7 @@ describe("node-ui controls", () => {
       <AssetSummaryTableControl
         config={{ control_id: "ui.interaction.asset_summary_table.v1", variant: "tabbed_table", mode: "interactive" }}
         node={reviewNode}
+        onDraft={onDraft}
         onSubmit={onSubmit}
       />,
     );
@@ -1761,7 +1896,7 @@ describe("node-ui controls", () => {
     expect(screen.getByRole("tab", { name: /道具/ })).toBeInTheDocument();
     expect(screen.getByDisplayValue("林冲")).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "标签" })).toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: "变体描述" })).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "变体描述" })).not.toBeInTheDocument();
     expect(screen.queryByRole("columnheader", { name: /asset type/i })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "林冲_囚服" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("tab", { name: /道具/ }));
@@ -1785,12 +1920,31 @@ describe("node-ui controls", () => {
     await userEvent.click(screen.getByRole("button", { name: "生成资产草稿" }));
     expect(await screen.findByText("根据用户描述和原文补全多个资产字段。")).toBeInTheDocument();
     expect(screen.getByText("生成 3 个资产草稿")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "保留修改意见" }));
-    expect(screen.queryByDisplayValue("武松")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "合并到资产表格" }));
+    expect(screen.getByDisplayValue("武松")).toBeInTheDocument();
+    await waitFor(() => expect(onDraft).toHaveBeenLastCalledWith(expect.objectContaining({
+      approved_assets: expect.objectContaining({
+        characters: expect.arrayContaining([expect.objectContaining({ asset_name: "武松" })]),
+        assets: expect.arrayContaining([expect.objectContaining({ asset_name: "官兵船" })]),
+        props: expect.arrayContaining([expect.objectContaining({ asset_name: "哨棒" })]),
+      }),
+      additional_asset_request: "增加一个拿哨棒的武松、官兵船和哨棒",
+    })));
+    const savedDraft = onDraft.mock.calls[onDraft.mock.calls.length - 1]?.[0] as Record<string, unknown>;
+    cleanup();
+    render(
+      <AssetSummaryTableControl
+        config={{ control_id: "ui.interaction.asset_summary_table.v1", variant: "tabbed_table", mode: "interactive" }}
+        node={{ ...reviewNode, input_snapshot: { ...(reviewNode.input_snapshot as Record<string, unknown>), ...savedDraft } }}
+        onDraft={onDraft}
+        onSubmit={onSubmit}
+      />,
+    );
+    expect(screen.getByDisplayValue("武松")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("tab", { name: /地点/ }));
-    expect(screen.queryByDisplayValue("官兵船")).not.toBeInTheDocument();
+    expect(screen.getByDisplayValue("官兵船")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("tab", { name: /道具/ }));
-    expect(screen.queryByDisplayValue("哨棒")).not.toBeInTheDocument();
+    expect(screen.getByDisplayValue("哨棒")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("tab", { name: /角色/ }));
 
     await userEvent.click(screen.getByRole("button", { name: "补充缺失资产" }));
@@ -1799,13 +1953,13 @@ describe("node-ui controls", () => {
     await userEvent.type(nameInputs[nameInputs.length - 1], "宋江");
     const deleteButtons = screen.getAllByRole("button", { name: "删除" });
     await userEvent.click(deleteButtons[deleteButtons.length - 1]);
-    expect(screen.getAllByLabelText("角色名称")).toHaveLength(1);
+    expect(screen.getAllByLabelText("角色名称")).toHaveLength(2);
     await userEvent.click(screen.getByRole("button", { name: "确认并继续" }));
 
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
       decision: "approved",
       approved_assets: expect.objectContaining({
-        characters: [
+        characters: expect.arrayContaining([
           expect.objectContaining({
             asset_type: "character",
             asset_name: "林冲",
@@ -1814,8 +1968,16 @@ describe("node-ui controls", () => {
             matched_asset_ref: { kind: "asset", asset_id: "asset-luzhishen", role: "reference" },
             reference_image_ref: { kind: "asset", asset_id: "asset-luzhishen", role: "reference" },
           }),
-        ],
-        assets: [
+          expect.objectContaining({
+            asset_type: "character",
+            asset_name: "武松",
+            asset_tags: ["劲装短打", "哨棒"],
+            matched: false,
+            aliases: "行者",
+            summary: "梁山好汉",
+          }),
+        ]),
+        assets: expect.arrayContaining([
           expect.objectContaining({
             asset_type: "scene",
             asset_name: "野猪林",
@@ -1823,7 +1985,24 @@ describe("node-ui controls", () => {
             matched_asset_id: null,
             matched_asset_name: "",
           }),
-        ],
+          expect.objectContaining({
+            asset_type: "scene",
+            asset_name: "官兵船",
+            asset_tags: ["水上", "官船"],
+            matched: false,
+            description: "官兵在水上押送使用的船只，甲板可站人，带低矮船舱、桅杆、缆绳和官府旗号。",
+          }),
+        ]),
+        props: expect.arrayContaining([
+          expect.objectContaining({
+            asset_type: "prop",
+            asset_name: "哨棒",
+            asset_tags: ["武器"],
+            matched: false,
+            category: "武器",
+            related_character: "武松",
+          }),
+        ]),
       }),
       additional_asset_request: "增加一个拿哨棒的武松、官兵船和哨棒",
       asset_images: [],
@@ -1991,9 +2170,9 @@ describe("node-ui controls", () => {
     expect(screen.getAllByText("林冲").length).toBeGreaterThan(0);
     expect(screen.getByRole("columnheader", { name: "操作" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "标签" })).toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: "变体描述" })).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "变体描述" })).not.toBeInTheDocument();
     expect(screen.getByText("囚服")).toBeInTheDocument();
-    expect(screen.getByText("身着囚服，头戴旧毡笠。")).toBeInTheDocument();
+    expect(screen.queryByText("身着囚服，头戴旧毡笠。")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "林冲_囚服" })).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "林冲 图像" })).toHaveAttribute("src", "https://cdn.example.com/linchong.png");
     await userEvent.click(screen.getByRole("tab", { name: /地点/ }));
