@@ -15,6 +15,8 @@ from xiagent.users.models import UserRecord
 
 router = APIRouter(prefix="/api/assets", tags=["assets"])
 
+_STORYBOARD_WORKFLOW_ID = "asset_storyboard_generation"
+
 
 class CreateTextAssetRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -248,66 +250,79 @@ async def regenerate_storyboard_panel_prompt(
         )
 
     project_id = request.project_id or "global"
-    describe_node = services.node_registry.get("ai.parallel_deepseek_structured_json.v1")
-    describe_result = await describe_node.run(
-        NodeContext(
-            user_id=current_user.user_id,
-            project_id=project_id,
-            task_id="storyboard_panel_prompt_preview",
-            node_id="regenerate_storyboard_panel_prompt",
-            node_execution_id=f"storyboard_panel_prompt_{request.card.get('card_id', 'preview')}",
-            config={},
-            output_schema=_segment_storyboard_output_schema(),
-            asset_service=services.assets,
-            event_sink=None,
-            logger=None,
+    workflow_nodes = _workflow_nodes_by_id(services.workflows.get(_STORYBOARD_WORKFLOW_ID))
+    context_base = {
+        "user_id": current_user.user_id,
+        "project_id": project_id,
+        "task_id": "storyboard_panel_prompt_preview",
+        "asset_service": services.assets,
+    }
+
+    layout_result = await _run_workflow_node(
+        services=services,
+        context_base=context_base,
+        workflow_node=workflow_nodes["analyze_scene_layout"],
+        execution_suffix=f"{request.card.get('card_id', 'preview')}_layout",
+        inputs=_parallel_storyboard_inputs(
+            workflow_nodes["analyze_scene_layout"],
+            items=[item],
+            shared_context=request.shared_context,
         ),
-        {
-            "system": (
-                "仅返回合法 JSON。你是一位专业的分镜脚本师。每次只为当前段落"
-                "输出一段完整、详细、自然的漫画分镜描述。必须参考完整剧本理解剧情连续性，但描述内容只能依据"
-                "当前段落、建议分格数、在场角色、地点和关键道具生成，不得扩写成其他段落剧情。"
-                "描述分镜画面时，只写分段内容、在场角色、地点、道具和每个分格画面中实际出现的事物；"
-                "不得包含画风、风格关键词、图像生成技术参数、模型参数、质量词或生成指令。"
-                "画面中只能出现本段在场角色，不得描写或提及不在场角色。不要输出其他段落。"
-            ),
-            "items": [item],
-            "shared_context": request.shared_context,
-            "prompt_template": (
-                "请只为以下当前段落设计分镜画面。\n\n"
-                "完整剧本（仅用于理解剧情连续性，不得扩写当前段落之外的剧情）：\n{full_script}\n\n"
-                "当前段落索引：{index}\n"
-                "当前段落：{paragraph_text}\n"
-                "建议分格数：{panel_count}\n"
-                "本段在场角色：{present_characters}\n"
-                "地点：{location}\n"
-                "关键道具：{key_props}\n\n"
-                "分镜设计要求：\n"
-                "- 只输出分镜画面的自然语言描述，不生成图像，不写画风、风格关键词、技术参数、模型参数、质量词或生成指令。\n"
-                "- 根据建议分格数设计分格；description 必须先说明一共有几个分格和整体布局，然后逐格生成完整、详细、自然、统一的分镜画面描述。\n"
-                "- 画面中只能出现本段在场角色，不得描写或提及不在场角色。\n"
-                "- 不要写对话、角色服装、外貌、腿部、脚部或鞋履描写；必须标注角色朝向。\n\n"
-                "{material_rule}\n"
-                "{enrich_rule}\n"
-                "输出一个 JSON 对象，必须包含 index、segment_title、thinking、description。"
-            ),
-            "prompt_fields": [
-                "index",
-                "paragraph_text",
-                "panel_count",
-                "present_characters",
-                "location",
-                "key_props",
-            ],
-            "max_attempts": 2,
-        },
     )
-    results = describe_result.output.get("results")
-    if not isinstance(results, list) or not results:
-        raise ValidationError(
-            code="storyboard_panel_prompt_empty",
-            message="重新生成分镜提示词没有返回段落结果。",
-        )
+    layout_items = _result_items(layout_result, node_id="analyze_scene_layout")
+
+    plan_result = await _run_workflow_node(
+        services=services,
+        context_base=context_base,
+        workflow_node=workflow_nodes["plan_storyboard_panels"],
+        execution_suffix=f"{request.card.get('card_id', 'preview')}_plan",
+        inputs=_parallel_storyboard_inputs(
+            workflow_nodes["plan_storyboard_panels"],
+            items=layout_items,
+            shared_context=request.shared_context,
+        ),
+    )
+    plan_items = _result_items(plan_result, node_id="plan_storyboard_panels")
+
+    plan_review_result = await _run_workflow_node(
+        services=services,
+        context_base=context_base,
+        workflow_node=workflow_nodes["review_and_refine_storyboard_plan"],
+        execution_suffix=f"{request.card.get('card_id', 'preview')}_plan_review",
+        inputs=_review_storyboard_inputs(
+            workflow_nodes["review_and_refine_storyboard_plan"],
+            items=plan_items,
+            storyboard_items=[item],
+            shared_context=request.shared_context,
+        ),
+    )
+    reviewed_plan_items = _result_items(plan_review_result, node_id="review_and_refine_storyboard_plan")
+
+    prompt_result = await _run_workflow_node(
+        services=services,
+        context_base=context_base,
+        workflow_node=workflow_nodes["convert_storyboard_plan_to_image_prompt"],
+        execution_suffix=f"{request.card.get('card_id', 'preview')}_prompt",
+        inputs=_parallel_storyboard_inputs(
+            workflow_nodes["convert_storyboard_plan_to_image_prompt"],
+            items=reviewed_plan_items,
+        ),
+    )
+    prompt_items = _result_items(prompt_result, node_id="convert_storyboard_plan_to_image_prompt")
+
+    prompt_review_result = await _run_workflow_node(
+        services=services,
+        context_base=context_base,
+        workflow_node=workflow_nodes["review_and_refine_image_prompt"],
+        execution_suffix=f"{request.card.get('card_id', 'preview')}_prompt_review",
+        inputs=_review_storyboard_inputs(
+            workflow_nodes["review_and_refine_image_prompt"],
+            items=prompt_items,
+            storyboard_items=[item],
+            shared_context=request.shared_context,
+        ),
+    )
+    results = _result_items(prompt_review_result, node_id="review_and_refine_image_prompt")
 
     panel_node = services.node_registry.get("tool.prepare_storyboard_panel_cards.v1")
     panel_result = await panel_node.run(
@@ -976,25 +991,111 @@ def _split_ids(value: str | None) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
-def _segment_storyboard_output_schema() -> dict[str, Any]:
-    return {
-        "type": "object",
-        "required": ["results"],
-        "properties": {
-            "results": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "required": ["index", "segment_title", "thinking", "description"],
-                    "properties": {
-                        "index": {"type": "integer", "minimum": 0},
-                        "segment_title": {"type": "string", "minLength": 1},
-                        "thinking": {"type": "string", "minLength": 1},
-                        "description": {"type": "string", "minLength": 1},
-                    },
-                    "additionalProperties": False,
-                },
-            }
-        },
-        "additionalProperties": False,
+def _workflow_nodes_by_id(contract: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {node["id"]: node for node in contract.get("nodes", []) if isinstance(node, dict) and isinstance(node.get("id"), str)}
+
+
+async def _run_workflow_node(
+    *,
+    services: ApiServices,
+    context_base: dict[str, Any],
+    workflow_node: dict[str, Any],
+    execution_suffix: str,
+    inputs: dict[str, Any],
+) -> Any:
+    node_id = str(workflow_node["id"])
+    node = services.node_registry.get(str(workflow_node["ref"]))
+    return await node.run(
+        NodeContext(
+            user_id=str(context_base["user_id"]),
+            project_id=str(context_base["project_id"]),
+            task_id=str(context_base["task_id"]),
+            node_id=node_id,
+            node_execution_id=f"storyboard_panel_prompt_{execution_suffix}",
+            config={},
+            output_schema=workflow_node.get("outputs", node.describe().output_schema),
+            asset_service=context_base["asset_service"],
+            event_sink=None,
+            logger=None,
+        ),
+        inputs,
+    )
+
+
+def _parallel_storyboard_inputs(
+    workflow_node: dict[str, Any],
+    *,
+    items: list[dict[str, Any]],
+    shared_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    inputs = workflow_node.get("inputs", {})
+    payload: dict[str, Any] = {"items": items}
+    for key in [
+        "system",
+        "prompt_template",
+        "prompt_fields",
+        "passthrough_fields",
+        "required_input_fields",
+        "max_attempts",
+        "continue_on_item_error",
+    ]:
+        value = _literal_input(inputs, key)
+        if value is not None:
+            payload[key] = value
+    if shared_context is not None:
+        payload["shared_context"] = shared_context
+    return payload
+
+
+def _review_storyboard_inputs(
+    workflow_node: dict[str, Any],
+    *,
+    items: list[dict[str, Any]],
+    storyboard_items: list[dict[str, Any]],
+    shared_context: dict[str, Any],
+) -> dict[str, Any]:
+    inputs = workflow_node.get("inputs", {})
+    payload: dict[str, Any] = {
+        "items": items,
+        "storyboard_items": storyboard_items,
+        "shared_context": shared_context,
     }
+    for key in [
+        "review_system",
+        "review_prompt_template",
+        "revision_system",
+        "revision_prompt_template",
+        "review_output_field",
+        "review_history_output_field",
+        "required_input_fields",
+        "max_revision_rounds",
+        "max_attempts",
+        "continue_on_item_error",
+    ]:
+        value = _literal_input(inputs, key)
+        if value is not None:
+            payload[key] = value
+    return payload
+
+
+def _literal_input(inputs: Any, key: str) -> Any:
+    if not isinstance(inputs, dict):
+        return None
+    value = inputs.get(key)
+    if isinstance(value, dict) and "value" in value:
+        return value["value"]
+    if isinstance(value, dict) and "from" in value:
+        return None
+    return value
+
+
+def _result_items(result: Any, *, node_id: str) -> list[dict[str, Any]]:
+    output = getattr(result, "output", {})
+    results = output.get("results") if isinstance(output, dict) else None
+    if not isinstance(results, list) or not results:
+        raise ValidationError(
+            code="storyboard_panel_prompt_empty",
+            message="重新生成分镜提示词没有返回段落结果。",
+            details={"node_id": node_id},
+        )
+    return [item for item in results if isinstance(item, dict)]

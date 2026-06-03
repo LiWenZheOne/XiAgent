@@ -906,6 +906,42 @@ describe("node-ui controls", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
+  it("marks storyboard cards that failed during prompt generation", async () => {
+    render(
+      <StoryboardPanelCardsControl
+        config={{ control_id: "ui.interaction.storyboard_panel_cards.v1", variant: "panel_review", mode: "interactive" }}
+        node={{
+          node_execution_id: "exec-storyboard-panel-failed",
+          node_id: "review_storyboard_image",
+          node_ref: "system.human_approval.v1",
+          status: "waiting",
+          input_snapshot: {
+            panel_cards: [
+              {
+                card_id: "segment-1",
+                segment_index: 1,
+                panel_index: 0,
+                segment_title: "失败段",
+                description: "提示词生成失败。",
+                prompt: "当前段落画面提示词生成失败，请重新生成提示词或手动编辑后再生成分镜图。",
+                status: "failed",
+                error: "DeepSeek response is not valid JSON",
+                reference_images: [],
+                aspect_ratio: "16:9",
+                resolution: "2K",
+              },
+            ],
+          },
+        }}
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "失败段" })).toBeInTheDocument();
+    expect(screen.getByText("生成失败")).toBeInTheDocument();
+    expect(screen.getByText("DeepSeek response is not valid JSON")).toBeInTheDocument();
+  });
+
   it("restores storyboard generated images from saved interaction drafts after refresh", async () => {
     render(
       <StoryboardPanelCardsControl

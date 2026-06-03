@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 from dataclasses import replace
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -542,6 +543,119 @@ def test_asset_generate_image_endpoint_returns_single_generated_image(test_setti
     assert fake_router.requests[0].metadata["images"] == [
         "data:image/png;base64,aW1hZ2UtYnl0ZXM="
     ]
+
+
+def test_storyboard_panel_prompt_regeneration_runs_full_segment_chain(test_settings) -> None:
+    class FakeStoryboardRouter(ChatModelRouter):
+        def __init__(self) -> None:
+            super().__init__()
+            self.requests: list[ChatRequest] = []
+            self.responses = [
+                {
+                    "scene_layout": {
+                        "location_summary": "机密房内方桌议事",
+                        "spatial_zones": ["前景桌角", "中景众公差", "背景墙面"],
+                        "layout_constraints": ["方桌始终位于画面中心附近"],
+                    }
+                },
+                {
+                    "think": "完整推理过程：单格集中表现密议压力。",
+                    "segment_title": "机密房密议",
+                    "panel_plan": {
+                        "panel_count": 1,
+                        "page_layout": "单格整页",
+                        "panels": [
+                            {
+                                "panel_index": 1,
+                                "narrative_purpose": "表现众人围桌密议的压迫感",
+                                "characters": ["何涛", "众公差"],
+                                "visible_props": ["方桌"],
+                                "frame_content": "何涛与众公差围着方桌讨论。",
+                            }
+                        ],
+                    },
+                },
+                {
+                    "think": "完整推理过程：分镜计划符合当前段落。",
+                    "passed": True,
+                    "issues": [],
+                    "revision_instructions": "",
+                    "revision_summary": "通过",
+                },
+                {
+                    "think": "完整推理过程：按单格计划转换为画面内容。",
+                    "image_prompt": "何涛与众公差在机密房内围着方桌密议。一共有1格。第1格出现何涛和众公差。整页为单格整页，方桌占据中景中心，何涛侧对镜头，众公差围在桌边，背景墙面压低空间，光线集中在桌面形成紧张气氛。",
+                },
+                {
+                    "think": "完整推理过程：画面提示词忠于分镜计划。",
+                    "passed": True,
+                    "issues": [],
+                    "revision_instructions": "",
+                    "revision_summary": "通过",
+                },
+            ]
+
+        async def chat(self, request: ChatRequest) -> ChatResponse:
+            self.requests.append(request)
+            return ChatResponse(
+                text=json.dumps(self.responses.pop(0), ensure_ascii=False),
+                model=request.model,
+                metadata={"provider": request.provider},
+            )
+
+    app = create_app(settings=replace(test_settings, workflow_dir=Path("workflows")))
+    with TestClient(app) as client:
+        client.post(
+            "/api/auth/register",
+            json={"username": "storyboard-prompt-user", "password": "secret-123"},
+        )
+        headers = _auth_headers(client, username="storyboard-prompt-user")
+        fake_router = FakeStoryboardRouter()
+        app.state.services.node_registry.get("ai.parallel_deepseek_structured_json.v1")._model_router = fake_router  # noqa: SLF001
+        app.state.services.node_registry.get("ai.storyboard_review_refine.v1")._model_router = fake_router  # noqa: SLF001
+
+        response = client.post(
+            "/api/assets/storyboard-panel-prompt",
+            headers=headers,
+            json={
+                "project_id": "global",
+                "card": {"card_id": "segment-0", "segment_index": 0, "panel_index": 0},
+                "item": {
+                    "index": 0,
+                    "paragraph_text": "何涛来到机密房里和众公差商议。",
+                    "panel_count": "1",
+                    "present_characters": ["何涛", "众公差"],
+                    "location": "机密房",
+                    "key_props": ["方桌"],
+                    "segment_assignment": {"segment_index": 0, "characters": [], "prop_assets": []},
+                },
+                "shared_context": {
+                    "world_background": "水浒传官府缉捕情节。",
+                    "full_script": "何涛来到机密房里和众公差商议。",
+                    "prompt_rules": {
+                        "material_rule": "不写材质。",
+                        "enrich_rule": "补足空间关系。",
+                        "material_thinking": "不讨论材质。",
+                        "enrich_thinking": "检查空间关系。",
+                    },
+                },
+            },
+        )
+
+    assert response.status_code == 200, response.json()
+    body = response.json()
+    assert body["segment_description"]["segment_title"] == "机密房密议"
+    assert body["segment_description"]["panel_plan"]["panel_count"] == 1
+    assert body["segment_description"]["prompt_review"]["passed"] is True
+    assert "何涛与众公差在机密房内围着方桌密议" in body["card"]["prompt"]
+    assert len(fake_router.requests) == 5
+    prompts = ["\n".join(str(message.content) for message in request.messages) for request in fake_router.requests]
+    assert "请分析当前段落的实际场景布局" in prompts[0]
+    assert "请为当前段落规划一页漫画分镜" in prompts[1]
+    assert "请用提问方式审查当前段落的结构化分镜计划" in prompts[2]
+    assert "请把以下结构化分镜计划转换成完整分段画面内容提示词" in prompts[3]
+    assert "请审查当前分段的 image_prompt" in prompts[4]
+    assert all(request.metadata == {"response_format": {"type": "json_object"}} for request in fake_router.requests)
 
 
 def test_global_project_is_default_shared_project_and_supports_user_tasks(test_settings) -> None:

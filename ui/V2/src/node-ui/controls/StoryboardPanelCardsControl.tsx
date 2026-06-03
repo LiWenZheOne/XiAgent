@@ -44,6 +44,8 @@ interface PanelCard {
   aspect_ratio: string;
   resolution: string;
   source_item?: Record<string, unknown>;
+  status?: GenerationStatus;
+  error?: string;
 }
 
 interface GeneratedImage {
@@ -692,6 +694,8 @@ function normalizeCard(value: unknown): PanelCard | null {
     aspect_ratio: text(item.aspect_ratio) || "16:9",
     resolution: text(item.resolution) || "2K",
     source_item: recordValue(item.source_item),
+    status: generationStatus(item.status),
+    error: text(item.error),
   };
 }
 
@@ -714,6 +718,8 @@ function draftFromCard(card?: PanelCard): PanelDraft {
     reference_images: card?.reference_images ?? [],
     generated_images: card?.generated_images ?? [],
     selected_image_url: card?.selected_image_url || card?.generated_images[card.generated_images.length - 1]?.image_url || "",
+    status: card?.status,
+    error: card?.error ?? "",
   };
 }
 
@@ -726,6 +732,8 @@ function draftFromSubmitted(card: PanelCard, value: Record<string, unknown>): Pa
     reference_images: submittedReferences.length ? submittedReferences : card.reference_images,
     generated_images: generated,
     selected_image_url: selected || generated[generated.length - 1]?.image_url || "",
+    status: generationStatus(value.status) || card.status,
+    error: text(value.error) || card.error || "",
   };
 }
 
@@ -767,6 +775,13 @@ function draftStatusClass(draft: PanelDraft): string {
   if (draft.status === "failed") return "failed";
   if (selectedImageUrl(draft)) return "ready";
   return "missing";
+}
+
+function generationStatus(value: unknown): GenerationStatus {
+  const status = text(value);
+  return ["waiting", "generating", "ready", "failed", "prompt_ready", "uploading"].includes(status)
+    ? status as GenerationStatus
+    : "";
 }
 
 function addReference(draft: PanelDraft, ref: ReferenceImage): PanelDraft {

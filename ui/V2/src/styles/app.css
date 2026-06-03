@@ -764,7 +764,9 @@ dd {
 
 .schema-form-control.asset-dropdown-form {
   gap: 14px;
-  max-width: 760px;
+  width: 100%;
+  min-width: 0;
+  max-width: none;
   margin-top: 12px;
   padding: 16px;
   border-color: #d9e2ec;
