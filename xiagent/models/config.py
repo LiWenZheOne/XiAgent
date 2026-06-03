@@ -84,11 +84,11 @@ def load_model_config(path: Path = DEFAULT_MODEL_CONFIG_PATH) -> ModelConfig:
     )
     runninghub_model = (
         _optional_text(runninghub_image.get("model"))
-        or "nano-banana2-gemini31flash/image-to-image-channel-low-price"
+        or "nano-banana-pro/edit"
     )
     runninghub_endpoint = (
         _optional_text(runninghub_image.get("endpoint"))
-        or "/rhart-image-n-g31-flash/image-to-image"
+        or "/rhart-image-n-pro/edit"
     )
     runninghub_poll_interval_seconds = _config_float(
         env_name="RUNNINGHUB_POLL_INTERVAL_SECONDS",

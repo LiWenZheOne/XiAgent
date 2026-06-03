@@ -103,8 +103,8 @@ XiAgent 配置分为基础运行配置和模型配置。
 | `DEEPSEEK_MODEL` | `deepseek-v4-flash` | DeepSeek 默认模型名。 |
 | `RUNNINGHUB_API_KEY` | 空 | RunningHub API Key，同时可作为图生图和文生图节点默认 Key。 |
 | `RUNNINGHUB_BASE_URL` | `https://www.runninghub.ai` | RunningHub 服务地址。 |
-| `RUNNINGHUB_IMAGE_MODEL` | `nano-banana2-gemini31flash/image-to-image-channel-low-price` | 图生图节点默认模型名。 |
-| `RUNNINGHUB_IMAGE_ENDPOINT` | `/rhart-image-n-g31-flash/image-to-image` | 图生图任务提交接口。 |
+| `RUNNINGHUB_IMAGE_MODEL` | `nano-banana-pro/edit` | 图生图节点默认模型名。 |
+| `RUNNINGHUB_IMAGE_ENDPOINT` | `/rhart-image-n-pro/edit` | 图生图任务提交接口。 |
 | `RUNNINGHUB_TEXT_TO_IMAGE_MODEL` | `nano-banana-pro/text-to-image-channel-low-price` | 文生图节点默认模型名。 |
 | `RUNNINGHUB_TEXT_TO_IMAGE_ENDPOINT` | `/rhart-image-n-pro/text-to-image` | 文生图任务提交接口。 |
 | `RUNNINGHUB_POLL_INTERVAL_SECONDS` | `2.0` | RunningHub 任务轮询间隔。 |

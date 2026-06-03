@@ -37,8 +37,8 @@ class DeepSeekModelConfig:
 class RunningHubImageModelConfig:
     api_key: str | None = None
     base_url: str = "https://www.runninghub.ai"
-    model: str = "nano-banana2-gemini31flash/image-to-image-channel-low-price"
-    endpoint: str = "/rhart-image-n-g31-flash/image-to-image"
+    model: str = "nano-banana-pro/edit"
+    endpoint: str = "/rhart-image-n-pro/edit"
     default_aspect_ratio: str = "9:16"
     default_resolution: str = "1k"
     poll_interval_seconds: float = 2.0

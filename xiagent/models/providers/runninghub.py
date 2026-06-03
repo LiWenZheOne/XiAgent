@@ -147,17 +147,24 @@ class RunningHubImageProvider(ChatModelProvider):
 
     def _images(self, metadata: dict[str, Any]) -> list[str]:
         value = metadata.get("images")
-        if isinstance(value, str) and value.startswith("data:image/"):
+        if self._is_supported_image_input(value):
             return [value]
         if isinstance(value, list):
             images = [
                 item
                 for item in value
-                if isinstance(item, str) and item.startswith("data:image/")
+                if self._is_supported_image_input(item)
             ]
             if images:
                 return images
         return []
+
+    def _is_supported_image_input(self, value: Any) -> bool:
+        return isinstance(value, str) and (
+            value.startswith("data:image/")
+            or value.startswith("http://")
+            or value.startswith("https://")
+        )
 
     def _metadata_text(self, metadata: dict[str, Any], key: str) -> str | None:
         value = metadata.get(key)

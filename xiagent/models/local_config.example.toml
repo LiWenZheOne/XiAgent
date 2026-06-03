@@ -6,8 +6,8 @@ model = "deepseek-v4-flash"
 [runninghub_image]
 api_key = ""
 base_url = "https://www.runninghub.ai"
-model = "nano-banana2-gemini31flash/image-to-image-channel-low-price"
-endpoint = "/rhart-image-n-g31-flash/image-to-image"
+model = "nano-banana-pro/edit"
+endpoint = "/rhart-image-n-pro/edit"
 default_aspect_ratio = "9:16"
 default_resolution = "1k"
 poll_interval_seconds = 2.0

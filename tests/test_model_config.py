@@ -232,9 +232,9 @@ def test_load_model_config_uses_defaults_without_local_file(tmp_path: Path, monk
     assert config.runninghub_image.base_url == "https://www.runninghub.ai"
     assert (
         config.runninghub_image.model
-        == "nano-banana2-gemini31flash/image-to-image-channel-low-price"
+        == "nano-banana-pro/edit"
     )
-    assert config.runninghub_image.endpoint == "/rhart-image-n-g31-flash/image-to-image"
+    assert config.runninghub_image.endpoint == "/rhart-image-n-pro/edit"
     assert config.runninghub_image.poll_interval_seconds == 2.0
     assert config.runninghub_image.poll_timeout_seconds == 180.0
     assert config.runninghub_text_to_image.api_key is None

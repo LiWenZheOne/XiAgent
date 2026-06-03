@@ -326,6 +326,55 @@ async def test_runninghub_image_provider_submits_and_polls_generation() -> None:
     assert "test-runninghub-key" not in str(response.metadata)
 
 
+async def test_runninghub_image_provider_accepts_public_image_urls() -> None:
+    from xiagent.models import ChatMessage, ChatRequest, RunningHubImageModelConfig
+    from xiagent.models.providers.runninghub import RunningHubImageProvider
+
+    http_client = FakeRunningHubHttpClient(
+        [
+            {
+                "taskId": "task-url-1",
+                "status": "SUCCESS",
+                "errorCode": "",
+                "errorMessage": "",
+                "results": [{"url": "https://example.test/output.png"}],
+            },
+        ]
+    )
+    provider = RunningHubImageProvider(
+        config=RunningHubImageModelConfig(
+            api_key="test-runninghub-key",
+            base_url="https://runninghub.test",
+            endpoint="/rhart-image-n-pro/edit",
+        ),
+        http_client=http_client,
+    )
+    request = ChatRequest(
+        provider="runninghub_image",
+        model="nano-banana-pro/edit",
+        messages=[ChatMessage(role="user", content="edit the original image")],
+        metadata={
+            "images": ["https://example.test/input.png"],
+            "aspectRatio": "3:4",
+            "resolution": "1k",
+        },
+    )
+
+    response = await provider.chat(request)
+
+    assert (
+        http_client.calls[0]["url"]
+        == "https://runninghub.test/openapi/v2/rhart-image-n-pro/edit"
+    )
+    assert http_client.calls[0]["payload"] == {
+        "imageUrls": ["https://example.test/input.png"],
+        "prompt": "edit the original image",
+        "aspectRatio": "3:4",
+        "resolution": "1k",
+    }
+    assert response.text == "https://example.test/output.png"
+
+
 async def test_runninghub_image_provider_accepts_wrapped_data_response() -> None:
     from xiagent.models import ChatMessage, ChatRequest, RunningHubImageModelConfig
     from xiagent.models.providers.runninghub import RunningHubImageProvider
@@ -746,6 +795,6 @@ async def test_runninghub_image_provider_wraps_failures_without_secret_details()
     assert exc.value.code == "runninghub_image_request_failed"
     assert exc.value.details == {
         "provider": "runninghub_image",
-        "endpoint": "/rhart-image-n-g31-flash/image-to-image",
+        "endpoint": "/rhart-image-n-pro/edit",
     }
     assert "secret-runninghub-key" not in str(exc.value.details)
