@@ -42,6 +42,8 @@ description: Use when creating or modifying XiAgent workflow YAML/JSON contracts
 
 - LLM 结构化输出的目标结构写在工作流节点的 `outputs` JSON Schema 中；`prompt` 只描述任务语义，不能作为唯一数据契约。
 - 下游节点引用结构化结果前，先确认对应字段已经在上游节点 `outputs` 中声明，例如 `$nodes.character_analysis.output.characters` 必须能被 schema 校验器识别。
+- 身份字段不得由 LLM 输出或修订。`index`、`segment_index`、标题、原文、分段参数、资产归属、上游审查记录等用于排序、回接、边界控制和下游引用的字段，应通过 `passthrough_fields` 或节点内部合并逻辑从输入 item 程序化继承。
+- 编写 LLM prompt 时，只要求模型返回当前步骤新生成或需要修订的业务字段；不要写“返回完整对象”并列出身份字段。若 `outputs` schema 需要完整对象，必须确认节点能力会把继承字段补回最终输出。
 - UI `layout` 只描述展示形态，例如 table、tabs、grid、confirm；不要把展示列、页签或文案当作数据结构来源。
 - 通用结构化抽取、结构化生成、JSON 解析、schema 校验和失败重试属于节点能力；工作流只选择节点、提供输入、声明输出契约和连接 DAG。
 - 需要角色表、分镜表、镜头表等不同结构时，优先复用同一个通用结构化节点并在各自工作流 `outputs` 中声明不同 schema；只有领域逻辑稳定且值得复用时才新增专用节点。

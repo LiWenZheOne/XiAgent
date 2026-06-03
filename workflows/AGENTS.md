@@ -16,6 +16,7 @@
 - 初始参数和运行中补充参数都是普通节点输入。节点 input spec 使用 `from_user: true` 声明等待用户填写；运行时校验 payload 后写入该节点 `input_snapshot`，再执行节点并产生 `output_snapshot`。
 - 泛用输入节点使用 `system.user_input.v1`；专用业务节点也可以直接声明 `from_user: true` 输入并等待填写后继续运行。
 - 节点输出必须用 `outputs` JSON Schema 声明；下游只能引用 schema 中可校验的字段。
+- LLM 不负责输出或修订身份字段。`index`、`segment_index`、标题、原文、分段参数、资产归属等用于排序、回接和下游引用的字段，必须通过 `passthrough_fields` 或节点内部合并逻辑从输入 item 程序化继承。提示词只要求 LLM 返回本步骤生成或修订的业务字段，不得要求 LLM 返回完整对象来补齐身份字段。
 - 工作流验证和调试优先使用 `WorkflowTestBuilder` 或 `python -m xiagent.workflows.testing_cli`，并通过真实等待/提交交互路径提供业务参数，不得把业务参数塞到创建任务 `input_data`。
 
 ## UI 控件配置
