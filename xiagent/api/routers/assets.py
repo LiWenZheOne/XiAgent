@@ -16,6 +16,7 @@ from xiagent.users.models import UserRecord
 router = APIRouter(prefix="/api/assets", tags=["assets"])
 
 _STORYBOARD_WORKFLOW_ID = "asset_storyboard_generation"
+_STORYBOARD_REFERENCE_IMAGE_LIMIT = 10
 
 
 class CreateTextAssetRequest(BaseModel):
@@ -226,6 +227,12 @@ async def generate_storyboard_panel_image(
             code="storyboard_panel_image_refs_required",
             message="分镜图像生成至少需要一张参考图。",
         )
+    if len(request.image_refs) > _STORYBOARD_REFERENCE_IMAGE_LIMIT:
+        raise ValidationError(
+            code="storyboard_panel_image_refs_limit_exceeded",
+            message=f"参考图最多 {_STORYBOARD_REFERENCE_IMAGE_LIMIT} 张，请删除多余参考图后再生成。",
+            details={"limit": _STORYBOARD_REFERENCE_IMAGE_LIMIT, "count": len(request.image_refs)},
+        )
 
     project_id = request.project_id or "global"
     job = services.image_generations.create(
@@ -331,6 +338,7 @@ async def regenerate_storyboard_panel_prompt(
         inputs=_parallel_storyboard_inputs(
             workflow_nodes["convert_storyboard_plan_to_image_prompt"],
             items=reviewed_plan_items,
+            shared_context=request.shared_context,
         ),
     )
     prompt_items = _result_items(prompt_result, node_id="convert_storyboard_plan_to_image_prompt")
@@ -502,6 +510,7 @@ async def _run_storyboard_panel_image_generation(
                 "image_refs": request_payload.get("image_refs") or [],
                 "aspect_ratio": request_payload.get("aspect_ratio", "16:9"),
                 "resolution": request_payload.get("resolution", "2K"),
+                "temperature": 0.2,
                 "poll_interval_seconds": 2,
                 "poll_timeout_seconds": 720,
             },

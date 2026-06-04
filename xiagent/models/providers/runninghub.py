@@ -128,6 +128,9 @@ class RunningHubImageProvider(ChatModelProvider):
             "resolution": resolution,
             "imageUrls": images,
         }
+        temperature = self._metadata_number(request.metadata, "temperature")
+        if temperature is not None:
+            payload["temperature"] = temperature
         return payload
 
     def _prompt(self, request: ChatRequest) -> str:
@@ -169,6 +172,14 @@ class RunningHubImageProvider(ChatModelProvider):
     def _metadata_text(self, metadata: dict[str, Any], key: str) -> str | None:
         value = metadata.get(key)
         return value if isinstance(value, str) and value else None
+
+    def _metadata_number(self, metadata: dict[str, Any], key: str) -> float | None:
+        value = metadata.get(key)
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int | float):
+            return float(value)
+        return None
 
     async def _post_json(self, url: str, payload: dict[str, Any]) -> dict[str, Any]:
         log_api_request(provider=self._provider_name, url=url, payload=payload)

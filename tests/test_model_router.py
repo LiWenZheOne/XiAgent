@@ -286,6 +286,7 @@ async def test_runninghub_image_provider_submits_and_polls_generation() -> None:
             "images": ["data:image/png;base64,aW1hZ2UtYnl0ZXM="],
             "aspect_ratio": "1:1",
             "resolution": "2k",
+            "temperature": 0.2,
         },
     )
 
@@ -303,6 +304,7 @@ async def test_runninghub_image_provider_submits_and_polls_generation() -> None:
                 "prompt": "turn the sketch into ink wash art",
                 "aspectRatio": "1:1",
                 "resolution": "2k",
+                "temperature": 0.2,
             },
         },
         {

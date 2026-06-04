@@ -114,6 +114,9 @@ class _RunningHubImageNodeBase(BaseNode):
         poll_timeout_seconds = _optional_number(inputs, "poll_timeout_seconds")
         if poll_timeout_seconds is not None:
             metadata["poll_timeout_seconds"] = poll_timeout_seconds
+        temperature = _optional_number(inputs, "temperature")
+        if temperature is not None:
+            metadata["temperature"] = temperature
         return metadata
 
 
@@ -129,6 +132,7 @@ class RunningHubImageToImageNode(_RunningHubImageNodeBase):
             "aspect_ratio": {"type": "string", "minLength": 1},
             "aspectRatio": {"type": "string", "minLength": 1},
             "resolution": {"type": "string", "minLength": 1},
+            "temperature": {"type": "number", "minimum": 0},
             "poll_interval_seconds": {"type": "number", "minimum": 0},
             "poll_timeout_seconds": {"type": "number", "minimum": 0},
         },
