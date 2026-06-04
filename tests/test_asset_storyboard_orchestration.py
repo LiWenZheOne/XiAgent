@@ -268,6 +268,7 @@ def test_episode_context_drives_segment_asset_assignment(test_settings) -> None:
     assert '"segment_assignments": [' in assign_node["inputs"]["prompt"]["template"]
     assert '"location": "机密房"' in assign_node["inputs"]["prompt"]["template"]
     assert '"key_props": ["方桌", "文书"]' in assign_node["inputs"]["prompt"]["template"]
+    assert '{{"asset_name": "何涛", "presence": "present"}}' in assign_node["inputs"]["prompt"]["template"]
     assert "full_name" not in assign_node["inputs"]["prompt"]["template"]
 
     resolve_node = nodes_by_id["resolve_segment_image_refs"]

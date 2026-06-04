@@ -347,30 +347,30 @@ nodes:
           - 只在道具本体明确出现或直接影响画面时加入；仅被提及、计划使用、回忆中出现或上一段已离开当前场景的道具不要加入。
 
           目标 JSON 示例：
-          {
+          {{
             "segment_assignments": [
-              {
+              {{
                 "segment_index": 0,
                 "location": "机密房",
                 "time": "",
                 "characters": [
-                  {"asset_name": "何涛", "presence": "present"},
-                  {"asset_name": "众公差", "presence": "present"}
+                  {{"asset_name": "何涛", "presence": "present"}},
+                  {{"asset_name": "众公差", "presence": "present"}}
                 ],
                 "key_props": ["方桌", "文书"]
-              },
-              {
+              }},
+              {{
                 "segment_index": 1,
                 "location": "石碣村湖荡芦苇荡",
                 "time": "傍晚",
                 "characters": [
-                  {"asset_name": "何涛", "presence": "present"},
-                  {"asset_name": "阮小五", "presence": "mentioned_only"}
+                  {{"asset_name": "何涛", "presence": "present"}},
+                  {{"asset_name": "阮小五", "presence": "mentioned_only"}}
                 ],
                 "key_props": ["官船"]
-              }
+              }}
             ]
-          }
+          }}
         vars:
           segments:
             from: "$nodes.split_script.output.segments"
