@@ -261,6 +261,13 @@ def test_episode_context_drives_segment_asset_assignment(test_settings) -> None:
         "from": "$nodes.select_episode_metadata.output.background",
     }
     assert "不要输出 reason、visibility、asset_type、asset_tags、asset_id、image_ref 或 image_url" in assign_node["inputs"]["prompt"]["template"]
+    assert "最佳地点分析规则" in assign_node["inputs"]["prompt"]["template"]
+    assert "location 必须从轻量资产索引中的地点资产名称里选择最适合本段当前空间的一个" in assign_node["inputs"]["prompt"]["template"]
+    assert "最佳道具分析规则" in assign_node["inputs"]["prompt"]["template"]
+    assert "key_props 只从轻量资产索引中的道具资产名称里选择本段实际出现" in assign_node["inputs"]["prompt"]["template"]
+    assert '"segment_assignments": [' in assign_node["inputs"]["prompt"]["template"]
+    assert '"location": "机密房"' in assign_node["inputs"]["prompt"]["template"]
+    assert '"key_props": ["方桌", "文书"]' in assign_node["inputs"]["prompt"]["template"]
     assert "full_name" not in assign_node["inputs"]["prompt"]["template"]
 
     resolve_node = nodes_by_id["resolve_segment_image_refs"]
@@ -545,15 +552,19 @@ def test_scene_layout_and_panel_plan_nodes_use_parallel_segment_items(test_setti
     )
 
     assert plan_node["inputs"]["items"] == {"from": "$nodes.analyze_scene_layout.output.results"}
-    assert "只基于当前段落和场景布局生成结构化分格计划" in plan_node["inputs"]["system"]["value"]
-    assert "不写自然语言长描述" in plan_node["inputs"]["system"]["value"]
+    assert "只根据当前段落和 scene_layout.character_positions" in plan_node["inputs"]["system"]["value"]
+    assert "分镜节奏合理" in plan_node["inputs"]["system"]["value"]
     assert "{world_background}" in plan_node["inputs"]["prompt_template"]["value"]
     assert "{full_script}" in plan_node["inputs"]["prompt_template"]["value"]
     plan_prompt = plan_node["inputs"]["prompt_template"]["value"]
     assert "分镜计划标准" in plan_prompt
     assert "panel_count 必须严格落实建议分格数" in plan_prompt
-    assert "每格都必须有明确叙事功能和可见信息增量" in plan_prompt
-    assert "每格必须明确入画角色、可见道具、动作瞬间、景别、机位、角度、构图、空间关系、光影氛围和与下一格的衔接" in plan_prompt
+    assert "每格只写 description" in plan_prompt
+    assert "可以在 description 中自然标注空境、特写、出框/破格动作或景别节奏" in plan_prompt
+    assert "是否需要空境来交代地点、承接情绪或让动作节奏有停顿" in plan_prompt
+    assert "是否需要特写来强调关键表情、手势、道具、门窗、文书、武器接触或动作结果" in plan_prompt
+    assert "角色、武器、门框、烟尘、文书、衣袖或其他物体越过分格边界" in plan_prompt
+    assert "每格采用什么轻量景别节奏" in plan_prompt
     assert "think：完整推理过程" in plan_prompt
     assert "目标 JSON 示例" in plan_prompt
     assert plan_node["inputs"]["required_input_fields"]["value"] == ["scene_layout"]
