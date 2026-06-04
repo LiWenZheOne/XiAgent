@@ -16,3 +16,4 @@ storage/assets/
 !.env.example
 xiagent/models/local_config.toml
 xiagent/infrastructure/object_storage.local.toml
+prod-secrets/
