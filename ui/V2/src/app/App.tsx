@@ -20,7 +20,7 @@ import {
 import { getCurrentUser, login, register } from "../api/auth";
 import { ApiError, clearAccessToken, getAccessToken } from "../api/client";
 import { createProject, listProjects } from "../api/projects";
-import { createTask, deleteTask, getTask, listTasks, rerunNode, saveInteractionDraft, streamTaskEvents, submitInteraction } from "../api/tasks";
+import { createTask, deleteTask, exportTaskDebugPackage, getTask, listTasks, rerunNode, saveInteractionDraft, streamTaskEvents, submitInteraction } from "../api/tasks";
 import type {
   AssetRecord,
   AssetMetadata,
@@ -761,6 +761,9 @@ function TaskDetailPanel({
   const [liveEvents, setLiveEvents] = useState<TaskEvent[]>([]);
   const [revealedNodeOrder, setRevealedNodeOrder] = useState<Record<string, number>>({});
   const [pendingTransitionNodeId, setPendingTransitionNodeId] = useState<string | null>(null);
+  const [debugExporting, setDebugExporting] = useState(false);
+  const [debugExportError, setDebugExportError] = useState("");
+  const [debugExportMessage, setDebugExportMessage] = useState("");
   const revealSequenceRef = useRef(0);
   const revealedNodeOrderRef = useRef<Record<string, number>>({});
   const stepRevealModeRef = useRef(false);
@@ -994,6 +997,23 @@ function TaskDetailPanel({
     setDetail((current) => (current ? { ...current, task: { ...current.task, ...task } } : current));
   }
 
+  async function handleDebugExport() {
+    setDebugExporting(true);
+    setDebugExportError("");
+    setDebugExportMessage("");
+    try {
+      const payload = await exportTaskDebugPackage(projectId, taskId);
+      const generatedAt = typeof payload.generated_at === "string" ? payload.generated_at : new Date().toISOString();
+      const filename = taskDebugExportFilename(taskId, generatedAt);
+      downloadJsonFile(payload, filename);
+      setDebugExportMessage(`已导出调试包：${filename}`);
+    } catch (nextError) {
+      setDebugExportError(readableError(nextError, "调试包导出失败，请刷新任务后重试。"));
+    } finally {
+      setDebugExporting(false);
+    }
+  }
+
   return (
     <section className="task-detail" aria-label="任务运行详情">
       {loading ? <section className="panel">正在加载任务详情...</section> : null}
@@ -1006,8 +1026,15 @@ function TaskDetailPanel({
               <h1>{taskTitle(detail.task)}</h1>
               <p>创建于 {formatDate(detail.task.created_at)}</p>
             </div>
-            <span className={`status-badge ${statusTone(detail.task.status)}`}>{statusLabel(detail.task.status)}</span>
+            <div className="task-summary-actions">
+              <span className={`status-badge ${statusTone(detail.task.status)}`}>{statusLabel(detail.task.status)}</span>
+              <button className="secondary-button" type="button" onClick={() => void handleDebugExport()} disabled={debugExporting}>
+                导出调试包
+              </button>
+            </div>
           </section>
+          {debugExportError ? <section className="panel form-error">{debugExportError}</section> : null}
+          {debugExportMessage ? <p className="task-debug-export-message">{debugExportMessage}</p> : null}
 
           <WorkflowProgressView
             eventsByNode={eventsByNode}
@@ -3797,6 +3824,30 @@ function readableAssetFieldValue(value: unknown): string {
 
 function assetScopeButtonClass(active: boolean): string {
   return active ? "secondary-button asset-scope-button active-control" : "secondary-button asset-scope-button";
+}
+
+function downloadJsonFile(payload: unknown, filename: string) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.style.display = "none";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function taskDebugExportFilename(taskId: string, generatedAt: string): string {
+  const generatedDate = new Date(generatedAt);
+  const timestamp = Number.isNaN(generatedDate.getTime()) ? new Date().toISOString() : generatedDate.toISOString();
+  return `xiagent-task-${safeFilenamePart(taskId)}-debug-${timestamp.replace(/:/g, "-")}.json`;
+}
+
+function safeFilenamePart(value: string): string {
+  const safe = value.replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^[._]+|[._]+$/g, "");
+  return safe.slice(0, 96) || "task";
 }
 
 function readableError(error: unknown, fallback: string): string {

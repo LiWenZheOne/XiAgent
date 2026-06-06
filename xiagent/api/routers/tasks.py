@@ -3,14 +3,16 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict
+from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from xiagent.api.dependencies import ApiServices, get_current_user, get_services
 from xiagent.core.errors import ValidationError, XiAgentError
+from xiagent.infrastructure.api_logging import sanitize_api_payload
 from xiagent.nodes.base import NodeContext
 from xiagent.nodes.ai.image_references import resolve_image_ref_with_asset_service
 from xiagent.runtime.event_stream import format_sse_event
@@ -148,6 +150,49 @@ async def get_task(
     services: Annotated[ApiServices, Depends(get_services)],
     current_user: Annotated[UserRecord, Depends(get_current_user)],
 ) -> dict:
+    return await _load_task_detail_payload(
+        services=services,
+        current_user=current_user,
+        project_id=project_id,
+        task_id=task_id,
+    )
+
+
+@router.get("/{task_id}/debug-export")
+async def export_task_debug_package(
+    task_id: str,
+    project_id: str,
+    services: Annotated[ApiServices, Depends(get_services)],
+    current_user: Annotated[UserRecord, Depends(get_current_user)],
+) -> JSONResponse:
+    generated_at = datetime.now(UTC).isoformat()
+    payload = await _load_task_detail_payload(
+        services=services,
+        current_user=current_user,
+        project_id=project_id,
+        task_id=task_id,
+    )
+    export_payload = {
+        "export_version": "task_debug_export.v1",
+        "generated_at": generated_at,
+        **payload,
+    }
+    return JSONResponse(
+        content=export_payload,
+        headers={
+            "Cache-Control": "no-store",
+            "Content-Disposition": f'attachment; filename="{_task_debug_export_filename(task_id, generated_at)}"',
+        },
+    )
+
+
+async def _load_task_detail_payload(
+    *,
+    services: ApiServices,
+    current_user: UserRecord,
+    project_id: str,
+    task_id: str,
+) -> dict[str, Any]:
     task = await services.runtime.get_task(
         user_id=current_user.user_id,
         project_id=project_id,
@@ -178,6 +223,24 @@ async def get_task(
         "events": [asdict(event) for event in events],
         "workflow_snapshot": workflow_snapshot,
     }
+
+
+def _task_debug_export_filename(task_id: str, generated_at: str) -> str:
+    safe_task_id = _safe_filename_part(task_id)
+    safe_timestamp = (
+        generated_at.replace("+00:00", "Z")
+        .replace(":", "-")
+        .replace("/", "-")
+    )
+    return f"xiagent-task-{safe_task_id}-debug-{safe_timestamp}.json"
+
+
+def _safe_filename_part(value: str) -> str:
+    safe = "".join(
+        char if char.isascii() and (char.isalnum() or char in {"-", "_", "."}) else "_"
+        for char in value
+    ).strip("._")
+    return safe[:96] or "task"
 
 
 @router.delete("/{task_id}")
@@ -506,12 +569,13 @@ async def _run_task_ai_interaction(
     )
     try:
         result = await run()
+        patch = draft_patch(result)
         await services.runtime.save_waiting_node_draft(
             user_id=current_user.user_id,
             project_id=project_id,
             task_id=task_id,
             node_id=node_id,
-            input=draft_patch(result),
+            input=patch,
         )
         await _record_task_ai_event(
             services=services,
@@ -520,7 +584,11 @@ async def _run_task_ai_interaction(
             task_id=task_id,
             node_id=node_id,
             event_type="node_ai_interaction_succeeded",
-            payload={"operation": operation},
+            payload={
+                "operation": operation,
+                "result": sanitize_api_payload(result),
+                "draft_patch": sanitize_api_payload(patch),
+            },
         )
         return result
     except XiAgentError as exc:

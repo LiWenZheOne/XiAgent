@@ -11,6 +11,7 @@ from xiagent.core.errors import NotFoundError, PermissionDeniedError, Validation
 from xiagent.core.ids import new_id
 from xiagent.core.schemas import validate_json_value
 from xiagent.core.services import AssetService, UserService
+from xiagent.infrastructure.api_logging import sanitize_api_payload
 from xiagent.infrastructure.database import connect_db
 from xiagent.nodes.base import AssetRef, NodeContext
 from xiagent.nodes.registry import NodeRegistry
@@ -328,7 +329,13 @@ class SqliteRuntimeService:
                 db,
                 task_id=task_id,
                 event_type="node_draft_saved",
-                payload={"node_id": node_id},
+                payload={
+                    "node_id": node_id,
+                    "node_execution_id": waiting_execution.node_execution_id,
+                    "input_patch": sanitize_api_payload(input),
+                    "input_snapshot_after": sanitize_api_payload(draft_input),
+                    "changed_keys": sorted(str(key) for key in input.keys()),
+                },
                 created_at=now,
             )
 
