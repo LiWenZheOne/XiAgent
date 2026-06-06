@@ -2586,6 +2586,74 @@ describe("node-ui controls", () => {
     });
   });
 
+  it("loads thumbnails for readonly schema form asset image refs", async () => {
+    const createObjectUrl = vi.fn(() => "blob:readonly-asset-thumbnail");
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectUrl });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const parsed = new URL(String(input), "http://localhost");
+      if (parsed.pathname === "/api/assets/asset-1/thumbnail") {
+        return Promise.resolve(new Response(new Blob(["png"], { type: "image/png" }), { status: 200, headers: { "Content-Type": "image/png" } }));
+      }
+      return jsonResponse({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const inputSchema: JsonSchema = {
+      type: "object",
+      properties: {
+        image_refs: {
+          type: "array",
+          title: "Reference Images",
+          items: {
+            type: "object",
+            properties: {
+              kind: { type: "string" },
+              asset_id: { type: "string" },
+              role: { type: "string" },
+            },
+          },
+        },
+      },
+    };
+    const readonlyNode: TaskNodeExecution = {
+      node_execution_id: "exec-readonly-input",
+      node_id: "collect_user_input",
+      node_ref: "system.user_input.v1",
+      status: "succeeded",
+      input_snapshot: {
+        image_refs: [{ kind: "asset", asset_id: "asset-1", role: "reference" }],
+      },
+      output_snapshot: null,
+      metadata: { input_schema: inputSchema },
+    };
+
+    render(
+      <SchemaFormControl
+        config={{
+          control_id: "ui.input.schema_form.v1",
+          variant: "default",
+          mode: "readonly",
+          options: {
+            fields: {
+              image_refs: {
+                control_id: "ui.input.asset_image_picker.v1",
+                variant: "thumbnails",
+                mode: "readonly",
+                selection_mode: "multiple",
+              },
+            },
+          },
+        }}
+        node={readonlyNode}
+        projectId="project-1"
+        slot="input"
+      />,
+    );
+
+    expect(await screen.findByRole("img")).toHaveAttribute("src", "blob:readonly-asset-thumbnail");
+    expect(fetchMock).toHaveBeenCalledWith("/api/assets/asset-1/thumbnail?size=256&project_id=project-1", expect.any(Object));
+  });
+
   it("filters task asset picker assets by selected project directories and tags", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
       const url = String(input);

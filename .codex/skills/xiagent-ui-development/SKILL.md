@@ -17,6 +17,14 @@ XiAgent UI work is versioned under `ui/<version>/...` and must deliver a real en
 4. Map every screen field to a real API/service/state source before editing. UI must not directly read SQLite, local asset file paths, backend internals, node classes, or provider adapter details.
 5. When a UI rule changes, update documentation in the same turn: reusable XiAgent UI rules go in this skill; version-specific style, layout, and exceptions go in `ui/<version>/docs/ui-development-rules.md`.
 
+## Repeated Failure Guardrails
+
+- Before editing or validating, state the target UI version, backend API target, active ports/processes, and whether acceptance uses a new task or an explicitly migrated historical task. Do not infer V1/V2, `main`/`master`, or frontend daemon/static serving from habit.
+- If task or workflow input is involved, check the changed path for legacy entry points: `$workflow.input`, `workflow.input_schema`, `system.workflow_input.v1`, and task-creation `input_data`. Production UI must collect business input only through task-detail node input controls.
+- After workflow YAML, node UI config, manifest, or control registry changes, reload/restart the backend workflow catalog before browser acceptance, then create a fresh task and verify that its persisted workflow snapshot drives the UI.
+- Treat historical tasks as old-snapshot evidence. Do not modify an old `control_id`, variant, mode, or binding implementation just to make historical snapshots look like the new workflow config.
+- When implementation reveals a durable rule, update the matching root or directory `AGENTS.md`, this skill, and the target `ui/<version>/docs/ui-development-rules.md` in the same change.
+
 ## Directory Rules
 
 - Put UI code only under a concrete version directory such as `ui/V1` or `ui/V2`; `ui/` itself is only the container.
@@ -88,6 +96,7 @@ For acceptance review, use `xiagent-ui-review` after implementation.
 - Showing raw workflow JSON or schema because it is convenient to render.
 - Hiding test workflows that should be selectable for UI testing.
 - Loading all workflows without selected project context.
+- Trusting a browser run without confirming the UI proxy target, backend process, and workflow catalog freshness.
 - Treating screenshots as proof without checking API source and persisted state.
 - Treating a historical task rendered with old snapshot config as proof that new workflow UI config failed, or changing old control code to make that historical snapshot look new instead of creating a new task or migrating the snapshot.
 - Updating V2 visual language while leaving `ui/V2/docs/ui-development-rules.md` stale.

@@ -864,6 +864,50 @@ describe("XiAgent V2 app", () => {
     expect(chooseStep?.closest(".stage-step-entry")?.querySelector(".node-detail-body")).toBeTruthy();
   });
 
+  it("keeps the task workbench scene mounted when switching to the asset library and back", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    const { container } = render(<App />);
+    await login();
+
+    await userEvent.click(await screen.findByRole("button", { name: "打开 故事板生成" }));
+
+    const detail = await screen.findByLabelText("任务运行详情");
+    const prepareStep = within(detail).getAllByText("准备提示词").find((item) => item.closest(".stage-step-row"));
+    expect(prepareStep).toBeTruthy();
+    await userEvent.click(prepareStep!.closest(".stage-step-row") as HTMLElement);
+    expect(within(detail).getByText("雨夜城市电影感")).toBeInTheDocument();
+
+    const workspaceMain = container.querySelector(".workspace-main") as HTMLElement;
+    expect(workspaceMain).toBeTruthy();
+    workspaceMain.scrollTop = 480;
+    fireEvent.scroll(workspaceMain);
+
+    const detailFetchCountBefore = fetchMock.mock.calls.filter(([url, init]) =>
+      url === "/api/tasks/task-1?project_id=global" && (init?.method ?? "GET") === "GET",
+    ).length;
+    expect(detailFetchCountBefore).toBeGreaterThan(0);
+
+    await userEvent.click(screen.getByRole("button", { name: "资产库" }));
+    expect(await screen.findByRole("toolbar", { name: "资产库标签操作" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "任务工作台" }));
+
+    const detailAfterReturn = screen.getByLabelText("任务运行详情");
+    expect(detailAfterReturn).toBe(detail);
+    expect(screen.queryByText("选择任务或创建新任务")).not.toBeInTheDocument();
+    expect(screen.queryByText("正在加载任务详情...")).not.toBeInTheDocument();
+    expect(within(detailAfterReturn).getByText("雨夜城市电影感")).toBeInTheDocument();
+    const prepareStepAfterReturn = within(detailAfterReturn).getAllByText("准备提示词").find((item) => item.closest(".stage-step-row"));
+    expect(prepareStepAfterReturn?.closest(".stage-step-entry")?.querySelector(".node-detail-body")).toBeTruthy();
+
+    const workspaceMainAfterReturn = container.querySelector(".workspace-main") as HTMLElement;
+    expect(workspaceMainAfterReturn).toBe(workspaceMain);
+    expect(workspaceMainAfterReturn.scrollTop).toBe(480);
+    expect(fetchMock.mock.calls.filter(([url, init]) =>
+      url === "/api/tasks/task-1?project_id=global" && (init?.method ?? "GET") === "GET",
+    )).toHaveLength(detailFetchCountBefore);
+  });
+
   it("renders unwrapped output controls directly in the node detail", async () => {
     const baseFetch = mockFetch();
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -1262,6 +1306,36 @@ describe("XiAgent V2 app", () => {
     await waitFor(() => {
       expect(screen.queryByRole("dialog", { name: "全屏查看 参考图" })).not.toBeInTheDocument();
     });
+  });
+
+  it("keeps the selected asset library scene when switching to the task workbench and back", async () => {
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:asset-thumbnail") });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    const { container } = render(<App />);
+    await login();
+
+    await userEvent.click(screen.getByRole("button", { name: "资产库" }));
+    await userEvent.click(await screen.findByRole("button", { name: /全局参考\.png/ }));
+    expect(await screen.findByRole("heading", { name: "全局参考.png" })).toBeInTheDocument();
+    const detailPanel = container.querySelector(".asset-detail-panel") as HTMLElement;
+    expect(detailPanel).toBeTruthy();
+
+    const searchFetchCountBefore = fetchMock.mock.calls.filter(([url, init]) =>
+      String(url).startsWith("/api/assets/search?") && (init?.method ?? "GET") === "GET",
+    ).length;
+    expect(searchFetchCountBefore).toBeGreaterThan(0);
+
+    await userEvent.click(screen.getByRole("button", { name: "任务工作台" }));
+    expect(await screen.findByRole("button", { name: "创建任务" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "资产库" }));
+
+    expect(screen.getByRole("heading", { name: "全局参考.png" })).toBeInTheDocument();
+    expect(container.querySelector(".asset-detail-panel")).toBe(detailPanel);
+    expect(fetchMock.mock.calls.filter(([url, init]) =>
+      String(url).startsWith("/api/assets/search?") && (init?.method ?? "GET") === "GET",
+    )).toHaveLength(searchFetchCountBefore);
   });
 
   it("batch selects and soft deletes assets from the asset library", async () => {

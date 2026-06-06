@@ -8,14 +8,13 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
 
+from xiagent.api.asset_responses import asset_list_response, asset_response
 from xiagent.api.dependencies import ApiServices, get_current_user, get_services
-from xiagent.core.errors import XiAgentError, ValidationError
-from xiagent.nodes.base import NodeContext
+from xiagent.core.errors import ValidationError
 from xiagent.users.models import UserRecord
 
 router = APIRouter(prefix="/api/assets", tags=["assets"])
 
-_STORYBOARD_WORKFLOW_ID = "asset_storyboard_generation"
 _STORYBOARD_REFERENCE_IMAGE_LIMIT = 10
 
 
@@ -138,7 +137,7 @@ async def create_text_asset(
         text=request.text,
         metadata=request.metadata,
     )
-    return asdict(asset)
+    return asset_response(asset)
 
 
 @router.post("/draft-from-description")
@@ -154,30 +153,15 @@ async def draft_asset_from_description(
             message="请先描述需要新增的资产特征。",
         )
 
-    node = services.node_registry.get("ai.asset_draft_from_description.v1")
-    result = await node.run(
-        NodeContext(
-            user_id=current_user.user_id,
-            project_id=request.project_id or "global",
-            task_id="asset_draft_preview",
-            node_id="draft_asset_from_description",
-            node_execution_id="asset_draft_preview",
-            config={},
-            output_schema=node.describe().output_schema,
-            asset_service=services.assets,
-            event_sink=None,
-            logger=None,
-        ),
-        {
-            "asset_type": request.asset_type,
-            "description": description,
-            "script": request.script,
-            "background": request.background,
-            "current_assets": request.current_assets,
-            "max_attempts": 2,
-        },
+    return await services.asset_generations.draft_asset_from_description(
+        user_id=current_user.user_id,
+        project_id=request.project_id,
+        asset_type=request.asset_type,
+        description=description,
+        script=request.script,
+        background=request.background,
+        current_assets=request.current_assets,
     )
-    return result.output
 
 
 @router.post("/generate-image")
@@ -193,19 +177,14 @@ async def generate_asset_image(
             message="资产图像生成需要提示词信息。",
         )
 
-    project_id = request.project_id or "global"
-    job = services.image_generations.create(
+    job = await services.asset_generations.create_asset_image_generation(
         user_id=current_user.user_id,
-        project_id=project_id,
+        project_id=request.project_id,
         input_payload=request.model_dump(mode="json"),
     )
     background_tasks.add_task(
-        _run_asset_image_generation,
+        services.asset_generations.run_asset_image_generation,
         generation_id=job.generation_id,
-        request_payload=request.model_dump(mode="json"),
-        services=services,
-        user_id=current_user.user_id,
-        project_id=project_id,
     )
     return job.to_dict()
 
@@ -234,21 +213,10 @@ async def generate_storyboard_panel_image(
             details={"limit": _STORYBOARD_REFERENCE_IMAGE_LIMIT, "count": len(request.image_refs)},
         )
 
-    project_id = request.project_id or "global"
-    job = services.image_generations.create(
-        user_id=current_user.user_id,
-        project_id=project_id,
-        input_payload=request.model_dump(mode="json"),
+    raise ValidationError(
+        code="workflow_ai_requires_runtime",
+        message="工作流分镜图像生成必须通过任务交互接口执行。",
     )
-    background_tasks.add_task(
-        _run_storyboard_panel_image_generation,
-        generation_id=job.generation_id,
-        request_payload=request.model_dump(mode="json"),
-        services=services,
-        user_id=current_user.user_id,
-        project_id=project_id,
-    )
-    return job.to_dict()
 
 
 @router.post("/storyboard-panel-prompt")
@@ -257,295 +225,20 @@ async def regenerate_storyboard_panel_prompt(
     services: Annotated[ApiServices, Depends(get_services)],
     current_user: Annotated[UserRecord, Depends(get_current_user)],
 ) -> dict:
-    item = request.item
-    if not item:
-        raise ValidationError(
-            code="storyboard_panel_item_required",
-            message="重新生成分镜提示词需要当前段落上下文。",
-        )
-    if "reference_images" in request.card:
-        item = {
-            **item,
-            "segment_assignment": _segment_assignment_with_reference_images(
-                {"segment_index": item.get("index")},
-                _object_list(request.card.get("reference_images")),
-            ),
-        }
-    else:
-        current_reference_images = _object_list(item.get("reference_images"))
-        if current_reference_images:
-            item = {
-                **item,
-                "segment_assignment": _segment_assignment_with_reference_images(
-                    item.get("segment_assignment"),
-                    current_reference_images,
-                ),
-            }
-    project_id = request.project_id or "global"
-    workflow_nodes = _workflow_nodes_by_id(services.workflows.get(_STORYBOARD_WORKFLOW_ID))
-    context_base = {
-        "user_id": current_user.user_id,
-        "project_id": project_id,
-        "task_id": "storyboard_panel_prompt_preview",
-        "asset_service": services.assets,
-    }
-
-    layout_result = await _run_workflow_node(
-        services=services,
-        context_base=context_base,
-        workflow_node=workflow_nodes["analyze_scene_layout"],
-        execution_suffix=f"{request.card.get('card_id', 'preview')}_layout",
-        inputs=_parallel_storyboard_inputs(
-            workflow_nodes["analyze_scene_layout"],
-            items=[item],
-            shared_context=request.shared_context,
-        ),
+    raise ValidationError(
+        code="workflow_ai_requires_runtime",
+        message="工作流分镜提示词生成必须通过任务交互接口执行。",
     )
-    layout_items = _result_items(layout_result, node_id="analyze_scene_layout")
-
-    plan_result = await _run_workflow_node(
-        services=services,
-        context_base=context_base,
-        workflow_node=workflow_nodes["plan_storyboard_panels"],
-        execution_suffix=f"{request.card.get('card_id', 'preview')}_plan",
-        inputs=_parallel_storyboard_inputs(
-            workflow_nodes["plan_storyboard_panels"],
-            items=layout_items,
-            shared_context=request.shared_context,
-        ),
-    )
-    plan_items = _result_items(plan_result, node_id="plan_storyboard_panels")
-
-    plan_review_result = await _run_workflow_node(
-        services=services,
-        context_base=context_base,
-        workflow_node=workflow_nodes["review_and_refine_storyboard_plan"],
-        execution_suffix=f"{request.card.get('card_id', 'preview')}_plan_review",
-        inputs=_review_storyboard_inputs(
-            workflow_nodes["review_and_refine_storyboard_plan"],
-            items=plan_items,
-            storyboard_items=[item],
-            shared_context=request.shared_context,
-        ),
-    )
-    reviewed_plan_items = _result_items(plan_review_result, node_id="review_and_refine_storyboard_plan")
-
-    prompt_result = await _run_workflow_node(
-        services=services,
-        context_base=context_base,
-        workflow_node=workflow_nodes["convert_storyboard_plan_to_image_prompt"],
-        execution_suffix=f"{request.card.get('card_id', 'preview')}_prompt",
-        inputs=_parallel_storyboard_inputs(
-            workflow_nodes["convert_storyboard_plan_to_image_prompt"],
-            items=reviewed_plan_items,
-            shared_context=request.shared_context,
-        ),
-    )
-    prompt_items = _result_items(prompt_result, node_id="convert_storyboard_plan_to_image_prompt")
-
-    prompt_review_result = await _run_workflow_node(
-        services=services,
-        context_base=context_base,
-        workflow_node=workflow_nodes["review_and_refine_image_prompt"],
-        execution_suffix=f"{request.card.get('card_id', 'preview')}_prompt_review",
-        inputs=_review_storyboard_inputs(
-            workflow_nodes["review_and_refine_image_prompt"],
-            items=prompt_items,
-            storyboard_items=[item],
-            shared_context=request.shared_context,
-        ),
-    )
-    results = _result_items(prompt_review_result, node_id="review_and_refine_image_prompt")
-
-    panel_node = services.node_registry.get("tool.prepare_storyboard_panel_cards.v1")
-    panel_result = await panel_node.run(
-        NodeContext(
-            user_id=current_user.user_id,
-            project_id=project_id,
-            task_id="storyboard_panel_prompt_preview",
-            node_id="prepare_storyboard_panel_prompt_preview",
-            node_execution_id=f"storyboard_panel_card_{request.card.get('card_id', 'preview')}",
-            config={},
-            output_schema=panel_node.describe().output_schema,
-            asset_service=services.assets,
-            event_sink=None,
-            logger=None,
-        ),
-        {
-            "segment_descriptions": results,
-            "segment_assignments": [item.get("segment_assignment") or {}],
-            "storyboard_items": [item],
-            "shared_context": request.shared_context,
-            "generation_rules": request.generation_rules or "",
-            "negative_prompt": request.negative_prompt or "",
-            "aspect_ratio": request.aspect_ratio,
-            "resolution": request.resolution,
-        },
-    )
-    cards = panel_result.output.get("panel_cards")
-    panel_index = request.card.get("panel_index")
-    if not isinstance(cards, list):
-        cards = []
-    matched = next(
-        (
-            card
-            for card in cards
-            if isinstance(card, dict)
-            and card.get("panel_index") == panel_index
-            and card.get("segment_index") == request.card.get("segment_index")
-        ),
-        cards[0] if cards else None,
-    )
-    if not isinstance(matched, dict):
-        raise ValidationError(
-            code="storyboard_panel_prompt_card_missing",
-            message="重新生成分镜提示词没有找到目标分格。",
-        )
-    return {"card": matched, "segment_description": results[0]}
-
-
 @router.get("/generate-image/{generation_id}")
 async def get_asset_image_generation(
     generation_id: str,
     services: Annotated[ApiServices, Depends(get_services)],
     current_user: Annotated[UserRecord, Depends(get_current_user)],
 ) -> dict:
-    return services.image_generations.get(
+    return services.asset_generations.get_generation(
         user_id=current_user.user_id,
         generation_id=generation_id,
     ).to_dict()
-
-
-async def _run_asset_image_generation(
-    *,
-    generation_id: str,
-    request_payload: dict[str, Any],
-    services: ApiServices,
-    user_id: str,
-    project_id: str,
-) -> None:
-    services.image_generations.mark_running(generation_id)
-    node = services.node_registry.get("ai.runninghub_image_to_image.v2")
-    try:
-        result = await node.run(
-            NodeContext(
-                user_id=user_id,
-                project_id=project_id,
-                task_id="asset_image_preview",
-                node_id="generate_asset_image_preview",
-                node_execution_id=generation_id,
-                config={},
-                output_schema=node.describe().output_schema,
-                asset_service=services.assets,
-                event_sink=None,
-                logger=None,
-            ),
-            {
-                "prompt_results": [request_payload["prompt_result"]],
-                "prompt_prefix": request_payload.get("prompt_prefix") or "",
-                "prompt_suffix": request_payload.get("prompt_suffix") or "",
-                "aspect_ratio": request_payload.get("aspect_ratio", "1:1"),
-                "resolution": request_payload.get("resolution", "2k"),
-            },
-        )
-        images = result.output.get("asset_images")
-        if not isinstance(images, list) or not images:
-            raise ValidationError(
-                code="asset_image_generation_empty",
-                message="资产图像生成没有返回图像。",
-            )
-        image = images[0]
-        if not isinstance(image, dict):
-            raise ValidationError(
-                code="asset_image_generation_invalid",
-                message="资产图像生成返回了无效结果。",
-            )
-        services.image_generations.mark_succeeded(generation_id, image)
-    except XiAgentError as exc:
-        services.image_generations.mark_failed(
-            generation_id,
-            {
-                "code": exc.code,
-                "message": exc.message,
-                "details": exc.details,
-            },
-        )
-    except Exception as exc:  # pragma: no cover - defensive background task guard
-        services.image_generations.mark_failed(
-            generation_id,
-            {
-                "code": "asset_image_generation_failed",
-                "message": str(exc) or "资产图像生成失败。",
-                "details": {},
-            },
-        )
-
-
-async def _run_storyboard_panel_image_generation(
-    *,
-    generation_id: str,
-    request_payload: dict[str, Any],
-    services: ApiServices,
-    user_id: str,
-    project_id: str,
-) -> None:
-    services.image_generations.mark_running(generation_id)
-    node = services.node_registry.get("ai.runninghub_image_to_image.v1")
-    try:
-        result = await node.run(
-            NodeContext(
-                user_id=user_id,
-                project_id=project_id,
-                task_id="storyboard_panel_image_preview",
-                node_id="generate_storyboard_panel_image_preview",
-                node_execution_id=generation_id,
-                config={},
-                output_schema=node.describe().output_schema,
-                asset_service=services.assets,
-                event_sink=None,
-                logger=None,
-            ),
-            {
-                "prompt": request_payload["prompt"],
-                "image_refs": request_payload.get("image_refs") or [],
-                "aspect_ratio": request_payload.get("aspect_ratio", "16:9"),
-                "resolution": request_payload.get("resolution", "2K"),
-                "temperature": 0.2,
-                "poll_interval_seconds": 2,
-                "poll_timeout_seconds": 720,
-            },
-        )
-        image_url = result.output.get("image_url")
-        if not isinstance(image_url, str) or not image_url:
-            raise ValidationError(
-                code="storyboard_panel_image_generation_empty",
-                message="分镜图像生成没有返回图像。",
-            )
-        image = {
-            "card_id": request_payload.get("card_id", ""),
-            "image_url": image_url,
-            "source": "ai_generated",
-            "runninghub_task_id": result.output.get("task_id", ""),
-        }
-        services.image_generations.mark_succeeded(generation_id, image)
-    except XiAgentError as exc:
-        services.image_generations.mark_failed(
-            generation_id,
-            {
-                "code": exc.code,
-                "message": exc.message,
-                "details": exc.details,
-            },
-        )
-    except Exception as exc:  # pragma: no cover - defensive background task guard
-        services.image_generations.mark_failed(
-            generation_id,
-            {
-                "code": "storyboard_panel_image_generation_failed",
-                "message": str(exc) or "分镜图像生成失败。",
-                "details": {},
-            },
-        )
 
 
 @router.post("/files")
@@ -575,7 +268,7 @@ async def import_file_asset(
         collection_ids=_split_ids(collection_ids),
         tag_ids=_split_ids(tag_ids),
     )
-    return asdict(asset)
+    return asset_response(asset)
 
 
 @router.post("/files/intelligent")
@@ -609,29 +302,12 @@ async def import_file_asset_with_metadata_completion(
         metadata=metadata,
         publish=publish,
     )
-    node = services.node_registry.get("ai.asset_metadata_from_upload.v1")
-    result = await node.run(
-        NodeContext(
-            user_id=current_user.user_id,
-            project_id=project_id or "global",
-            task_id="asset_upload_metadata_completion",
-            node_id="asset_metadata_from_upload",
-            node_execution_id=f"asset_upload_metadata_{asset.asset_id}",
-            config={},
-            output_schema=node.describe().output_schema,
-            asset_service=services.assets,
-            event_sink=None,
-            logger=None,
-        ),
-        {
-            "asset_id": asset.asset_id,
-            "asset_name": clean_name,
-            "asset_type": asset_type,
-            "world_background": world_background,
-            "max_attempts": 2,
-        },
+    result = await services.asset_generations.complete_upload_metadata(
+        asset_name=clean_name,
+        asset_type=asset_type,
+        world_background=world_background,
     )
-    completed_metadata = result.output.get("metadata")
+    completed_metadata = result.get("metadata")
     if not isinstance(completed_metadata, dict):
         raise ValidationError(
             code="asset_upload_metadata_invalid",
@@ -661,9 +337,9 @@ async def import_file_asset_with_metadata_completion(
         tag_id=tag.tag_id,
     )
     return {
-        "asset": asdict(updated),
-        "confidence": result.output.get("confidence", 0),
-        "reasoning": result.output.get("reasoning", ""),
+        "asset": asset_response(updated),
+        "confidence": result.get("confidence", 0),
+        "reasoning": result.get("reasoning", ""),
     }
 
 
@@ -818,7 +494,7 @@ async def search_assets(
         limit=limit,
         offset=offset,
     )
-    return {"items": [asdict(asset) for asset in result.items], "total": result.total}
+    return {"items": asset_list_response(result.items), "total": result.total}
 
 
 @router.get("/{asset_id}/tags")
@@ -876,7 +552,7 @@ async def get_asset(
         asset_id=asset_id,
         project_id=project_id,
     )
-    return asdict(asset)
+    return asset_response(asset)
 
 
 @router.patch("/{asset_id}")
@@ -892,7 +568,7 @@ async def update_asset(
         name=request.name,
         metadata=request.metadata,
     )
-    return asdict(asset)
+    return asset_response(asset)
 
 
 @router.put("/{asset_id}/text")
@@ -909,7 +585,7 @@ async def update_text_asset(
         text=request.text,
         metadata=request.metadata,
     )
-    return asdict(asset)
+    return asset_response(asset)
 
 
 @router.put("/{asset_id}/file")
@@ -927,7 +603,7 @@ async def replace_asset_file(
         content_type=file.content_type,
         content=content,
     )
-    return asdict(asset)
+    return asset_response(asset)
 
 
 @router.get("/{asset_id}/thumbnail")
@@ -1040,172 +716,3 @@ def _split_ids(value: str | None) -> list[str]:
     if value is None:
         return []
     return [item.strip() for item in value.split(",") if item.strip()]
-
-
-def _workflow_nodes_by_id(contract: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    return {node["id"]: node for node in contract.get("nodes", []) if isinstance(node, dict) and isinstance(node.get("id"), str)}
-
-
-def _segment_assignment_with_reference_images(
-    value: Any,
-    reference_images: list[dict[str, Any]],
-) -> dict[str, Any]:
-    assignment = dict(value) if isinstance(value, dict) else {}
-    characters: list[dict[str, Any]] = []
-    prop_assets: list[dict[str, Any]] = []
-    location_asset: dict[str, Any] | None = None
-    for reference in reference_images:
-        reference_asset = _reference_image_as_assignment_asset(reference)
-        if reference_asset is None:
-            continue
-        asset_type = str(reference_asset.get("asset_type") or "")
-        if asset_type == "character":
-            characters.append({**reference_asset, "presence": "present"})
-        elif asset_type in {"scene", "location"} and location_asset is None:
-            location_asset = reference_asset
-        elif asset_type == "prop":
-            prop_assets.append(reference_asset)
-    if characters:
-        assignment["characters"] = characters
-    if location_asset is not None:
-        assignment["location_asset"] = location_asset
-    if prop_assets:
-        assignment["prop_assets"] = prop_assets
-    return assignment
-
-
-def _reference_image_as_assignment_asset(reference: dict[str, Any]) -> dict[str, Any] | None:
-    image_ref = reference.get("image_ref")
-    if not isinstance(image_ref, dict):
-        return None
-    asset_name = _text(reference.get("asset_name")) or _text(reference.get("label"))
-    if not asset_name:
-        return None
-    item: dict[str, Any] = {
-        "asset_type": _text(reference.get("asset_type")) or "character",
-        "asset_name": asset_name,
-        "image_ref": dict(image_ref),
-    }
-    asset_tags = [tag for tag in reference.get("asset_tags", []) if isinstance(tag, str) and tag]
-    if asset_tags:
-        item["asset_tags"] = asset_tags
-    preview_url = _text(reference.get("preview_url"))
-    if preview_url:
-        item["image_url"] = preview_url
-    return item
-
-
-def _object_list(value: Any) -> list[dict[str, Any]]:
-    if not isinstance(value, list):
-        return []
-    return [item for item in value if isinstance(item, dict)]
-
-
-def _text(value: Any) -> str:
-    return value.strip() if isinstance(value, str) and value.strip() else ""
-
-
-async def _run_workflow_node(
-    *,
-    services: ApiServices,
-    context_base: dict[str, Any],
-    workflow_node: dict[str, Any],
-    execution_suffix: str,
-    inputs: dict[str, Any],
-) -> Any:
-    node_id = str(workflow_node["id"])
-    node = services.node_registry.get(str(workflow_node["ref"]))
-    return await node.run(
-        NodeContext(
-            user_id=str(context_base["user_id"]),
-            project_id=str(context_base["project_id"]),
-            task_id=str(context_base["task_id"]),
-            node_id=node_id,
-            node_execution_id=f"storyboard_panel_prompt_{execution_suffix}",
-            config={},
-            output_schema=workflow_node.get("outputs", node.describe().output_schema),
-            asset_service=context_base["asset_service"],
-            event_sink=None,
-            logger=None,
-        ),
-        inputs,
-    )
-
-
-def _parallel_storyboard_inputs(
-    workflow_node: dict[str, Any],
-    *,
-    items: list[dict[str, Any]],
-    shared_context: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    inputs = workflow_node.get("inputs", {})
-    payload: dict[str, Any] = {"items": items}
-    for key in [
-        "system",
-        "prompt_template",
-        "prompt_fields",
-        "passthrough_fields",
-        "required_input_fields",
-        "max_attempts",
-        "continue_on_item_error",
-    ]:
-        value = _literal_input(inputs, key)
-        if value is not None:
-            payload[key] = value
-    if shared_context is not None:
-        payload["shared_context"] = shared_context
-    return payload
-
-
-def _review_storyboard_inputs(
-    workflow_node: dict[str, Any],
-    *,
-    items: list[dict[str, Any]],
-    storyboard_items: list[dict[str, Any]],
-    shared_context: dict[str, Any],
-) -> dict[str, Any]:
-    inputs = workflow_node.get("inputs", {})
-    payload: dict[str, Any] = {
-        "items": items,
-        "storyboard_items": storyboard_items,
-        "shared_context": shared_context,
-    }
-    for key in [
-        "review_system",
-        "review_prompt_template",
-        "revision_system",
-        "revision_prompt_template",
-        "review_output_field",
-        "review_history_output_field",
-        "required_input_fields",
-        "max_revision_rounds",
-        "max_attempts",
-        "continue_on_item_error",
-    ]:
-        value = _literal_input(inputs, key)
-        if value is not None:
-            payload[key] = value
-    return payload
-
-
-def _literal_input(inputs: Any, key: str) -> Any:
-    if not isinstance(inputs, dict):
-        return None
-    value = inputs.get(key)
-    if isinstance(value, dict) and "value" in value:
-        return value["value"]
-    if isinstance(value, dict) and "from" in value:
-        return None
-    return value
-
-
-def _result_items(result: Any, *, node_id: str) -> list[dict[str, Any]]:
-    output = getattr(result, "output", {})
-    results = output.get("results") if isinstance(output, dict) else None
-    if not isinstance(results, list) or not results:
-        raise ValidationError(
-            code="storyboard_panel_prompt_empty",
-            message="重新生成分镜提示词没有返回段落结果。",
-            details={"node_id": node_id},
-        )
-    return [item for item in results if isinstance(item, dict)]

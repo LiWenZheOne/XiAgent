@@ -276,6 +276,14 @@ async def test_image_to_image_v2_converts_asset_reference_to_base64_image() -> N
                 total=1,
             )
 
+        async def get_asset(self, **_: Any) -> Any:
+            return SimpleNamespace(
+                asset_id="asset-ref",
+                project_id=None,
+                storage_uri="aa/bb/reference.png",
+                metadata={"public_url": "https://assets.local.invalid/aa/bb/reference.png"},
+            )
+
         async def get_asset_content(self, **_: Any) -> Any:
             return SimpleNamespace(
                 bytes_content=b"image-bytes",

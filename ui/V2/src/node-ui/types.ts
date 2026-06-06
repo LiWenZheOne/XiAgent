@@ -11,6 +11,7 @@ export interface NodeUiControlProps {
   title?: string;
   imageAltPrefix?: string;
   projectId?: string;
+  taskId?: string;
   busy?: boolean;
   preview?: boolean;
   onSubmit?: (input: Record<string, unknown>) => void;

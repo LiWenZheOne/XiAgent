@@ -147,6 +147,192 @@ def _approval_contract() -> dict:
     })
 
 
+def _storyboard_prompt_interaction_contract() -> dict:
+    object_item_schema = {"type": "object", "additionalProperties": True}
+    results_schema = {
+        "type": "object",
+        "required": ["results"],
+        "properties": {"results": {"type": "array", "items": object_item_schema}},
+        "additionalProperties": False,
+    }
+    waiting_outputs = {
+        "type": "object",
+        "required": ["decision", "panel_results"],
+        "properties": {
+            "decision": {"type": "string"},
+            "panel_results": {"type": "array", "items": object_item_schema},
+        },
+        "additionalProperties": True,
+    }
+    return {
+        "workflow": {
+            "id": "api-storyboard-prompt-interaction",
+            "version": "1.0.0",
+            "scope": "global",
+            "name": "API Storyboard Prompt Interaction",
+        },
+        "nodes": [
+            {
+                "id": "review_storyboard_image",
+                "ref": "system.human_approval.v1",
+                "inputs": {
+                    "decision": {
+                        "from_user": True,
+                        "schema": {"type": "string"},
+                    },
+                    "panel_results": {
+                        "from_user": True,
+                        "schema": {"type": "array", "items": object_item_schema},
+                    },
+                },
+                "outputs": waiting_outputs,
+            },
+            {
+                "id": "analyze_scene_layout",
+                "ref": "ai.parallel_deepseek_structured_json.v1",
+                "inputs": _parallel_storyboard_node_inputs(
+                    "请分析当前段落的实际场景布局 {paragraph_text}",
+                    passthrough_fields=[
+                        "index",
+                        "paragraph_text",
+                        "panel_count",
+                        "present_characters",
+                        "location",
+                        "key_props",
+                        "segment_assignment",
+                    ],
+                ),
+                "outputs": results_schema,
+            },
+            {
+                "id": "plan_storyboard_panels",
+                "ref": "ai.parallel_deepseek_structured_json.v1",
+                "inputs": {
+                    **_parallel_storyboard_node_inputs(
+                        "请为当前段落规划一页漫画分镜 {paragraph_text}",
+                        passthrough_fields=[
+                            "index",
+                            "paragraph_text",
+                            "panel_count",
+                            "present_characters",
+                            "location",
+                            "key_props",
+                            "segment_assignment",
+                            "scene_layout",
+                        ],
+                    ),
+                    "items": {"from": "$nodes.analyze_scene_layout.output.results"},
+                },
+                "outputs": results_schema,
+            },
+            {
+                "id": "review_and_refine_storyboard_plan",
+                "ref": "ai.storyboard_review_refine.v1",
+                "inputs": _review_storyboard_node_inputs(
+                    items_from="$nodes.plan_storyboard_panels.output.results",
+                    review_prompt="请用提问方式审查当前段落的结构化分镜计划 {source}",
+                    revision_prompt="请根据审查意见修订结构化分镜计划 {source}",
+                    required_fields=["scene_layout", "panel_plan"],
+                    review_output_field="plan_review",
+                    review_history_output_field="plan_review_history",
+                ),
+                "outputs": results_schema,
+            },
+            {
+                "id": "convert_storyboard_plan_to_image_prompt",
+                "ref": "ai.parallel_deepseek_structured_json.v1",
+                "inputs": {
+                    **_parallel_storyboard_node_inputs(
+                        "请把以下结构化分镜计划转换成完整分段画面内容提示词 {paragraph_text}",
+                        passthrough_fields=[
+                            "index",
+                            "segment_title",
+                            "paragraph_text",
+                            "panel_count",
+                            "present_characters",
+                            "location",
+                            "key_props",
+                            "segment_assignment",
+                            "scene_layout",
+                            "panel_plan",
+                        ],
+                    ),
+                    "items": {"from": "$nodes.review_and_refine_storyboard_plan.output.results"},
+                },
+                "outputs": results_schema,
+            },
+            {
+                "id": "review_and_refine_image_prompt",
+                "ref": "ai.storyboard_review_refine.v1",
+                "inputs": _review_storyboard_node_inputs(
+                    items_from="$nodes.convert_storyboard_plan_to_image_prompt.output.results",
+                    review_prompt="请审查当前分段的 image_prompt {source}",
+                    revision_prompt="请根据审查意见重新生成画面内容 {source}",
+                    required_fields=["scene_layout", "panel_plan", "image_prompt"],
+                    review_output_field="prompt_review",
+                    review_history_output_field="prompt_review_history",
+                ),
+                "outputs": results_schema,
+            },
+        ],
+        "edges": [
+            {"from": "START", "to": "review_storyboard_image"},
+            {"from": "review_storyboard_image", "to": "END"},
+            {"from": "START", "to": "analyze_scene_layout"},
+            {"from": "analyze_scene_layout", "to": "plan_storyboard_panels"},
+            {"from": "plan_storyboard_panels", "to": "review_and_refine_storyboard_plan"},
+            {
+                "from": "review_and_refine_storyboard_plan",
+                "to": "convert_storyboard_plan_to_image_prompt",
+            },
+            {
+                "from": "convert_storyboard_plan_to_image_prompt",
+                "to": "review_and_refine_image_prompt",
+            },
+            {"from": "review_and_refine_image_prompt", "to": "END"},
+        ],
+    }
+
+
+def _parallel_storyboard_node_inputs(
+    prompt_template: str,
+    *,
+    passthrough_fields: list[str],
+) -> dict:
+    return {
+        "system": {"value": "仅返回合法 JSON。"},
+        "items": {"value": []},
+        "prompt_template": {"value": prompt_template},
+        "passthrough_fields": {"value": passthrough_fields},
+        "max_attempts": {"value": 1},
+        "continue_on_item_error": {"value": False},
+    }
+
+
+def _review_storyboard_node_inputs(
+    *,
+    items_from: str,
+    review_prompt: str,
+    revision_prompt: str,
+    required_fields: list[str],
+    review_output_field: str,
+    review_history_output_field: str,
+) -> dict:
+    return {
+        "items": {"from": items_from},
+        "review_system": {"value": "仅返回合法 JSON。"},
+        "review_prompt_template": {"value": review_prompt},
+        "revision_system": {"value": "仅返回合法 JSON。"},
+        "revision_prompt_template": {"value": revision_prompt},
+        "review_output_field": {"value": review_output_field},
+        "review_history_output_field": {"value": review_history_output_field},
+        "required_input_fields": {"value": required_fields},
+        "max_revision_rounds": {"value": 0},
+        "max_attempts": {"value": 1},
+        "continue_on_item_error": {"value": False},
+    }
+
+
 def _with_user_input_node(contract: dict) -> dict:
     input_schema = contract["workflow"].get("input_schema", {})
     if not input_schema.get("properties"):
@@ -332,8 +518,7 @@ def test_asset_draft_endpoint_uses_structured_llm_with_user_context(test_setting
         )
         headers = _auth_headers(client, username="draft-user")
         fake_router = FakeDraftRouter()
-        node = app.state.services.node_registry.get("ai.asset_draft_from_description.v1")
-        node._model_router = fake_router  # noqa: SLF001
+        app.state.services.asset_generations.prompt_draft_capability._model_router = fake_router  # noqa: SLF001
 
         response = client.post(
             "/api/assets/draft-from-description",
@@ -343,7 +528,15 @@ def test_asset_draft_endpoint_uses_structured_llm_with_user_context(test_setting
                 "description": "增加一个拿哨棒的武松和官兵船",
                 "script": "武松提着哨棒走过景阳冈。",
                 "background": "水浒传",
-                "current_assets": {"characters": []},
+                "current_assets": {
+                    "characters": [
+                        {
+                            "asset_name": "不可信旧图",
+                            "storage_uri": "local/private.png",
+                            "public_url": "https://evil.test/leak.png",
+                        }
+                    ]
+                },
             },
         )
 
@@ -356,6 +549,8 @@ def test_asset_draft_endpoint_uses_structured_llm_with_user_context(test_setting
     prompt = "\n".join(str(message.content) for message in fake_router.requests[0].messages)
     assert "用户描述的新资产需求" in prompt
     assert "武松提着哨棒" in prompt
+    assert "local/private.png" not in prompt
+    assert "https://evil.test/leak.png" not in prompt
 
 
 def test_intelligent_asset_upload_enriches_metadata_and_type_tag(test_settings) -> None:
@@ -399,8 +594,7 @@ def test_intelligent_asset_upload_enriches_metadata_and_type_tag(test_settings) 
         )
         headers = _auth_headers(client, username="smart-upload-user")
         fake_router = FakeUploadMetadataRouter()
-        node = app.state.services.node_registry.get("ai.asset_metadata_from_upload.v1")
-        node._model_router = fake_router  # noqa: SLF001
+        app.state.services.asset_generations.asset_metadata_capability._model_router = fake_router  # noqa: SLF001
 
         response = client.post(
             "/api/assets/files/intelligent",
@@ -420,6 +614,9 @@ def test_intelligent_asset_upload_enriches_metadata_and_type_tag(test_settings) 
     assert response.status_code == 200
     body = response.json()
     assert body["asset"]["name"] == "林冲"
+    assert "storage_uri" not in body["asset"]
+    assert body["asset"]["content_url"] == f"/api/assets/{asset_id}/content"
+    assert body["asset"]["thumbnail_url"] == f"/api/assets/{asset_id}/thumbnail"
     assert body["asset"]["metadata"]["type"] == "character"
     assert body["asset"]["metadata"]["summary"].startswith("八十万禁军教头")
     assert body["confidence"] == 0.91
@@ -517,8 +714,7 @@ def test_asset_generate_image_endpoint_returns_single_generated_image(test_setti
         )
         headers = _auth_headers(client, username="image-user")
         fake_router = FakeImageRouter()
-        node = app.state.services.node_registry.get("ai.runninghub_image_to_image.v2")
-        node._model_router = fake_router  # noqa: SLF001
+        app.state.services.asset_generations.image_generation_capability._model_router = fake_router  # noqa: SLF001
 
         response = client.post(
             "/api/assets/generate-image",
@@ -544,7 +740,7 @@ def test_asset_generate_image_endpoint_returns_single_generated_image(test_setti
         )
 
     assert response.status_code == 200
-    assert body["generation_id"].startswith("image_generation_")
+    assert body["generation_id"].startswith("asset_generation_")
     assert body["status"] in {"queued", "running", "succeeded"}
     assert status_response.status_code == 200
     status_body = status_response.json()
@@ -628,11 +824,21 @@ def test_storyboard_panel_prompt_regeneration_runs_full_segment_chain(test_setti
         app.state.services.node_registry.get("ai.parallel_deepseek_structured_json.v1")._model_router = fake_router  # noqa: SLF001
         app.state.services.node_registry.get("ai.storyboard_review_refine.v1")._model_router = fake_router  # noqa: SLF001
 
-        response = client.post(
-            "/api/assets/storyboard-panel-prompt",
+        task_response = client.post(
+            "/api/tasks",
             headers=headers,
             json={
                 "project_id": "global",
+                "contract": _storyboard_prompt_interaction_contract(),
+            },
+        )
+        task = task_response.json()
+        response = client.post(
+            f"/api/tasks/{task['task_id']}/interactions/storyboard-panel-prompt",
+            headers=headers,
+            json={
+                "project_id": "global",
+                "node_id": "review_storyboard_image",
                 "card": {
                     "card_id": "segment-0",
                     "segment_index": 0,
@@ -644,8 +850,8 @@ def test_storyboard_panel_prompt_regeneration_runs_full_segment_chain(test_setti
                             "asset_name": "何涛",
                             "asset_tags": ["官差"],
                             "image_ref": {
-                                "kind": "asset",
-                                "asset_id": "asset-hetao",
+                                "kind": "data_uri",
+                                "data": "data:image/png;base64,aGV0YW8=",
                                 "role": "reference",
                             },
                             "source": "asset",
@@ -655,8 +861,8 @@ def test_storyboard_panel_prompt_regeneration_runs_full_segment_chain(test_setti
                             "asset_type": "character",
                             "asset_name": "众公差",
                             "image_ref": {
-                                "kind": "asset",
-                                "asset_id": "asset-gongchai",
+                                "kind": "data_uri",
+                                "data": "data:image/png;base64,Z29uZ2NoYWk=",
                                 "role": "reference",
                             },
                             "source": "asset",
@@ -684,7 +890,14 @@ def test_storyboard_panel_prompt_regeneration_runs_full_segment_chain(test_setti
                 },
             },
         )
+        detail_response = client.get(
+            f"/api/tasks/{task['task_id']}",
+            headers=headers,
+            params={"project_id": "global"},
+        )
 
+    assert task_response.status_code == 200
+    assert task["status"] == "waiting"
     assert response.status_code == 200, response.json()
     body = response.json()
     assert body["segment_description"]["segment_title"] == "机密房密议"
@@ -695,6 +908,18 @@ def test_storyboard_panel_prompt_regeneration_runs_full_segment_chain(test_setti
     assert "图2是角色众公差" in body["card"]["prompt"]
     assert "何涛（参考图1）" in body["card"]["prompt"]
     assert "众公差（参考图2）" in body["card"]["prompt"]
+    assert detail_response.status_code == 200
+    detail = detail_response.json()
+    event_types = [event["event_type"] for event in detail["events"]]
+    assert "node_ai_interaction_started" in event_types
+    assert "node_ai_interaction_succeeded" in event_types
+    assert "node_draft_saved" in event_types
+    waiting_execution = next(
+        execution
+        for execution in detail["node_executions"]
+        if execution["node_id"] == "review_storyboard_image"
+    )
+    assert waiting_execution["input_snapshot"]["ai_generated_storyboard_panel_prompt"]["card"]["card_id"] == "segment-0"
     assert len(fake_router.requests) == 5
     prompts = ["\n".join(str(message.content) for message in request.messages) for request in fake_router.requests]
     assert "请分析当前段落的实际场景布局" in prompts[0]

@@ -6,7 +6,13 @@ from typing import Annotated
 
 from fastapi import Depends, Header, Request
 
-from xiagent.api.image_generation import ImageGenerationStore
+from xiagent.ai import (
+    AssetMetadataCapability,
+    ImageGenerationCapability,
+    PromptDraftCapability,
+    build_chat_model_router,
+)
+from xiagent.assets.generation import AssetGenerationService
 from xiagent.assets.service import SqliteAssetService
 from xiagent.core.errors import AuthenticationError, NotFoundError, ValidationError
 from xiagent.infrastructure.config import Settings
@@ -34,7 +40,7 @@ class ApiServices:
     runtime: SqliteRuntimeService
     workflows: WorkflowCatalog
     ui_controls: UiControlCatalog
-    image_generations: ImageGenerationStore
+    asset_generations: AssetGenerationService
     access_tokens: dict[str, str] = field(default_factory=dict)
 
     def issue_access_token(self, *, user_id: str) -> str:
@@ -62,7 +68,29 @@ def build_services(settings: Settings) -> ApiServices:
     )
     node_registry = build_node_registry(settings)
     ui_controls = build_builtin_ui_control_catalog()
-    image_generations = ImageGenerationStore()
+    asset_ai_router, asset_ai_models = build_chat_model_router(settings)
+    prompt_draft_capability = PromptDraftCapability(
+        model_router=asset_ai_router,
+        provider="deepseek",
+        model=asset_ai_models.deepseek_model,
+    )
+    asset_metadata_capability = AssetMetadataCapability(
+        model_router=asset_ai_router,
+        provider="deepseek",
+        model=asset_ai_models.deepseek_model,
+    )
+    image_generation_capability = ImageGenerationCapability(
+        model_router=asset_ai_router,
+        provider="runninghub_image",
+        model=asset_ai_models.runninghub_image_model,
+    )
+    asset_generations = AssetGenerationService(
+        user_service=users,
+        asset_service=assets,
+        prompt_draft_capability=prompt_draft_capability,
+        asset_metadata_capability=asset_metadata_capability,
+        image_generation_capability=image_generation_capability,
+    )
     runtime = SqliteRuntimeService(
         database_path=settings.database_path,
         user_service=users,
@@ -79,7 +107,7 @@ def build_services(settings: Settings) -> ApiServices:
         runtime=runtime,
         workflows=workflows,
         ui_controls=ui_controls,
-        image_generations=image_generations,
+        asset_generations=asset_generations,
     )
 
 

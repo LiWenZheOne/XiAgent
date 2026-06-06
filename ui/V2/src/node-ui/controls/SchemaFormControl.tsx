@@ -1,6 +1,6 @@
 import { type ChangeEvent, type ReactNode, useEffect, useMemo, useState } from "react";
 
-import { downloadAssetContent, listAssetCollections, listAssetTags, searchAssets, uploadAsset } from "../../api/assets";
+import { downloadAssetContent, downloadAssetThumbnail, listAssetCollections, listAssetTags, searchAssets, uploadAsset } from "../../api/assets";
 import { listProjects } from "../../api/projects";
 import type { AssetCollection, AssetRecord, AssetScope, AssetTag, JsonSchema, NodeUiControlConfig, ProjectRecord, WorkflowNodeSpec } from "../../api/types";
 import { buildSchemaFields, type SchemaField } from "../../utils/display";
@@ -246,6 +246,43 @@ function AssetImagePickerField({
   const [open, setOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [previewUrl, setPreviewUrl] = useState("");
+  const selectedAssetIdsKey = selected.filter((ref) => ref.kind === "asset" && ref.asset_id).map((ref) => ref.asset_id).join("|");
+
+  useEffect(() => {
+    let active = true;
+    const objectUrls: string[] = [];
+    const missingAssetRefs = selected.filter((ref) => {
+      if (ref.kind !== "asset" || !ref.asset_id) return false;
+      const preview = previews[imageRefKey(ref)] ?? intrinsicImageRefPreview(ref);
+      return !preview?.url;
+    });
+    if (!missingAssetRefs.length) return () => undefined;
+
+    Promise.all(missingAssetRefs.map(async (ref) => {
+      const key = imageRefKey(ref);
+      try {
+        const blob = await downloadAssetThumbnail(ref.asset_id as string, projectId, 256);
+        if (!blob.type.startsWith("image/")) return null;
+        const url = URL.createObjectURL(blob);
+        objectUrls.push(url);
+        return [key, { label: imageRefLabel(ref), url }] as const;
+      } catch {
+        return null;
+      }
+    })).then((items) => {
+      if (!active) return;
+      const loadedEntries = items.filter((item): item is readonly [string, { label: string; url: string }] => Boolean(item));
+      const loadedPreviews: Record<string, ImageRefPreview> = Object.fromEntries(loadedEntries);
+      if (Object.keys(loadedPreviews).length) {
+        setPreviews((current) => ({ ...current, ...loadedPreviews }));
+      }
+    });
+
+    return () => {
+      active = false;
+      objectUrls.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [projectId, selectedAssetIdsKey]);
 
   function updateSelected(refs: ImageRef[], nextPreviews: Record<string, ImageRefPreview>) {
     setPreviews((current) => ({ ...current, ...nextPreviews }));

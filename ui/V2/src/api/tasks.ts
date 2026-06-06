@@ -12,6 +12,71 @@ export interface SubmitInteractionRequest {
   input: Record<string, unknown>;
 }
 
+export interface DraftTaskAssetFromDescriptionInput {
+  project_id: string;
+  node_id: string;
+  asset_type?: "auto" | "character" | "scene" | "prop";
+  description: string;
+  script?: string;
+  background?: string;
+  current_assets?: Record<string, unknown>;
+}
+
+export interface DraftTaskAssetFromDescriptionResult {
+  assets?: Array<Record<string, unknown>>;
+  asset?: Record<string, unknown>;
+  confidence: number;
+  reasoning: string;
+}
+
+export interface GenerateTaskAssetImageInput {
+  project_id: string;
+  node_id: string;
+  prompt_result: Record<string, unknown>;
+  prompt_prefix?: string;
+  prompt_suffix?: string;
+  aspect_ratio?: string;
+  resolution?: string;
+}
+
+export interface GeneratedTaskAssetImage {
+  full_name?: string;
+  card_id?: string;
+  image_url: string;
+  source?: string;
+  runninghub_task_id?: string;
+  variant?: string;
+  asset_id?: string;
+}
+
+export interface GenerateTaskStoryboardPanelImageInput {
+  project_id: string;
+  node_id: string;
+  card_id: string;
+  prompt: string;
+  image_refs: Array<Record<string, unknown>>;
+  negative_prompt?: string;
+  aspect_ratio?: string;
+  resolution?: string;
+}
+
+export interface RegenerateTaskStoryboardPanelPromptInput {
+  project_id: string;
+  node_id: string;
+  card: Record<string, unknown>;
+  item: Record<string, unknown>;
+  shared_context?: Record<string, unknown>;
+  generation_rules?: string;
+  negative_prompt?: string;
+  aspect_ratio?: string;
+  resolution?: string;
+}
+
+export interface RegenerateTaskStoryboardPanelPromptResult {
+  card: Record<string, unknown>;
+  segment_description: Record<string, unknown>;
+}
+
 export async function listTasks(projectId: string): Promise<TaskRecord[]> {
   const params = new URLSearchParams({ project_id: projectId });
   const result = await apiRequest<{ items: TaskRecord[] }>(`/api/tasks?${params.toString()}`);
@@ -69,6 +134,50 @@ export async function saveInteractionDraft(taskId: string, request: SubmitIntera
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(request),
+  });
+}
+
+export async function draftTaskAssetFromDescription(
+  taskId: string,
+  input: DraftTaskAssetFromDescriptionInput,
+): Promise<DraftTaskAssetFromDescriptionResult> {
+  return apiRequest<DraftTaskAssetFromDescriptionResult>(`/api/tasks/${encodeURIComponent(taskId)}/interactions/asset-draft`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function generateTaskAssetImage(
+  taskId: string,
+  input: GenerateTaskAssetImageInput,
+): Promise<GeneratedTaskAssetImage> {
+  return apiRequest<GeneratedTaskAssetImage>(`/api/tasks/${encodeURIComponent(taskId)}/interactions/generate-asset-image`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function generateTaskStoryboardPanelImage(
+  taskId: string,
+  input: GenerateTaskStoryboardPanelImageInput,
+): Promise<GeneratedTaskAssetImage> {
+  return apiRequest<GeneratedTaskAssetImage>(`/api/tasks/${encodeURIComponent(taskId)}/interactions/storyboard-panel-image`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function regenerateTaskStoryboardPanelPrompt(
+  taskId: string,
+  input: RegenerateTaskStoryboardPanelPromptInput,
+): Promise<RegenerateTaskStoryboardPanelPromptResult> {
+  return apiRequest<RegenerateTaskStoryboardPanelPromptResult>(`/api/tasks/${encodeURIComponent(taskId)}/interactions/storyboard-panel-prompt`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
   });
 }
 
