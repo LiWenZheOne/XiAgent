@@ -1,4 +1,4 @@
-import { type FormEvent, type PointerEvent, type WheelEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, type PointerEvent, type ReactNode, type WheelEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   attachAssetTag,
@@ -86,6 +86,8 @@ export function App() {
   const [session, setSession] = useState<SessionState | null>(null);
   const [recoveringSession, setRecoveringSession] = useState(() => Boolean(getAccessToken()));
   const [route, setRoute] = useState<Route>("projects");
+  const [workbenchMounted, setWorkbenchMounted] = useState(false);
+  const [assetLibraryMounted, setAssetLibraryMounted] = useState(false);
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
@@ -102,6 +104,11 @@ export function App() {
     () => projects.find((project) => project.project_id === selectedProjectId) ?? null,
     [projects, selectedProjectId],
   );
+
+  useEffect(() => {
+    if (route === "workbench") setWorkbenchMounted(true);
+    if (route === "assets") setAssetLibraryMounted(true);
+  }, [route]);
 
   useEffect(() => {
     if (!getAccessToken()) {
@@ -205,6 +212,10 @@ export function App() {
     setSelectedTaskId("");
     setProjectError("");
     setTaskError("");
+    setCreatingTask(false);
+    setRoute("projects");
+    setWorkbenchMounted(false);
+    setAssetLibraryMounted(false);
   }
 
   if (recoveringSession) {
@@ -257,55 +268,62 @@ export function App() {
         </div>
       </header>
 
-      {route === "workbench" ? (
-        <WorkbenchPage
-          tasks={tasks}
-          selectedProject={selectedProject}
-          selectedTaskId={selectedTaskId}
-          creatingTask={creatingTask}
-          taskLoading={taskLoading}
-          taskError={taskError}
-          onBackToProjects={() => setRoute("projects")}
-          onCreateTask={() => {
-            setCreatingTask(true);
-            setSelectedTaskId("");
-          }}
-          onSelectTask={(taskId) => {
-            setSelectedTaskId(taskId);
-            setCreatingTask(false);
-          }}
-          onTaskCreated={(task) => {
-            setReloadTasksKey((current) => current + 1);
-            setSelectedTaskId(task.task_id);
-            setCreatingTask(false);
-          }}
-          onTaskUpdated={(task) => {
-            setTasks((current) => current.map((item) => (item.task_id === task.task_id ? { ...item, ...task } : item)));
-          }}
-          onDeleteTask={async (task) => {
-            if (!selectedProjectId) return;
-            await deleteTask(selectedProjectId, task.task_id);
-            setTasks((current) => current.filter((item) => item.task_id !== task.task_id));
-            if (selectedTaskId === task.task_id) setSelectedTaskId("");
-          }}
-          onRefreshTasks={() => setReloadTasksKey((current) => current + 1)}
-        />
+      {route === "workbench" || workbenchMounted ? (
+        <KeepAliveRoute active={route === "workbench"} route="workbench">
+          <WorkbenchPage
+            key={selectedProjectId || "no-project"}
+            tasks={tasks}
+            selectedProject={selectedProject}
+            selectedTaskId={selectedTaskId}
+            creatingTask={creatingTask}
+            taskLoading={taskLoading}
+            taskError={taskError}
+            onBackToProjects={() => setRoute("projects")}
+            onCreateTask={() => {
+              setCreatingTask(true);
+              setSelectedTaskId("");
+            }}
+            onSelectTask={(taskId) => {
+              setSelectedTaskId(taskId);
+              setCreatingTask(false);
+            }}
+            onTaskCreated={(task) => {
+              setReloadTasksKey((current) => current + 1);
+              setSelectedTaskId(task.task_id);
+              setCreatingTask(false);
+            }}
+            onTaskUpdated={(task) => {
+              setTasks((current) => current.map((item) => (item.task_id === task.task_id ? { ...item, ...task } : item)));
+            }}
+            onDeleteTask={async (task) => {
+              if (!selectedProjectId) return;
+              await deleteTask(selectedProjectId, task.task_id);
+              setTasks((current) => current.filter((item) => item.task_id !== task.task_id));
+              if (selectedTaskId === task.task_id) setSelectedTaskId("");
+            }}
+            onRefreshTasks={() => setReloadTasksKey((current) => current + 1)}
+          />
+        </KeepAliveRoute>
       ) : null}
 
-      {route === "assets" ? (
-        <AssetLibraryPage
-          projects={projects}
-          project={selectedProject}
-          selectedProjectId={selectedProjectId}
-          onProjectChange={(projectId) => {
-            setSelectedProjectId(projectId);
-            setSelectedTaskId("");
-            setTasks([]);
-            setCreatingTask(false);
-            setReloadTasksKey((current) => current + 1);
-          }}
-          onProjectRequired={() => setRoute("projects")}
-        />
+      {route === "assets" || assetLibraryMounted ? (
+        <KeepAliveRoute active={route === "assets"} route="assets">
+          <AssetLibraryPage
+            key={selectedProjectId || "no-project"}
+            projects={projects}
+            project={selectedProject}
+            selectedProjectId={selectedProjectId}
+            onProjectChange={(projectId) => {
+              setSelectedProjectId(projectId);
+              setSelectedTaskId("");
+              setTasks([]);
+              setCreatingTask(false);
+              setAssetLibraryMounted(false);
+              setReloadTasksKey((current) => current + 1);
+            }}
+            onProjectRequired={() => setRoute("projects")}
+          />
+        </KeepAliveRoute>
       ) : null}
 
       {route === "projects" ? (
@@ -319,6 +337,7 @@ export function App() {
             setSelectedTaskId("");
             setTasks([]);
             setCreatingTask(false);
+            setAssetLibraryMounted(false);
             setReloadTasksKey((current) => current + 1);
             setRoute("workbench");
           }}
@@ -329,12 +348,21 @@ export function App() {
             setSelectedTaskId("");
             setTasks([]);
             setCreatingTask(false);
+            setAssetLibraryMounted(false);
             setRoute("workbench");
           }}
         />
       ) : null}
 
       {route === "controls" ? <ControlLibraryPage /> : null}
+    </div>
+  );
+}
+
+function KeepAliveRoute({ active, children, route }: { active: boolean; children: ReactNode; route: Route }) {
+  return (
+    <div aria-hidden={!active} data-route={route} hidden={!active}>
+      {children}
     </div>
   );
 }
@@ -985,6 +1013,7 @@ function TaskDetailPanel({
             eventsByNode={eventsByNode}
             nodes={orderedNodes}
             projectId={projectId}
+            taskId={taskId}
             pendingTransitionNodeId={pendingTransitionNodeId}
             revealedNodeOrder={revealedNodeOrder}
             snapshot={detail.workflow_snapshot}
@@ -1037,6 +1066,7 @@ function WorkflowProgressView({
   nodes,
   eventsByNode,
   projectId,
+  taskId,
   pendingTransitionNodeId,
   revealedNodeOrder,
   snapshot,
@@ -1047,6 +1077,7 @@ function WorkflowProgressView({
   nodes: TaskNodeExecution[];
   eventsByNode: Map<string, TaskEvent[]>;
   projectId: string;
+  taskId: string;
   pendingTransitionNodeId: string | null;
   revealedNodeOrder: Record<string, number>;
   snapshot?: WorkflowSnapshot | null;
@@ -1081,6 +1112,7 @@ function WorkflowProgressView({
             key={node.node_execution_id ?? `${node.node_id}-${index}`}
             node={node}
             projectId={projectId}
+            taskId={taskId}
             snapshot={snapshot}
             onInteractionDraft={onInteractionDraft}
             onInteraction={onInteraction}
@@ -1101,6 +1133,7 @@ function WorkflowProgressView({
           key={stage.id}
           nodes={stage.nodes.map((nodeId) => nodes.find((node) => node.node_id === nodeId)).filter(Boolean) as TaskNodeExecution[]}
           projectId={projectId}
+          taskId={taskId}
           revealedNodeOrder={revealedNodeOrder}
           showPreparingNextStage={pendingTransitionStageIndex === index}
           snapshot={snapshot}
@@ -1121,6 +1154,7 @@ function WorkflowStageCard({
   index,
   eventsByNode,
   projectId,
+  taskId,
   revealedNodeOrder,
   showPreparingNextStage,
   snapshot,
@@ -1134,6 +1168,7 @@ function WorkflowStageCard({
   index: number;
   eventsByNode: Map<string, TaskEvent[]>;
   projectId: string;
+  taskId: string;
   revealedNodeOrder: Record<string, number>;
   showPreparingNextStage: boolean;
   snapshot?: WorkflowSnapshot | null;
@@ -1245,6 +1280,7 @@ function WorkflowStageCard({
                       events={nodeEvents}
                       node={node}
                       projectId={projectId}
+                      taskId={taskId}
                       snapshot={snapshot}
                       onInteractionDraft={onInteractionDraft}
                       onInteraction={onInteraction}
@@ -1316,6 +1352,7 @@ function NodeExecutionCard({
   index,
   events,
   projectId,
+  taskId,
   snapshot,
   onInteractionDraft,
   onInteraction,
@@ -1326,6 +1363,7 @@ function NodeExecutionCard({
   index: number;
   events: TaskEvent[];
   projectId: string;
+  taskId: string;
   snapshot?: WorkflowSnapshot | null;
   onInteractionDraft: (nodeId: string, input: Record<string, unknown>) => Promise<void>;
   onInteraction: (nodeId: string, input: Record<string, unknown>) => Promise<void>;
@@ -1392,6 +1430,7 @@ function NodeExecutionCard({
             events={events}
             node={node}
             projectId={projectId}
+            taskId={taskId}
             snapshot={snapshot}
             onInteractionDraft={onInteractionDraft}
             onInteraction={onInteraction}
@@ -1407,6 +1446,7 @@ function NodeExecutionDetails({
   node,
   events,
   projectId,
+  taskId,
   snapshot,
   onInteractionDraft,
   onInteraction,
@@ -1416,6 +1456,7 @@ function NodeExecutionDetails({
   node: TaskNodeExecution;
   events: TaskEvent[];
   projectId: string;
+  taskId: string;
   snapshot?: WorkflowSnapshot | null;
   onInteractionDraft: (nodeId: string, input: Record<string, unknown>) => Promise<void>;
   onInteraction: (nodeId: string, input: Record<string, unknown>) => Promise<void>;
@@ -1492,6 +1533,7 @@ function NodeExecutionDetails({
               node={node}
               nodeSpec={nodeSpec}
               projectId={projectId}
+              taskId={taskId}
               slot="input"
               snapshot={snapshot}
               value={node.input_snapshot}
@@ -1507,6 +1549,7 @@ function NodeExecutionDetails({
               node={node}
               nodeSpec={nodeSpec}
               projectId={projectId}
+              taskId={taskId}
               slot="input"
               snapshot={snapshot}
               title="输入"
@@ -1521,6 +1564,7 @@ function NodeExecutionDetails({
               node={node}
               nodeSpec={nodeSpec}
               projectId={projectId}
+              taskId={taskId}
               slot="output"
               snapshot={snapshot}
               title={node.error ? "错误" : "输出"}
@@ -1535,6 +1579,7 @@ function NodeExecutionDetails({
               node={node}
               nodeSpec={nodeSpec}
               projectId={projectId}
+              taskId={taskId}
               slot="output"
               snapshot={snapshot}
               title={node.error ? "错误" : "输出"}
@@ -1551,6 +1596,7 @@ function NodeExecutionDetails({
           node={node}
           nodeSpec={nodeSpec}
           projectId={projectId}
+          taskId={taskId}
           snapshot={snapshot}
           onDraft={waitingForInteraction ? (input) => onInteractionDraft(node.node_id, input) : undefined}
           onSubmit={waitingForInteraction ? (output) => withBusy(() => onInteraction(node.node_id, output)) : undefined}
@@ -1587,6 +1633,7 @@ function NodeDataSection({
   node,
   nodeSpec,
   projectId,
+  taskId,
   snapshot,
   config,
   slot,
@@ -1600,6 +1647,7 @@ function NodeDataSection({
   node: TaskNodeExecution;
   nodeSpec?: WorkflowNodeSpec;
   projectId?: string;
+  taskId?: string;
   snapshot?: WorkflowSnapshot | null;
   config: ReturnType<typeof resolveNodeControlConfig>;
   slot: "input" | "output";
@@ -1620,6 +1668,7 @@ function NodeDataSection({
         node={node}
         nodeSpec={nodeSpec}
         projectId={projectId}
+        taskId={taskId}
         slot={slot}
         snapshot={snapshot}
         title={title}
@@ -1935,7 +1984,7 @@ function AssetLibraryPage({
     const projectId = scope === "global" ? undefined : project?.project_id;
     setLoading(true);
     setHasMoreAssets(false);
-    setMessage("");
+    setMessage((current) => (current.startsWith("已") ? current : ""));
     searchAssets({
       scope,
       project_id: projectId,

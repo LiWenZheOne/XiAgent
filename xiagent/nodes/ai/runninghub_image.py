@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Mapping
 from typing import Any
 
+from xiagent.ai import ImageGenerationCapability
 from xiagent.core.errors import ValidationError
-from xiagent.models import ChatMessage, ChatModelRouter, ChatRequest, ChatResponse
+from xiagent.models import ChatModelRouter, ChatResponse
 from xiagent.nodes.ai.image_references import (
     image_ref_schema,
     image_refs_schema,
@@ -13,7 +13,6 @@ from xiagent.nodes.ai.image_references import (
     resolve_image_refs,
 )
 from xiagent.nodes.base import BaseNode, NodeContext, NodeDescriptor, NodeResult
-from xiagent.nodes.tools.asset_identity import normalize_asset_record
 
 _OUTPUT_SCHEMA = {
     "type": "object",
@@ -83,19 +82,25 @@ class _RunningHubImageNodeBase(BaseNode):
     async def run(self, ctx: NodeContext | None, inputs: Mapping[str, Any]) -> NodeResult:
         prompt = _required_text(inputs, "prompt", "runninghub_prompt_required")
         metadata = self._metadata(inputs)
-        metadata = await _metadata_with_resolved_images(ctx, metadata)
-        response = await self._model_router.chat(
-            ChatRequest(
-                provider=self._provider,
-                model=self._model,
-                messages=[ChatMessage(role="user", content=prompt)],
-                metadata=metadata,
-            )
+        image_refs = metadata.pop("image_refs", None)
+        capability = ImageGenerationCapability(
+            model_router=self._model_router,
+            provider=self._provider,
+            model=self._model,
         )
+        if image_refs is None:
+            result = await capability.generate_text_to_image(prompt=prompt, **metadata)
+        else:
+            result = await capability.generate_image_to_image(
+                prompt=prompt,
+                image_refs=image_refs,
+                image_ref_resolver=_ctx_image_ref_resolver(ctx),
+                **metadata,
+            )
         return NodeResult(
             status="succeeded",
-            output=_response_output(response),
-            metadata=response.metadata,
+            output=result.output,
+            metadata=result.metadata,
         )
 
     def _metadata(self, inputs: Mapping[str, Any]) -> dict[str, Any]:
@@ -209,63 +214,24 @@ class RunningHubImageToImageNodeV2(BaseNode):
         )
 
     async def run(self, ctx: NodeContext | None, inputs: Mapping[str, Any]) -> NodeResult:
-        prompt_results = _required_prompt_results(inputs)
-        metadata_base = self._metadata(inputs)
-
-        async def generate_one(item: Mapping[str, Any]) -> dict[str, Any]:
-            normalized_item = normalize_asset_record(item)
-            legacy_full_name = _optional_text(item, "full_name")
-            asset_name = _optional_text(normalized_item, "asset_name") or legacy_full_name
-            if asset_name is None:
-                raise ValidationError(
-                    "RunningHub prompt result requires asset_name.",
-                    code="runninghub_asset_name_required",
-                )
-            if "asset_name" not in normalized_item:
-                normalized_item["asset_name"] = asset_name
-            prompt = _image_to_image_prompt(
-                _required_text(item, "prompt", "runninghub_prompt_required"),
-                inputs,
-            )
-            reference_image_ref = item.get("reference_image_ref")
-
-            char_metadata = dict(metadata_base)
-            char_metadata["reference_image_ref"] = reference_image_ref
-            char_metadata["images"] = [await resolve_image_ref(ctx, reference_image_ref)]
-
-            response = await self._model_router.chat(
-                ChatRequest(
-                    provider=self._provider,
-                    model=self._model,
-                    messages=[ChatMessage(role="user", content=prompt)],
-                    metadata=char_metadata,
-                )
-            )
-
-            asset_result: dict[str, Any] = {
-                "image_url": response.text,
-                "source": "ai_generated",
-            }
-            for key in ("asset_type", "asset_name", "asset_tags"):
-                value = normalized_item.get(key)
-                if value:
-                    asset_result[key] = value
-            task_id = response.metadata.get("task_id")
-            if isinstance(task_id, str):
-                asset_result["runninghub_task_id"] = task_id
-            asset_id = response.metadata.get("asset_id")
-            if isinstance(asset_id, str):
-                asset_result["asset_id"] = asset_id
-            if legacy_full_name is not None:
-                asset_result["full_name"] = legacy_full_name
-
-            return asset_result
-
-        asset_images = await asyncio.gather(*(generate_one(item) for item in prompt_results))
-
+        result = await ImageGenerationCapability(
+            model_router=self._model_router,
+            provider=self._provider,
+            model=self._model,
+        ).generate_asset_images(
+            prompt_results=inputs.get("prompt_results"),
+            image_ref_resolver=_ctx_image_ref_resolver(ctx),
+            prompt_prefix=inputs.get("prompt_prefix"),
+            prompt_suffix=inputs.get("prompt_suffix"),
+            aspect_ratio=inputs.get("aspect_ratio") or inputs.get("aspectRatio"),
+            resolution=inputs.get("resolution"),
+            poll_interval_seconds=inputs.get("poll_interval_seconds"),
+            poll_timeout_seconds=inputs.get("poll_timeout_seconds"),
+        )
         return NodeResult(
             status="succeeded",
-            output={"asset_images": list(asset_images)},
+            output=result.output,
+            metadata=result.metadata,
         )
 
     def _metadata(self, inputs: Mapping[str, Any]) -> dict[str, Any]:
@@ -484,39 +450,26 @@ class RunningHubImageToImageNodeV3(BaseNode):
         )
 
     async def run(self, ctx: NodeContext | None, inputs: Mapping[str, Any]) -> NodeResult:
-        prompt = _required_text(inputs, "prompt", "runninghub_v3_prompt_required")
-        image_urls = list(inputs.get("image_urls", []))
-        if not image_urls:
-            raise ValidationError(
-                code="runninghub_v3_image_urls_required",
-                message="V3 image_urls required",
-            )
-        node_mapping = inputs.get("node_mapping")
-        if not isinstance(node_mapping, Mapping):
-            raise ValidationError(
-                code="runninghub_v3_node_mapping_required",
-                message="V3 node_mapping required",
-            )
-
-        metadata = {"image_urls": image_urls, "node_mapping": node_mapping}
-        # Copy polling overrides
-        for key in (
-            "poll_interval_seconds",
-            "poll_timeout_seconds",
-        ):
-            val = inputs.get(key)
-            if val is not None:
-                metadata[key] = val
-        response = await self._model_router.chat(
-            ChatRequest(
-                provider=self._provider,
-                model=self._model,
-                messages=[ChatMessage(role="user", content=prompt)],
-                metadata=metadata,
-            )
+        result = await ImageGenerationCapability(
+            model_router=self._model_router,
+            provider=self._provider,
+            model=self._model,
+        ).generate_runninghub_workflow_image(
+            prompt=inputs.get("prompt"),
+            image_urls=inputs.get("image_urls"),
+            node_mapping=inputs.get("node_mapping"),
+            poll_interval_seconds=inputs.get("poll_interval_seconds"),
+            poll_timeout_seconds=inputs.get("poll_timeout_seconds"),
         )
         return NodeResult(
             status="succeeded",
-            output=_response_output(response),
-            metadata=response.metadata,
+            output=result.output,
+            metadata=result.metadata,
         )
+
+
+def _ctx_image_ref_resolver(ctx: NodeContext | None):
+    async def resolver(image_ref: Any) -> str:
+        return await resolve_image_ref(ctx, image_ref)
+
+    return resolver

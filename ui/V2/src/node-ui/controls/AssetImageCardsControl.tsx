@@ -2,6 +2,7 @@ import { type ChangeEvent, type DragEvent, type PointerEvent, type WheelEvent, u
 
 import { createAssetTag, generateAssetImage, listAssetTags, listAssetTagsForAsset, searchAssets, uploadAsset } from "../../api/assets";
 import { ApiError } from "../../api/client";
+import { generateTaskAssetImage } from "../../api/tasks";
 import type { AssetRecord, AssetScope, AssetTag } from "../../api/types";
 import { assetNameFromTagNames, assetTagNamesForCatalogAsset, assetTagNamesFromName, catalogAssetTypeTags } from "../../utils/assetNaming";
 import type { NodeUiControlProps } from "../types";
@@ -103,6 +104,7 @@ export function AssetImageCardsControl({
   config,
   node,
   projectId,
+  taskId,
   onDraft,
   onSubmit,
 }: NodeUiControlProps) {
@@ -451,14 +453,25 @@ export function AssetImageCardsControl({
       const activeMatch = activeMatchForCard(matchesRef.current, card);
       const promptResult = editedPromptResult(card, edit, activeMatch);
       const promptText = assetPromptText(card, config.options, activeMatch);
-      const generated = await generateAssetImage({
-        project_id: projectId,
+      const generationInput = {
+        project_id: projectId || "global",
+        node_id: node.node_id,
         prompt_result: promptResult,
         prompt_prefix: promptText.prefix,
         prompt_suffix: promptText.suffix,
         aspect_ratio: tabKeyForAssetType(card.assetType) === "scene" ? "16:9" : "1:1",
         resolution: "2k",
-      });
+      };
+      const generated = taskId
+        ? await generateTaskAssetImage(taskId, generationInput)
+        : await generateAssetImage({
+            project_id: projectId,
+            prompt_result: generationInput.prompt_result,
+            prompt_prefix: generationInput.prompt_prefix,
+            prompt_suffix: generationInput.prompt_suffix,
+            aspect_ratio: generationInput.aspect_ratio,
+            resolution: generationInput.resolution,
+          });
       const nextImages = { ...imagesRef.current, [card.assetKey]: generated.image_url };
       const nextImageMeta = {
         ...imageMetaRef.current,
@@ -1692,11 +1705,10 @@ function assetImageUrl(asset: unknown): string | undefined {
   if (!record) return undefined;
   const direct = textValue(record.image_url)
     || textValue(record.public_url)
-    || textValue(record.storage_uri)
-    || textValue(record.default_variant_storage_uri);
+    || textValue(record.content_url);
   if (direct) return direct;
   const metadata = recordValue(record.metadata);
-  const metadataUrl = textValue(metadata?.image_url) || textValue(metadata?.public_url) || textValue(metadata?.storage_uri);
+  const metadataUrl = textValue(metadata?.image_url) || textValue(metadata?.public_url) || textValue(metadata?.content_url);
   if (metadataUrl) return metadataUrl;
   const objectStorage = recordValue(metadata?.object_storage);
   return textValue(objectStorage?.public_url);

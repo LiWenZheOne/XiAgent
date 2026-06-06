@@ -7,6 +7,10 @@ import {
   searchAssets,
   uploadAsset,
 } from "../../api/assets";
+import {
+  generateTaskStoryboardPanelImage,
+  regenerateTaskStoryboardPanelPrompt,
+} from "../../api/tasks";
 import type { AssetRecord } from "../../api/types";
 import type { NodeUiControlProps } from "../types";
 import { AssetImageFullscreenViewer, type AssetImagePreview } from "./AssetImageCardsControl";
@@ -96,6 +100,7 @@ export function StoryboardPanelCardsControl({
   onDraft,
   onSubmit,
   projectId,
+  taskId,
 }: NodeUiControlProps) {
   const readonly = config.mode === "readonly" || !onSubmit;
   const source = recordValue(readonly ? node.output_snapshot : node.input_snapshot);
@@ -253,15 +258,27 @@ export function StoryboardPanelCardsControl({
     }
     updateCard(card.card_id, (current) => ({ ...current, status: "generating", error: "" }));
     try {
-      const image = await generateStoryboardPanelImage({
-        project_id: projectId,
+      const generationInput = {
+        project_id: projectId || "global",
+        node_id: node.node_id,
         card_id: card.card_id,
         prompt: draft.prompt,
         image_refs: imageRefs.map((ref) => ({ ...ref })),
         negative_prompt: card.negative_prompt,
         aspect_ratio: card.aspect_ratio,
         resolution: card.resolution,
-      });
+      };
+      const image = taskId
+        ? await generateTaskStoryboardPanelImage(taskId, generationInput)
+        : await generateStoryboardPanelImage({
+            project_id: projectId,
+            card_id: generationInput.card_id,
+            prompt: generationInput.prompt,
+            image_refs: generationInput.image_refs,
+            negative_prompt: generationInput.negative_prompt,
+            aspect_ratio: generationInput.aspect_ratio,
+            resolution: generationInput.resolution,
+          });
       updateCard(card.card_id, (current) => {
         const nextImages = [...current.generated_images, image];
         return {
@@ -307,15 +324,27 @@ export function StoryboardPanelCardsControl({
     const item = { ...sourceItem, panel_count: panelCount };
     setPrompting((current) => ({ ...current, [card.card_id]: true }));
     try {
-      const result = await regenerateStoryboardPanelPrompt({
-        project_id: projectId,
+      const promptInput = {
+        project_id: projectId || "global",
+        node_id: node.node_id,
         card: { ...card, ...draft },
         item,
         shared_context: sharedContext,
         negative_prompt: card.negative_prompt,
         aspect_ratio: card.aspect_ratio,
         resolution: card.resolution,
-      });
+      };
+      const result = taskId
+        ? await regenerateTaskStoryboardPanelPrompt(taskId, promptInput)
+        : await regenerateStoryboardPanelPrompt({
+            project_id: projectId,
+            card: promptInput.card,
+            item: promptInput.item,
+            shared_context: promptInput.shared_context,
+            negative_prompt: promptInput.negative_prompt,
+            aspect_ratio: promptInput.aspect_ratio,
+            resolution: promptInput.resolution,
+          });
       const nextCard = normalizeCard(result.card);
       updateCard(card.card_id, (current) => ({
         ...current,

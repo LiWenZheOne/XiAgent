@@ -46,12 +46,19 @@
 - 任务详情必须按任务持有的 workflow snapshot 和节点 UI 配置渲染。禁止为了让历史任务显示新样式，在前端把旧 `control_id`、variant、mode 或 binding 映射成新控件语义；需要旧任务使用新样式时，必须显式迁移或修正该历史 snapshot/config。
 - V2 不 import 后端 Python 模块，不直接读取 SQLite、资产文件路径、节点实现类或 provider 适配细节。
 
+## 易错点开工检查
+
+- 修改或验收 V2 前，先确认 Vite 代理或 `VITE_API_PROXY_TARGET` 指向的后端、后端端口/PID、workflow catalog 是否加载当前磁盘契约，以及验收对象是新建任务还是已显式迁移 snapshot/config 的历史任务。
+- 修改工作流 YAML、节点 UI 配置、控件 manifest 或控件注册表后，必须重启或重载后端 workflow catalog，再新建任务确认新 snapshot 持有目标控件配置。
+- 不得把旧 `control_id`、variant、mode 或 binding 的前端实现改成新语义来掩盖历史 snapshot；新体验必须来自新 workflow snapshot 或显式迁移后的 snapshot/config。
+- 如果发现本文件、`ui/V2/docs/ui-development-rules.md`、通用 skill 或根 `AGENTS.md` 冲突，先修正规则来源，再继续实现或验收。
+
 ## 任务创建与起始输入
 
 - 创建任务页只展示工作流 launch 信息、输入准备提示、节点摘要和创建按钮，不渲染 `workflow.input_schema` 的业务表单。
 - 创建任务 API 调用不得要求用户先填写业务 `input_data`；带必填参数的工作流应创建任务后进入任务详情，由首个输入节点等待用户提交。
 - 起始输入节点和普通等待节点都必须通过 `src/node-ui/` 控件注册表渲染，不得在创建任务页维护另一套 schema 表单、资产选择或上传逻辑。
-- `workflow.input_schema` 可以用于生成 launch 提示文案，但不得以 schema、binding 或原始 JSON 形式暴露给普通用户。
+- 旧契约中的 `workflow.input_schema` 只能作为兼容 launch 提示来源；新工作流和新 UI 代码不得依赖它作为业务入参契约，也不得以 schema、binding 或原始 JSON 形式暴露给普通用户。
 
 ## 增改控件流程
 
@@ -66,7 +73,7 @@
 ## 展示与交互规则
 
 - V2 是面向最终用户的工作流任务平台，不是静态 demo 或 JSON 查看器。
-- 任务创建前不得收集工作流业务入参；所有业务入参在任务详情的起始输入节点中提交。
+- 任务创建前不得收集工作流业务入参；所有初始业务入参在任务详情的起始输入节点中提交，运行中补充参数通过普通等待节点提交，后续节点引用对应节点输出。
 - 任务详情中的节点输入、输出、等待交互优先通过 `src/node-ui/` 控件注册表渲染。
 - 页面不得直接显示 `input_schema`、`output_snapshot`、`public_url`、节点 ref、binding 路径或原始 JSON，除非实现明确的开发者调试视图。
 - 节点输入和输出采用上下堆叠布局；默认折叠输入和节点事件，只展开输出或错误区域，避免大输入、大输出横向溢出。

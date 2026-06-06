@@ -97,6 +97,18 @@ runtime 不再支持 `system.workflow_input.v1`。工作流业务数据不得使
 
 外部浏览器自动化 CLI、旧 e2e 脚本、组件测试、接口测试、直接数据库/接口造数、伪造 localStorage、截图检查或无 UI CLI/Builder 路径只能作为辅助验证，不能替代最终真实交互验收。若 Codex 内部浏览器不可用，必须列出具体阻塞原因和待人工验证步骤，不得声称真实交互测试已通过。
 
+## 易错点开工检查
+
+涉及 UI、工作流、节点控件、任务运行、部署或验收前，必须先确认目标版本、运行环境和权威数据来源，不得根据习惯推断。尤其要确认当前是 `ui/V1` 还是 `ui/V2`、前端连接的真实后端地址、后端工作流目录是否已加载当前磁盘契约、以及验收对象是新任务还是历史任务。
+
+工作流业务输入只能通过任务创建后的普通节点输入收集。不得把业务参数重新放回任务创建页、创建任务 `input_data`、`workflow.input_schema`、`system.workflow_input.v1` 或 `$workflow.input.*`。起始输入节点和运行中等待输入节点都必须走同一套节点 UI 控件库，运行时写入该节点快照，后续节点引用该节点输出。
+
+修改工作流 YAML、节点 UI 配置、控件 manifest 或控件注册表后，验收前必须确认后端 workflow catalog 已重启或重载；新配置验收必须创建新任务并检查该任务持有的新 workflow snapshot。历史任务按旧 snapshot 展示是正确行为，不能通过修改旧 `control_id`、variant、mode 或 binding 的前端语义来让历史任务看起来像新配置；需要历史任务采用新配置时，必须显式迁移或修正其 snapshot/config。
+
+用户对目标版本、部署范围、分支名称或验收方式做出更正时，以最新明确更正为准并立即停止沿用旧目标。生产 V2 前端是静态构建产物时，“重启前端”应理解为重新构建/刷新静态资产并验证或重载 Web 服务，不得凭空假设存在独立前端守护进程。
+
+发现新的可复用规则或修正旧规则时，必须在同一轮同步更新对应层级：根 `AGENTS.md`、目录级 `AGENTS.md`、`.codex/skills/*`、`ui/<version>/docs/ui-development-rules.md` 或相关设计文档。只修代码不更新规则，视为未完成防复发处理。
+
 ## 资产约束
 
 资产模块负责管理本地文件资产和文字资产。资产本体、项目内使用关系、检索分类系统必须解耦。
@@ -120,7 +132,7 @@ runtime 不再支持 `system.workflow_input.v1`。工作流业务数据不得使
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **XiAgent** (7724 symbols, 15808 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **XiAgent** (7470 symbols, 15809 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

@@ -40,3 +40,10 @@
 - 如果用户交互会提交选择结果，节点 `outputs` schema 必须声明对应字段。
 - 如果三选一能力会被多个工作流复用，优先使用独立用户选择节点，不要把选择逻辑绑进某个生成节点。
 - 如果控件或变体不存在，先补 UI 控件 manifest 和 V2 控件库，不能在工作流里临时发明名称。
+
+## 修改后验收防护
+
+- 修改工作流 YAML 后，验收前必须确认运行中的后端 workflow catalog 已重启或重载到当前磁盘契约；只改文件但不刷新后端，不能作为新配置验收依据。
+- 新工作流 UI 配置必须通过新建任务生成新 workflow snapshot 来验收。历史任务继续按旧 snapshot 展示是正确行为；除非显式迁移 snapshot/config，否则不得用历史任务证明新配置生效或失败。
+- 修改过的工作流不得新增 `system.workflow_input.v1`、`workflow.input_schema`、`$workflow.input.*` 或创建任务业务 `input_data` 入口。旧契约中出现这些字段时，必须判断是否为兼容遗留并避免在新节点路径中继续引用。
+- 验收报告必须说明真实业务入参由哪个节点收集、下游引用哪个 `$nodes.<node_id>.output...` 路径、使用了哪个任务 ID 和 workflow snapshot。

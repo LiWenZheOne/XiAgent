@@ -38,6 +38,14 @@ description: Use when creating or modifying XiAgent workflow YAML/JSON contracts
 - 不直接访问 SQLite、资产文件路径或其他模块内部实现；测试也要通过正式服务、运行时和构建器。
 - 任务、项目、资产、工作流必须挂到明确的 `user_id` 和 `project_id` 关系下；默认测试用户和项目由构建器创建。
 
+## Legacy Input Guard
+
+- 落工作流前必须能指出每个业务入参由哪个普通节点收集、写入哪个节点快照、下游通过哪个 `$nodes.<node_id>.output...` 路径引用。
+- 修改过的工作流、UI 配置或相关文档不得新增 `$workflow.input`、`workflow.input_schema`、`system.workflow_input.v1` 或创建任务业务 `input_data`。如果在旧文件中发现这些入口，必须判断是兼容说明还是需要迁移的问题，不能默默沿用。
+- 工作流 UI 配置变更必须和控件 manifest、节点输出 schema、V2 控件注册表同时对齐。缺任一环时暂停落盘，先补节点或控件能力。
+- 修改工作流 YAML 后，真实 UI 验收前必须重启或重载后端 workflow catalog，再新建任务验证新 snapshot。历史任务只能证明旧 snapshot 行为，除非已显式迁移 snapshot/config。
+- 只跑另一个 workflow、fake router、局部节点/schema 测试或旧任务页面，不能证明当前工作流真实用户路径通过。
+
 ## Structured Output Boundary
 
 - LLM 结构化输出的目标结构写在工作流节点的 `outputs` JSON Schema 中；`prompt` 只描述任务语义，不能作为唯一数据契约。
@@ -111,4 +119,5 @@ workflows/global/run_deepseek_echo_test.bat --auto
 - 为了测试直接查 SQLite 或拼资产路径：使用 `WorkflowTestBuilder`、`RuntimeService` 和 `AssetService`。
 - 忘记工作流是 DAG：不要引入通用循环；需要循环能力时先提出引擎能力缺口。
 - 只校验 YAML 能读：还要跑构建器或 CLI，确认事件、快照和交互路径可用。
+- 修改 YAML 后忘记重载后端 workflow catalog，或用历史任务验收新配置：正确做法是重载后端并创建新任务检查新 snapshot。
 - 只验证局部节点/schema 或 `run_deepseek_echo_test.bat --auto`：这不能代表用户实际手工路径。之前漏测的原因就是没有覆盖“无参数 bat -> 选择 `storyboard_generation.workflow.yaml` -> 选 `Guided question test` -> 输入长脚本 -> 跑完整 DAG”，导致下游 `describe_panels` 的 `segment_title` schema 问题漏掉。

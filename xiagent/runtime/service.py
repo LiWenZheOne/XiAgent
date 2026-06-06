@@ -409,6 +409,42 @@ class SqliteRuntimeService:
             raise NotFoundError("workflow_snapshot_not_found", "Workflow snapshot was not found")
         return snapshot
 
+    async def record_waiting_node_interaction_event(
+        self,
+        *,
+        user_id: str,
+        project_id: str,
+        task_id: str,
+        node_id: str,
+        event_type: str,
+        payload: dict[str, Any],
+    ) -> None:
+        await self._user_service.ensure_project_access(
+            user_id=user_id,
+            project_id=project_id,
+            action="task:interact",
+        )
+        task, contract = await self._get_task_and_contract(task_id)
+        _ensure_task_belongs_to_project(task, user_id=user_id, project_id=project_id)
+        _ensure_task_is_visible(task)
+        _node_by_id(contract, node_id)
+        if task.status != "waiting":
+            raise ValidationError(
+                code="task_not_waiting",
+                message="Task is not waiting for interaction",
+                details={"task_id": task_id, "status": task.status},
+            )
+        await self._get_waiting_execution(task_id, node_id)
+        now = _utc_now()
+        async with connect_db(self._database_path) as db:
+            await insert_event(
+                db,
+                task_id=task_id,
+                event_type=event_type,
+                payload={"node_id": node_id} | dict(payload),
+                created_at=now,
+            )
+
     async def rerun_node(
         self,
         *,

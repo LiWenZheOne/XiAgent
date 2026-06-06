@@ -7,8 +7,8 @@ from typing import Any
 
 from xiagent.core.errors import ValidationError
 from xiagent.core.schemas import validate_json_value
+from xiagent.ai import AssetMetadataCapability, asset_upload_metadata_output_schema
 from xiagent.models import ChatMessage, ChatModelRouter, ChatRequest
-from xiagent.nodes.ai.deepseek_structured_json import _json_object_response_metadata
 from xiagent.nodes.base import BaseNode, NodeContext, NodeDescriptor, NodeResult
 
 _JSON_FENCE_PATTERN = re.compile(r"```(?:json)?\s*(.*?)```", re.IGNORECASE | re.DOTALL)
@@ -46,73 +46,22 @@ class AssetMetadataFromUploadNode(BaseNode):
                 },
                 "additionalProperties": False,
             },
-            output_schema=_output_schema(),
+            output_schema=asset_upload_metadata_output_schema(),
             description="Complete asset metadata for a newly uploaded library image from its name, type, and source background.",
         )
 
     async def run(self, ctx: NodeContext | None, inputs: Mapping[str, Any]) -> NodeResult:
-        asset_name = _required_text(inputs.get("asset_name"), "asset_upload_name_required", "资产名称不能为空。")
-        asset_type = _asset_type(inputs.get("asset_type"))
-        world_background = _required_text(inputs.get("world_background"), "asset_upload_background_required", "世界背景不能为空。")
-        max_attempts = inputs.get("max_attempts", 2)
-        if not isinstance(max_attempts, int) or isinstance(max_attempts, bool) or max_attempts < 1:
-            raise ValidationError(
-                code="asset_upload_metadata_max_attempts_invalid",
-                message="max_attempts must be an integer greater than or equal to 1",
-            )
-
-        schema = _output_schema()
-        schema_instruction = f"Target JSON Schema:\n{json.dumps(schema, ensure_ascii=False, sort_keys=True)}"
-        prompt = _user_prompt(asset_name=asset_name, asset_type=asset_type, world_background=world_background)
-        current_prompt = prompt
-        last_error: ValidationError | None = None
-
-        for attempt in range(max_attempts):
-            response = await self._model_router.chat(
-                ChatRequest(
-                    provider=self._provider,
-                    model=self._model,
-                    messages=[
-                        ChatMessage(role="system", content=f"{_system_prompt(asset_type)}\n\n{schema_instruction}"),
-                        ChatMessage(role="user", content=current_prompt),
-                    ],
-                    metadata=_json_object_response_metadata(),
-                )
-            )
-            try:
-                parsed = _parse_json_object(response.text)
-                validate_json_value(schema, parsed)
-            except json.JSONDecodeError as exc:
-                last_error = ValidationError(
-                    code="asset_upload_metadata_json_parse_failed",
-                    message="资产上传信息补全返回的内容不是合法 JSON。",
-                    details={"attempt": attempt + 1, "error": str(exc)},
-                )
-            except ValidationError as exc:
-                last_error = ValidationError(
-                    code="asset_upload_metadata_json_validation_failed",
-                    message="资产上传信息补全返回的 JSON 不符合资产 metadata 结构。",
-                    details={"attempt": attempt + 1, "error": exc.details},
-                )
-            else:
-                metadata = dict(parsed["metadata"])
-                metadata["type"] = asset_type
-                parsed["metadata"] = metadata
-                return NodeResult(status="succeeded", output=parsed, metadata=response.metadata)
-
-            current_prompt = (
-                f"{prompt}\n\n"
-                f"上一轮输出校验失败：{last_error.message if last_error else 'unknown error'}。\n"
-                f"{schema_instruction}\n"
-                "只返回一个合法 JSON 对象，不要输出解释、Markdown 或代码块。"
-            )
-
-        if last_error is not None:
-            raise last_error
-        raise ValidationError(
-            code="asset_upload_metadata_json_parse_failed",
-            message="资产上传信息补全返回的内容不是合法 JSON。",
+        result = await AssetMetadataCapability(
+            model_router=self._model_router,
+            provider=self._provider,
+            model=self._model,
+        ).complete_upload_metadata(
+            asset_name=inputs.get("asset_name"),
+            asset_type=inputs.get("asset_type"),
+            world_background=inputs.get("world_background"),
+            max_attempts=inputs.get("max_attempts", 2),
         )
+        return NodeResult(status="succeeded", output=result.output, metadata=result.metadata)
 
 
 def _output_schema() -> dict[str, Any]:

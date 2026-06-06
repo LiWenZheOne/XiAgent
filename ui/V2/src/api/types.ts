@@ -206,7 +206,7 @@ export interface AssetRecord {
   project_id?: string | null;
   mime_type: string | null;
   size_bytes: number | null;
-  storage_uri?: string | null;
+  content_url?: string;
   text_content?: string | null;
   thumbnail_url?: string;
   metadata: AssetMetadata;

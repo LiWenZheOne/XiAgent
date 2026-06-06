@@ -12,6 +12,13 @@
 - 节点不得直接依赖模型 SDK、外部 HTTP 细节或密钥配置；模型能力应通过 `ChatModelRouter` 和模型 provider 适配器。
 - 输出 schema 和实际输出必须一致，保证工作流下游路径引用可校验。
 
+## 输出与下游防护
+
+- 修改节点输出 schema、实际输出字段、metadata、passthrough 字段或 `ui_defaults` 前，必须检查引用该节点 `ref` 的工作流路径和 UI 控件 bindings，确认下游 `$nodes.<node_id>.output...` 仍可校验。
+- 不得为了某个 V2 控件方便临时暴露内部字段或改名公共字段；应先调整节点稳定 schema、工作流输出契约和 UI 控件 manifest，使三者一致。
+- 节点为目标工作流服务时，验收必须覆盖该目标工作流的构建器/CLI 或真实 UI 路径，不能用无关 workflow、fake router 或单节点成功替代。
+- 修改节点后如果工作流 YAML 或 UI 控件配置也随之变化，真实 UI 验收前必须重启或重载后端 workflow catalog，并创建新任务检查新 snapshot。
+
 ## UI 默认规则
 
 - UI 控件规则以 `docs/design/2026-05-27-01-ui-control-manifest-design.md` 为准。

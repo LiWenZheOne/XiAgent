@@ -1,6 +1,7 @@
 import { type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { draftAssetFromDescription, uploadAsset } from "../../api/assets";
+import { draftTaskAssetFromDescription } from "../../api/tasks";
 import type { AssetScope } from "../../api/types";
 import { catalogAssetTypeTags } from "../../utils/assetNaming";
 import type { NodeUiControlProps } from "../types";
@@ -57,6 +58,7 @@ export function AssetSummaryTableControl({
   node,
   onDraft,
   projectId,
+  taskId,
   onSubmit,
 }: NodeUiControlProps) {
   const readonly = config.mode === "readonly" || !onSubmit;
@@ -218,14 +220,25 @@ export function AssetSummaryTableControl({
     setDraftError("");
     setDraftResult(null);
     try {
-      const result = await draftAssetFromDescription({
-        project_id: projectId,
+      const input = {
+        project_id: projectId || "global",
+        node_id: node.node_id,
         asset_type: "auto",
         description,
         script: textValue(source?.script) ?? "",
         background: textValue(source?.background) ?? "",
         current_assets: currentApprovedAssets(rows, matches),
-      });
+      } as const;
+      const result = taskId
+        ? await draftTaskAssetFromDescription(taskId, input)
+        : await draftAssetFromDescription({
+            project_id: projectId,
+            asset_type: input.asset_type,
+            description: input.description,
+            script: input.script,
+            background: input.background,
+            current_assets: input.current_assets,
+          });
       setDraftResult({
         assets: normalizeDraftAssets(result),
         confidence: result.confidence,
@@ -852,11 +865,10 @@ function assetImageUrl(asset: unknown): string | undefined {
   if (!record) return undefined;
   const direct = textValue(record.image_url)
     || textValue(record.public_url)
-    || textValue(record.storage_uri)
-    || textValue(record.default_variant_storage_uri);
+    || textValue(record.content_url);
   if (direct) return direct;
   const metadata = recordValue(record.metadata);
-  const metadataUrl = textValue(metadata?.image_url) || textValue(metadata?.public_url) || textValue(metadata?.storage_uri);
+  const metadataUrl = textValue(metadata?.image_url) || textValue(metadata?.public_url) || textValue(metadata?.content_url);
   if (metadataUrl) return metadataUrl;
   const objectStorage = recordValue(metadata?.object_storage);
   return textValue(objectStorage?.public_url);
