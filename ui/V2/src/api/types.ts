@@ -186,6 +186,11 @@ export interface TaskDetailResponse {
   events: TaskEvent[];
 }
 
+export interface TaskDebugExportResponse extends TaskDetailResponse {
+  export_version: string;
+  generated_at: string;
+}
+
 export interface AssetMetadata {
   [key: string]: unknown;
   public_url?: string;

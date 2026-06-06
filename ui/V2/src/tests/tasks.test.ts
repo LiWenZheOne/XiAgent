@@ -9,6 +9,11 @@ import {
   regenerateTaskStoryboardPanelPrompt,
   streamTaskEvents,
 } from "../api/tasks";
+import * as tasksApi from "../api/tasks";
+
+const taskDebugApi = tasksApi as unknown as {
+  exportTaskDebugPackage?: (projectId: string, taskId: string) => Promise<Record<string, unknown>>;
+};
 
 describe("task event stream", () => {
   afterEach(() => {
@@ -79,6 +84,42 @@ describe("task deletion api", () => {
       "/api/tasks/task-1?project_id=project-1",
       expect.objectContaining({
         method: "DELETE",
+        headers: expect.any(Headers),
+      }),
+    );
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
+    const headers = init?.headers as Headers;
+    expect(headers.get("Authorization")).toBe("Bearer task-token");
+  });
+});
+
+describe("task debug export api", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    setAccessToken(null);
+  });
+
+  it("downloads task debug export JSON with the current project and access token", async () => {
+    setAccessToken("task-token");
+    const fetchMock = vi.fn((_: RequestInfo | URL, __?: RequestInit): Promise<Response> =>
+      Promise.resolve(
+        new Response(JSON.stringify({ task: { task_id: "task-1" }, node_executions: [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(taskDebugApi.exportTaskDebugPackage).toBeTypeOf("function");
+    if (!taskDebugApi.exportTaskDebugPackage) return;
+
+    const result = await taskDebugApi.exportTaskDebugPackage("project-1", "task-1");
+
+    expect(result).toMatchObject({ task: { task_id: "task-1" } });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/tasks/task-1/debug-export?project_id=project-1",
+      expect.objectContaining({
         headers: expect.any(Headers),
       }),
     );

@@ -1564,6 +1564,101 @@ def test_task_list_detail_and_stream_return_project_scoped_runtime_data(test_set
     assert "event: task_succeeded\n" in stream_response.text
 
 
+def test_task_debug_export_returns_downloadable_execution_history(test_settings) -> None:
+    app = create_app(settings=test_settings)
+    with TestClient(app) as client:
+        client.post(
+            "/api/auth/register",
+            json={"username": "task-debug-exporter", "password": "secret-123"},
+        )
+        headers = _auth_headers(client, username="task-debug-exporter")
+        project = client.post(
+            "/api/projects",
+            json={"name": "Debug Export Project"},
+            headers=headers,
+        ).json()
+        contract = _approval_contract()
+        task = _create_task_with_user_input(
+            client,
+            headers=headers,
+            project_id=project["project_id"],
+            contract=contract,
+            input_data={"topic": "needs approval"},
+        )
+
+        draft_response = client.put(
+            f"/api/tasks/{task['task_id']}/interactions/draft",
+            json={
+                "project_id": project["project_id"],
+                "node_id": "review",
+                "input": {"decision": "approve", "api_key": "sk-debug-secret"},
+            },
+            headers=headers,
+        )
+        approve_response = client.post(
+            f"/api/tasks/{task['task_id']}/interactions",
+            json={
+                "project_id": project["project_id"],
+                "node_id": "review",
+                "input": {"decision": "approve"},
+            },
+            headers=headers,
+        )
+        rerun_response = client.post(
+            f"/api/tasks/{task['task_id']}/nodes/review/rerun",
+            json={
+                "project_id": project["project_id"],
+                "rerun_revision_note": "重新检查审批节点。",
+            },
+            headers=headers,
+        )
+        export_response = client.get(
+            f"/api/tasks/{task['task_id']}/debug-export",
+            params={"project_id": project["project_id"]},
+            headers=headers,
+        )
+
+    assert draft_response.status_code == 200
+    assert approve_response.status_code == 200
+    assert rerun_response.status_code == 200
+    assert rerun_response.json()["status"] == "waiting"
+    assert export_response.status_code == 200
+    assert export_response.headers["content-type"].startswith("application/json")
+    assert "attachment" in export_response.headers["content-disposition"]
+    assert export_response.headers["content-disposition"].endswith(".json\"")
+
+    payload = export_response.json()
+    assert {
+        "export_version",
+        "generated_at",
+        "task",
+        "workflow_snapshot",
+        "node_executions",
+        "node_attempts",
+        "events",
+    } <= set(payload)
+    assert payload["export_version"] == "task_debug_export.v1"
+    assert payload["task"]["task_id"] == task["task_id"]
+    assert payload["workflow_snapshot"] == contract
+    statuses = {execution["status"] for execution in payload["node_executions"]}
+    assert {"succeeded", "superseded", "waiting"} <= statuses
+    assert [attempt["status"] for attempt in payload["node_attempts"]["review"]] == [
+        "superseded",
+        "waiting",
+    ]
+    draft_events = [
+        event for event in payload["events"] if event["event_type"] == "node_draft_saved"
+    ]
+    assert draft_events
+    draft_payload = draft_events[-1]["payload"]
+    assert draft_payload["input_patch"] == {
+        "decision": "approve",
+        "api_key": "***redacted***",
+    }
+    assert draft_payload["input_snapshot_after"]["decision"] == "approve"
+    assert draft_payload["input_snapshot_after"]["api_key"] == "***redacted***"
+
+
 def test_delete_task_archives_project_scoped_runtime_data(test_settings) -> None:
     app = create_app(settings=test_settings)
     with TestClient(app) as client:

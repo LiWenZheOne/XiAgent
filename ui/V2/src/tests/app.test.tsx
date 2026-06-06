@@ -149,6 +149,15 @@ function jsonResponse(body: unknown, status = 200) {
   );
 }
 
+function readBlobText(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.onerror = () => reject(reader.error ?? new Error("Failed to read blob"));
+    reader.readAsText(blob);
+  });
+}
+
 function mockFetch() {
   const createdTasks: Array<{
     task_id: string;
@@ -795,6 +804,51 @@ describe("XiAgent V2 app", () => {
         rerun_revision_note: "保留原有水墨风格，只修正角色服装。",
       });
     });
+  });
+
+  it("exports the selected task debug package as a local JSON file", async () => {
+    const baseFetch = mockFetch();
+    const createdLinks: HTMLAnchorElement[] = [];
+    const createObjectUrl = vi.fn((_: Blob | MediaSource) => "blob:task-debug-export");
+    const revokeObjectUrl = vi.fn();
+    const linkClick = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    const originalCreateElement = document.createElement.bind(document);
+    vi.spyOn(document, "createElement").mockImplementation((tagName: string, options?: ElementCreationOptions) => {
+      const element = originalCreateElement(tagName, options);
+      if (tagName.toLowerCase() === "a") createdLinks.push(element as HTMLAnchorElement);
+      return element;
+    });
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectUrl });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revokeObjectUrl });
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url === "/api/tasks/task-1/debug-export?project_id=global" && method === "GET") {
+        return jsonResponse({ task: { task_id: "task-1" }, events: [{ event_type: "node_waiting" }] });
+      }
+      return baseFetch(input, init);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+    await login();
+    await userEvent.click(await screen.findByRole("button", { name: "打开 故事板生成" }));
+    const detail = await screen.findByLabelText("任务运行详情");
+
+    const exportButton = within(detail).getByRole("button", { name: "导出调试包" });
+    expect(exportButton).toBeEnabled();
+    await userEvent.click(exportButton);
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([url]) => url === "/api/tasks/task-1/debug-export?project_id=global")).toBe(true);
+      expect(linkClick).toHaveBeenCalled();
+    });
+    expect(createObjectUrl).toHaveBeenCalledWith(expect.any(Blob));
+    const blob = createObjectUrl.mock.calls[0]?.[0] as Blob;
+    expect(blob.type).toBe("application/json");
+    await expect(readBlobText(blob)).resolves.toContain('"task_id": "task-1"');
+    expect(createdLinks[0]?.download).toMatch(/^xiagent-task-task-1-debug-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}.*\.json$/);
+    expect(revokeObjectUrl).toHaveBeenCalledWith("blob:task-debug-export");
   });
 
   it("shows node input and output as user-facing cards and supports waiting interaction", async () => {

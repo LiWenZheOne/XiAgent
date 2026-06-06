@@ -1,5 +1,5 @@
 import { apiRequest, ApiError, getAccessToken } from "./client";
-import type { TaskDetailResponse, TaskEvent, TaskRecord } from "./types";
+import type { TaskDebugExportResponse, TaskDetailResponse, TaskEvent, TaskRecord } from "./types";
 
 export interface CreateTaskRequest {
   project_id: string;
@@ -94,6 +94,11 @@ export async function createTask(request: CreateTaskRequest): Promise<TaskRecord
 export async function getTask(projectId: string, taskId: string): Promise<TaskDetailResponse> {
   const params = new URLSearchParams({ project_id: projectId });
   return apiRequest<TaskDetailResponse>(`/api/tasks/${encodeURIComponent(taskId)}?${params.toString()}`);
+}
+
+export async function exportTaskDebugPackage(projectId: string, taskId: string): Promise<TaskDebugExportResponse> {
+  const params = new URLSearchParams({ project_id: projectId });
+  return apiRequest<TaskDebugExportResponse>(`/api/tasks/${encodeURIComponent(taskId)}/debug-export?${params.toString()}`);
 }
 
 export async function deleteTask(projectId: string, taskId: string): Promise<void> {

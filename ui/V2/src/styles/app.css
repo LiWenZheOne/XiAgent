@@ -85,6 +85,7 @@ a {
 .section-title-row,
 .button-row,
 .toolbar-actions,
+.task-summary-actions,
 .node-actions {
   display: flex;
   align-items: center;
@@ -1203,6 +1204,19 @@ dd {
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
+}
+
+.task-summary-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.task-debug-export-message {
+  margin: -4px 0 12px;
+  color: var(--success);
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .node-timeline {
