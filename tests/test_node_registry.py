@@ -123,6 +123,7 @@ async def test_filter_assets_for_generation_removes_existing_assets() -> None:
     result = await node.run(
         None,
         {
+            "prompts_per_item": 3,
             "approved_assets": {
                 "characters": [
                     {
@@ -165,6 +166,9 @@ async def test_filter_assets_for_generation_removes_existing_assets() -> None:
     assert [item["name"] for item in result.output["approved_assets"]["characters"]] == ["鲁智深"]
     assert [item["name"] for item in result.output["approved_assets"]["assets"]] == ["山神庙"]
     assert [item["name"] for item in result.output["approved_assets"]["props"]] == ["水火棍"]
+    assert result.output["approved_assets"]["characters"][0]["prompts_per_item"] == 3
+    assert result.output["approved_assets"]["assets"][0]["prompts_per_item"] == 3
+    assert result.output["approved_assets"]["props"][0]["prompts_per_item"] == 3
     character_description = result.output["approved_assets"]["characters"][0]["target_appearance_description"]
     assert character_description == "浓眉圆眼，僧衣上身，气质豪放"
     assert "脚" not in character_description
@@ -413,12 +417,16 @@ def test_segment_storyboard_tool_descriptors() -> None:
     assert prepare_descriptor.input_schema["properties"]["storyboard_options"]["properties"] == {
         "no_material": {"type": "boolean"},
         "enrich_description": {"type": "boolean"},
+        "prompts_per_item": {"type": "integer", "minimum": 1, "maximum": 6, "default": 1},
+        "images_per_prompt": {"type": "integer", "minimum": 1, "maximum": 6, "default": 1},
     }
     assert prepare_descriptor.output_schema["properties"]["shared_context"]["properties"]["storyboard_options"][
         "properties"
     ] == {
         "no_material": {"type": "boolean"},
         "enrich_description": {"type": "boolean"},
+        "prompts_per_item": {"type": "integer", "minimum": 1, "maximum": 6, "default": 1},
+        "images_per_prompt": {"type": "integer", "minimum": 1, "maximum": 6, "default": 1},
     }
     assert prepare_descriptor.output_schema["properties"]["shared_context"]["properties"]["prompt_rules"]["required"] == [
         "material_rule",
@@ -489,6 +497,7 @@ async def test_prepare_storyboard_panel_cards_builds_cards() -> None:
                     "index": 0,
                     "segment_title": "雪夜",
                     "thinking": "风雪推进。",
+                    "panel_plan": {"panel_count": 2, "panels": [{"description": "起"}, {"description": "承"}]},
                     "image_prompt": "单个大分格，低机位远中景。林冲背对镜头踏雪前行，鲁智深侧对镜头守在树后；野猪林雪地以前景树干遮挡、中景人物穿行、背景林木延伸形成斜向纵深，冷月光从画面右上方落下，风雪斜扫，花枪在人物身侧形成方向线。",
                 }
             ],
@@ -547,6 +556,8 @@ async def test_prepare_storyboard_panel_cards_builds_cards() -> None:
 
     card = result.output["panel_cards"][0]
     assert card["card_id"] == "segment-0"
+    assert card["panel_count"] == "2"
+    assert card["panel_plan"] == {"panel_count": 2, "panels": [{"description": "起"}, {"description": "承"}]}
     assert card["reference_images"] == [
         {
             "label": "林冲",
@@ -606,9 +617,78 @@ async def test_prepare_storyboard_panel_cards_builds_cards() -> None:
     assert "画幅比例" not in card["prompt"]
     assert "输出清晰度" not in card["prompt"]
     assert "出场角色：林冲（囚服）、鲁智深（僧衣）" not in card["prompt"]
+    assert card["generation_config"] == {"prompts_per_item": 1, "images_per_prompt": 1}
     assert card["visible_characters"] == ["林冲", "鲁智深"]
     assert card["status"] == "ready"
     assert card["error"] == ""
+
+
+async def test_prepare_storyboard_panel_cards_groups_prompt_variants_in_one_card() -> None:
+    node = PrepareStoryboardPanelCardsNode()
+
+    result = await node.run(
+        None,
+        {
+            "segment_descriptions": [
+                {
+                    "index": 0,
+                    "prompt_variant_index": 0,
+                    "prompt_variant_count": 2,
+                    "segment_title": "机密房商议",
+                    "panel_plan": {"panel_count": 2, "panels": [{"description": "起"}, {"description": "承"}]},
+                    "image_prompt": "两格横向布局，众公差围桌商议。",
+                },
+                {
+                    "index": 0,
+                    "prompt_variant_index": 1,
+                    "prompt_variant_count": 2,
+                    "segment_title": "机密房商议",
+                    "panel_plan": {"panel_count": 4, "panels": [{"description": "起"}]},
+                    "image_prompt": "四格错落布局，何涛从旁观察众人。",
+                },
+            ],
+            "segment_assignments": [{"segment_index": 0, "characters": [], "key_props": []}],
+            "storyboard_items": [
+                {
+                    "index": 0,
+                    "prompt_variant_index": 0,
+                    "prompt_variant_count": 2,
+                    "paragraph_text": "机密房商议。",
+                    "panel_count": "auto",
+                },
+                {
+                    "index": 0,
+                    "prompt_variant_index": 1,
+                    "prompt_variant_count": 2,
+                    "paragraph_text": "机密房商议。",
+                    "panel_count": "auto",
+                },
+            ],
+            "generation_rules": "风格指令：参考《罗小黑战记》。",
+            "negative_prompt": "low quality",
+            "prompts_per_item": 2,
+            "images_per_prompt": 2,
+        },
+    )
+
+    cards = result.output["panel_cards"]
+    assert len(cards) == 1
+    card = cards[0]
+    assert card["card_id"] == "segment-0"
+    assert card["panel_index"] == 0
+    assert card["prompt_variant_index"] == 0
+    assert card["prompt_variant_label"] == "候选 1/2"
+    assert card["panel_count"] == "2"
+    assert card["panel_count_variants"] == ["2", "4"]
+    assert len(card["prompt_variants"]) == 2
+    assert "两格横向布局" in card["prompt_variants"][0]
+    assert "四格错落布局" in card["prompt_variants"][1]
+    assert card["panel_plan_variants"] == [
+        {"panel_count": 2, "panels": [{"description": "起"}, {"description": "承"}]},
+        {"panel_count": 4, "panels": [{"description": "起"}]},
+    ]
+    assert card["source_item"]["prompt_variant_index"] == 0
+    assert card["generation_config"] == {"prompts_per_item": 2, "images_per_prompt": 2}
 
 
 async def test_prepare_storyboard_panel_cards_marks_failed_segments() -> None:
@@ -890,7 +970,12 @@ async def test_episode_metadata_nodes_roundtrip_payload() -> None:
     assert "tags" not in service.created["asset-episode"].metadata
     assert loaded.output["episode_name"] == "23、私放晁天王"
     assert loaded.output["source_script"] == "宋江见了晁盖。"
-    assert loaded.output["storyboard_options"] == {"no_material": True, "enrich_description": True}
+    assert loaded.output["storyboard_options"] == {
+        "no_material": True,
+        "enrich_description": True,
+        "prompts_per_item": 1,
+        "images_per_prompt": 1,
+    }
     assert result.output["asset_images"] == [
         {"asset_type": "character", "asset_name": "宋江", "asset_id": "asset-songjiang"}
     ]
@@ -928,6 +1013,8 @@ async def test_episode_metadata_nodes_roundtrip_payload() -> None:
                     "properties": {
                         "no_material": {"type": "boolean"},
                         "enrich_description": {"type": "boolean"},
+                        "prompts_per_item": {"type": "integer", "minimum": 1, "maximum": 6, "default": 1},
+                        "images_per_prompt": {"type": "integer", "minimum": 1, "maximum": 6, "default": 1},
                     },
                     "additionalProperties": False,
                 },

@@ -11,7 +11,7 @@ from xiagent.nodes.tools.prepare_segment_storyboard_inputs import (
 
 
 @pytest.mark.asyncio
-async def test_prepare_segment_storyboard_inputs_builds_one_item_per_segment() -> None:
+async def test_prepare_segment_storyboard_inputs_builds_prompt_variants_per_segment() -> None:
     node = PrepareSegmentStoryboardInputsNode()
 
     result = await node.run(
@@ -50,23 +50,39 @@ async def test_prepare_segment_storyboard_inputs_builds_one_item_per_segment() -
                     },
                 },
             ],
-            "storyboard_options": {"no_material": True, "enrich_description": True},
+            "storyboard_options": {
+                "no_material": True,
+                "enrich_description": True,
+                "prompts_per_item": 2,
+                "images_per_prompt": 3,
+            },
         },
     )
 
     assert result.status == "succeeded"
     items = result.output["items"]
-    assert [item["index"] for item in items] == [0, 1, 2]
-    assert items[1]["paragraph_text"] == "第二段"
-    assert items[1]["panel_count"] == "3-4"
-    assert "panel_count_instruction" not in items[1]
-    assert items[1]["present_characters"] == ["林冲"]
-    assert items[1]["location"] == "野猪林"
-    assert items[1]["scene_description"] == "雪地林道狭窄，两侧密林压迫，前景树干可遮挡视线。"
-    assert items[1]["key_props"] == ["花枪"]
-    assert "current_segment" not in items[1]
-    assert "neighbor_segments" not in items[1]
-    assert items[1]["segment_assignment"] == {
+    assert [(item["index"], item["prompt_variant_index"]) for item in items] == [
+        (0, 0),
+        (0, 1),
+        (1, 0),
+        (1, 1),
+        (2, 0),
+        (2, 1),
+    ]
+    second_segment_first_variant = items[2]
+    assert second_segment_first_variant["paragraph_text"] == "第二段"
+    assert second_segment_first_variant["panel_count"] == "auto"
+    assert "panel_count_instruction" not in second_segment_first_variant
+    assert second_segment_first_variant["prompt_variant_count"] == 2
+    assert "第 1/2 份分镜提示词候选" in second_segment_first_variant["prompt_variant_instruction"]
+    assert "独立候选方案" in second_segment_first_variant["prompt_variant_instruction"]
+    assert second_segment_first_variant["present_characters"] == ["林冲"]
+    assert second_segment_first_variant["location"] == "野猪林"
+    assert second_segment_first_variant["scene_description"] == "雪地林道狭窄，两侧密林压迫，前景树干可遮挡视线。"
+    assert second_segment_first_variant["key_props"] == ["花枪"]
+    assert "current_segment" not in second_segment_first_variant
+    assert "neighbor_segments" not in second_segment_first_variant
+    assert second_segment_first_variant["segment_assignment"] == {
         "segment_index": 1,
         "characters": [
                 {
@@ -87,6 +103,8 @@ async def test_prepare_segment_storyboard_inputs_builds_one_item_per_segment() -
     assert result.output["shared_context"]["storyboard_options"] == {
         "no_material": True,
         "enrich_description": True,
+        "prompts_per_item": 2,
+        "images_per_prompt": 3,
     }
     assert result.output["shared_context"]["prompt_rules"]["material_rule"].startswith(
         "- 删除所有材质和质感审查"
@@ -112,13 +130,19 @@ async def test_prepare_segment_storyboard_inputs_defaults_storyboard_options() -
     assert result.output["shared_context"]["storyboard_options"] == {
         "no_material": False,
         "enrich_description": False,
+        "prompts_per_item": 1,
+        "images_per_prompt": 1,
     }
+    item = result.output["items"][0]
+    assert item["prompt_variant_index"] == 0
+    assert item["prompt_variant_count"] == 1
+    assert "唯一一份" in item["prompt_variant_instruction"]
     assert "可以描述对画面叙事必要的材质" in result.output["shared_context"]["prompt_rules"]["material_rule"]
     assert "保持描述清晰克制" in result.output["shared_context"]["prompt_rules"]["enrich_rule"]
 
 
 @pytest.mark.asyncio
-async def test_merge_segment_storyboard_descriptions_sorts_by_index() -> None:
+async def test_merge_segment_storyboard_descriptions_sorts_by_index_and_prompt_variant() -> None:
     node = MergeSegmentStoryboardDescriptionsNode()
 
     result = await node.run(
@@ -127,12 +151,21 @@ async def test_merge_segment_storyboard_descriptions_sorts_by_index() -> None:
             "results": [
                 {
                     "index": 2,
+                    "prompt_variant_index": 0,
                     "segment_title": "第三段",
                     "thinking": "三",
                     "description": "c",
                 },
                 {
                     "index": 0,
+                    "prompt_variant_index": 1,
+                    "segment_title": "第一段备选",
+                    "thinking": "二",
+                    "description": "b",
+                },
+                {
+                    "index": 0,
+                    "prompt_variant_index": 0,
                     "segment_title": "第一段",
                     "thinking": "一",
                     "description": "a",
@@ -145,12 +178,21 @@ async def test_merge_segment_storyboard_descriptions_sorts_by_index() -> None:
         "segment_descriptions": [
             {
                 "index": 0,
+                "prompt_variant_index": 0,
                 "segment_title": "第一段",
                 "thinking": "一",
                 "description": "a",
             },
             {
+                "index": 0,
+                "prompt_variant_index": 1,
+                "segment_title": "第一段备选",
+                "thinking": "二",
+                "description": "b",
+            },
+            {
                 "index": 2,
+                "prompt_variant_index": 0,
                 "segment_title": "第三段",
                 "thinking": "三",
                 "description": "c",

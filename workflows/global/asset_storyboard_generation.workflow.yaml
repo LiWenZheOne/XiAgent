@@ -118,7 +118,24 @@ nodes:
           type: boolean
           title: 丰富画面描述
           default: false
-          description: 启用后，在分镜设计中追加空间深度、物理反馈、建筑陈设、颗粒介质和琐碎叙事细节审查。
+      prompts_per_item:
+        from_user: true
+        required: false
+        schema:
+          type: integer
+          title: 每段提示词数
+          minimum: 1
+          maximum: 6
+          default: 1
+      images_per_prompt:
+        from_user: true
+        required: false
+        schema:
+          type: integer
+          title: 每个提示词生成图数
+          minimum: 1
+          maximum: 6
+          default: 1
     outputs:
       type: object
       required: ["episode_name", "episode_summary", "source_script", "asset_catalog", "episode_asset_id"]
@@ -150,6 +167,16 @@ nodes:
               type: boolean
             enrich_description:
               type: boolean
+            prompts_per_item:
+              type: integer
+              minimum: 1
+              maximum: 6
+              default: 1
+            images_per_prompt:
+              type: integer
+              minimum: 1
+              maximum: 6
+              default: 1
           additionalProperties: false
       additionalProperties: false
     config:
@@ -662,6 +689,9 @@ nodes:
               - scene_description
               - key_props
               - segment_assignment
+              - prompt_variant_index
+              - prompt_variant_count
+              - prompt_variant_instruction
             properties:
               index:
                 type: integer
@@ -689,6 +719,14 @@ nodes:
               segment_assignment:
                 type: object
                 additionalProperties: true
+              prompt_variant_index:
+                type: integer
+                minimum: 0
+              prompt_variant_count:
+                type: integer
+                minimum: 1
+              prompt_variant_instruction:
+                type: string
             additionalProperties: true
         shared_context:
           type: object
@@ -706,6 +744,16 @@ nodes:
                   type: boolean
                 enrich_description:
                   type: boolean
+                prompts_per_item:
+                  type: integer
+                  minimum: 1
+                  maximum: 6
+                  default: 1
+                images_per_prompt:
+                  type: integer
+                  minimum: 1
+                  maximum: 6
+                  default: 1
               additionalProperties: false
             prompt_rules:
               type: object
@@ -748,7 +796,8 @@ nodes:
 
           当前段落索引：{index}
           当前段落：{paragraph_text}
-          建议分格数：{panel_count}
+          提示词候选策略：{prompt_variant_instruction}
+          分格数策略：由后续分镜规划节点根据情节自行决定，括号数字仅作为段落标记。
           本段在场角色：{present_characters}
           地点：{location}
           场景资产描述：{scene_description}
@@ -780,9 +829,9 @@ nodes:
           }
 
       prompt_fields:
-        value: ["index", "paragraph_text", "panel_count", "present_characters", "location", "scene_description", "key_props"]
+        value: ["index", "paragraph_text", "panel_count", "present_characters", "location", "scene_description", "key_props", "prompt_variant_instruction"]
       passthrough_fields:
-        value: ["index", "paragraph_text", "panel_count", "present_characters", "location", "scene_description", "key_props", "segment_assignment"]
+        value: ["index", "paragraph_text", "panel_count", "present_characters", "location", "scene_description", "key_props", "segment_assignment", "prompt_variant_index", "prompt_variant_count", "prompt_variant_instruction"]
       max_attempts:
         value: 2
       continue_on_item_error:
@@ -863,7 +912,9 @@ nodes:
           {full_script}
 
           当前段落：{paragraph_text}
-          建议分格数：{panel_count}
+          提示词候选策略：{prompt_variant_instruction}
+          目标分格数：{panel_count}
+          分格数策略：如果目标分格数是正整数，必须严格输出该数量的分格；如果目标分格数是 auto，才根据当前段落的行动节点、情绪节奏和阅读停顿自行决定 panel_plan.panel_count。括号数字仅作为段落标记，不作为建议分格数。
           本段在场角色：{present_characters}
           地点：{location}
           关键道具：{key_props}
@@ -871,7 +922,9 @@ nodes:
 
           分镜计划标准：
           - 只根据当前段落、scene_layout 中的空间关系以及 character_positions 里的角色位置/行动路线规划 panel_plan，不扩写其他段落剧情。
-          - panel_count 必须严格落实建议分格数；如果建议为 1，只能输出 1 格，不得拆成多格。
+          - 当目标分格数是正整数时，panel_plan.panel_count 必须等于目标分格数；当目标分格数是 auto 时，panel_plan.panel_count 才由你根据当前段落的情节复杂度、动作连续性、情绪停顿和阅读节奏自行决定。
+          - 不要根据括号中的数字决定分格数量。
+          - panel_plan.panels 的数量必须与 panel_plan.panel_count 一致。
           - 每格只写 description，用一句话说明这一格描写什么；只写可见动作和必要空间承接。
           - 可以在 description 中自然标注空境、特写、出框/破格动作或景别节奏，但只用于说明该格叙事功能，不展开镜头细节。
           - 分格顺序必须让行动路线读起来连贯，避免重复表达同一动作。
@@ -882,7 +935,7 @@ nodes:
 
           分格提问链：
           1. 当前段落有哪些必须连续表达的行动节点？这些行动节点应按什么顺序出现？
-          2. 建议分格数如何落实为具体 panel_count？如果建议是范围，应选择能讲清行动起承转合的最小有效格数。
+          2. 目标分格数是否是正整数？如果是，直接以它作为 panel_plan.panel_count；如果是 auto，为了讲清行动起承转合、情绪停顿和阅读节奏，选择最小但足够清楚的有效格数作为 panel_plan.panel_count。
           3. 是否需要空境来交代地点、承接情绪或让动作节奏有停顿？如果需要，空境必须服务当前段落的空间和行动路线，不得变成额外氛围扩写。
           4. 是否需要特写来强调关键表情、手势、道具、门窗、文书、武器接触或动作结果？特写只用于让叙事信息更清楚，不能脱离当前事件。
           5. 是否需要出框/破格效果：角色、武器、门框、烟尘、文书、衣袖或其他物体越过分格边界，以强化动作冲击、遮挡层次或阅读引导？如果使用，必须说明是什么元素越过边界以及服务哪个动作。
@@ -911,9 +964,9 @@ nodes:
           }
 
       prompt_fields:
-        value: ["index", "paragraph_text", "panel_count", "present_characters", "location", "key_props", "segment_assignment", "scene_layout"]
+        value: ["index", "paragraph_text", "panel_count", "present_characters", "location", "key_props", "segment_assignment", "scene_layout", "prompt_variant_instruction"]
       passthrough_fields:
-        value: ["index", "paragraph_text", "panel_count", "present_characters", "location", "scene_description", "key_props", "segment_assignment", "scene_layout"]
+        value: ["index", "paragraph_text", "panel_count", "present_characters", "location", "scene_description", "key_props", "segment_assignment", "scene_layout", "prompt_variant_index", "prompt_variant_count", "prompt_variant_instruction"]
       required_input_fields:
         value: ["scene_layout"]
       max_attempts:
@@ -1015,7 +1068,8 @@ nodes:
           分镜计划标准：
           - scene_layout 只说明地点、角色、道具、入口出口和角色位置/行动路线之间的空间关系；行动路线必须合并写入 character_positions，不单独输出行动路线、遮挡物或约束字段；不补充情绪、光影、氛围、叙事目的或视觉效果。
           - panel_plan 只根据当前段落、scene_layout 中的空间关系以及 character_positions 里的角色位置/行动路线规划每个分镜描述什么，不扩写其他段落剧情。
-          - panel_count 必须严格落实建议分格数；如果建议为 1，只能输出 1 格，不得拆成多格。
+          - panel_plan.panel_count 应由分镜规划根据当前段落的情节复杂度、动作连续性、情绪停顿和阅读节奏自行决定；不要根据括号中的数字决定分格数量。
+          - panel_plan.panels 的数量必须与 panel_plan.panel_count 一致。
           - 每格只写 description，用一句话说明这一格描写什么；只写可见动作和必要空间承接。
           - 分格顺序必须让行动路线读起来连贯，避免重复表达同一动作。
           - 必须遵守 scene_layout 的空间关系，保持人物方位、道具位置和行动路线一致。
@@ -1031,7 +1085,7 @@ nodes:
           审查问题：
           1. scene_layout 是否只说明空间关系，并把角色行动路线合并写入 character_positions？如出现独立行动路线字段、遮挡物字段、约束字段、情绪、光影、氛围、叙事目的、镜头设计或画面提示词，应删除或合并。
           2. scene_layout 是否交代了必要的区域、入口出口、角色位置/行动路线和道具位置？如缺少导致分镜衔接不清的空间关系，应补足。
-          3. panel_count 是否正确落实建议分格数？如果建议是范围，是否选择了能讲清行动起承转合的最小有效格数；如果建议为 1，是否严格只输出 1 格？
+          3. 如果当前段落 item.panel_count 是正整数，panel_plan.panel_count 是否严格等于它？如果 item.panel_count 是 auto，panel_plan.panel_count 是否由当前段落的情节复杂度、动作连续性、情绪停顿和阅读节奏合理决定？panel_plan.panels 数量是否与 panel_plan.panel_count 一致？
           4. 每格是否只用 description 描述当前分镜发生什么？如拆成角色、道具、行动节点、衔接方式、镜头、景别、构图、光影、氛围或材质，应删除并合并为一句分镜描述。
           5. 分格之间的动作是否连续、清楚、不跳步？如果某格重复同一动作或没有推进必要因果，应合并、删除或改成更有信息量的动作节点。
           6. 是否严格遵守 scene_layout 的空间关系，不新增不在场角色、未提供地点、未提供道具或未发生事件？如有越界，应回到当前段落、在场资产和既定行动路线内重新安排。
@@ -1066,7 +1120,8 @@ nodes:
           当前段落：
           {item.paragraph_text}
 
-          建议分格数：{item.panel_count}
+          目标分格数：{item.panel_count}
+          分格数策略：如果目标分格数是正整数，必须严格输出该数量的分格；如果目标分格数是 auto，才由分镜规划自行决定。括号数字仅作为段落标记；当前已有计划需保持 panel_plan.panel_count 与 panels 数量一致。
           本段在场角色：{item.present_characters}
           地点：{item.location}
           关键道具：{item.key_props}
@@ -1080,7 +1135,9 @@ nodes:
           分镜计划标准：
           - scene_layout 只说明地点、角色、道具、入口出口和角色位置/行动路线之间的空间关系；行动路线必须合并写入 character_positions，不单独输出行动路线、遮挡物或约束字段；不补充情绪、光影、氛围、叙事目的或视觉效果。
           - panel_plan 只根据当前段落、scene_layout 中的空间关系以及 character_positions 里的角色位置/行动路线规划每个分镜描述什么，不扩写其他段落剧情。
-          - panel_count 必须严格落实建议分格数；如果建议为 1，只能输出 1 格，不得拆成多格。
+          - 当目标分格数是正整数时，panel_plan.panel_count 必须等于目标分格数；当目标分格数是 auto 时，panel_plan.panel_count 才由当前段落的情节复杂度、动作连续性、情绪停顿和阅读节奏合理决定。
+          - 不要根据括号中的数字决定分格数量。
+          - panel_plan.panels 的数量必须与 panel_plan.panel_count 一致。
           - 每格只写 description，用一句话说明这一格描写什么；只写可见动作和必要空间承接。
           - 分格顺序必须让行动路线读起来连贯，避免重复表达同一动作。
           - 必须遵守 scene_layout 的空间关系，保持人物方位、道具位置和行动路线一致。
@@ -1209,8 +1266,9 @@ nodes:
           ## 输入
           段落索引：{index}
           段落标题：{segment_title}
+          提示词候选策略：{prompt_variant_instruction}
           原文：{paragraph_text}
-          建议分格数：{panel_count}
+          已确定分格数：以 panel_plan.panel_count 为准
           本段在场角色：{present_characters}
           地点：{location}
           关键道具：{key_props}
@@ -1233,39 +1291,31 @@ nodes:
           {material_rule}
           {enrich_rule}
 
-          ## 核心原则
+          ## 思维链
 
-          ### 先定分格布局，再定逐格镜头
-          先根据 panel_plan.panel_count 和 panel_plan.panels.description 设计整页分格布局：一共有几个分格、每格大致大小、形状、位置和阅读顺序。多格时不要平均切分，分格大小和形状要服务动作轻重、节奏和视觉重点。
+          ### 1. 分格布局
+          根据分格计划，如何安排这些分格的大小和布局？哪些是情绪的爆发点或者剧情的核心哪些用于衔接，哪些内容是表现的重点，如何超出分格或跨格，用以强化画面的表现力？
 
-          ### 再为每格确定镜头语言
-          确定整页布局后，再逐格设计视角、景别、透视和构图。每格都必须标注机位、角度、景别和透视关系；特别强调镜头角度，多使用仰视、俯视、大透视等冲击力较强的镜头，利用前后景突出透视。
+          ### 2. 镜头语言
+          在当前布局下，每个分格描述的内容要如何体现才能有更强的视觉冲击力？镜头如何让主体、动作方向和画面重心更清楚？镜头设置的位置是否专业？如何安排镜头以突出画面中物体的关系，避免平视和平均？
 
-          ### 禁止默认构图
-          不得无理由使用正中平视、角色左右对称等缺乏设计感的构图。每个镜头都必须有明确的视觉意图。不要在描述中写预示等未发生的事。
+          ### 3. 构图审查
+          每个镜头的视觉意图是什么？如何加强画面的冲击力？在尽量避免平视，对称构图的前提下，如何安排画面的构成，加强冲击力和透视关系？
 
-          ## 思维链自审清单（在 think 中逐项回答）
+          ### 4. 深度审查
+          基于当前场景布局，对于每个分镜，起摄像头设计在哪里？在这个机位下，画面的前景、中景、背景分别由什么具体的事物构成？画面是否至少有3层，如何自然的使用布局中已有的事物营造丰富的层次关系？
 
-          ### 1. 分格布局审查：先设计整页节奏
-          根据 panel_plan，一共有几个分格？每格大小、形状、位置和阅读顺序如何安排？多格时哪一格最大、哪一格最小，为什么这样安排能服务动作轻重和叙事节奏？
+          ### 5. 细节审查：会说话的物件
+          在这个层次关系下，环境中的哪些物件能暗示角色身份、地位或当前心境？以加强画面的叙事性？{material_thinking}
 
-          ### 2. 镜头设计审查：逐格确定视角、景别、透视、构图
-          每个分格分别采用什么机位、角度、景别、透视和构图？是否避免默认正中平视和左右对称？镜头如何让主体、动作方向和画面重心更清楚？
-
-          ### 3. 深度审查：打破平面感
-          这个画面的前景、中景、背景分别由什么具体的物理层级构成？能否在镜头最前方放一个遮挡物，例如梁柱、纱幔，来增加窥视感和空间深度？
-
-          ### 4. 细节审查：会说话的物件
-          除了角色，环境中还有哪些能暗示角色身份、地位或当前心境的特定陈设，例如磨损的地砖、缭绕的青烟、案头散乱的文书？{material_thinking}
-
-          ### 5. 光影审查：光线如何刻画冲突
+          ### 6. 光影审查：光线如何刻画冲突
           画面中是否存在两种不同属性的光源，例如冷色晨光和暖色烛火？光影在主体上投下了怎样的阴影？这些明暗对比如何引导观众的第一眼视觉落点？
 
-          ### 6. 动态审查：定格在哪一个瞬间
-          这是一个死的静止时刻，还是一个活的爆发瞬间？动作是否引发了物理上的扰动，例如飘动的流苏、飞溅的灰尘、紧绷的指节？重力或惯性在画面中是否有迹可循？
+          ### 7. 动态审查：定格在哪一个瞬间
+          这是一个静止画面还是个动态画面？动作是否引发了物理上的扰动，例如飘动的流苏、飞溅的灰尘、紧绷的指节？重力或惯性在画面中是否有迹可循？如何加强动作的力量感？是否可以有残影或者其它特效表现？
 
-          ### 7. 情绪审查：镜头角度的潜台词
-          当前的视角，例如极仰、极俯、倾斜，赋予了角色怎样的心理状态？画面的留白方向是否符合角色的视线引导？
+          ### 8. 情绪审查：镜头角度的潜台词
+          当前情景下，需要如何渲染情绪氛围？应该使用什么样的色调？需不需要强化透视用极俯或者极仰等大透视画面强调冲击力？画面是否有足够的疏密关系？留白方向是否符合角色的视线引导？光影氛围如何才能更加符合当前的情绪？
           {enrich_thinking}
 
           ## 输出 JSON
@@ -1275,9 +1325,9 @@ nodes:
           }
 
       prompt_fields:
-        value: ["index", "segment_title", "paragraph_text", "panel_count", "present_characters", "location", "key_props", "segment_assignment", "scene_layout", "panel_plan", "review", "review_history"]
+        value: ["index", "segment_title", "paragraph_text", "panel_count", "present_characters", "location", "key_props", "segment_assignment", "scene_layout", "panel_plan", "review", "review_history", "prompt_variant_instruction"]
       passthrough_fields:
-        value: ["index", "segment_title", "paragraph_text", "panel_count", "present_characters", "location", "scene_description", "key_props", "segment_assignment", "scene_layout", "panel_plan", "review", "review_history"]
+        value: ["index", "segment_title", "paragraph_text", "panel_count", "present_characters", "location", "scene_description", "key_props", "segment_assignment", "scene_layout", "panel_plan", "review", "review_history", "prompt_variant_index", "prompt_variant_count", "prompt_variant_instruction"]
       required_input_fields:
         value: ["scene_layout", "panel_plan"]
       max_attempts:
@@ -1365,8 +1415,8 @@ nodes:
         from: "$nodes.prepare_segment_storyboard_inputs.output.shared_context"
       review_system:
         value: |
-          仅返回合法 JSON。你是画面提示词质量监督，只做轻量审查：提示词是否忠于 scene_layout 和 panel_plan，是否越界加入不该出现的内容。
-          你按与“转换画面提示词”相同的画面提示词标准审查和修订，但职责边界只限于 image_prompt 写得对不对；不评价 panel_plan 好不好，不重新设计分镜，不添加画风、质量词、模型参数、负面提示词或参考图规则。
+          仅返回合法 JSON。你是画面提示词质量监督，只审查 image_prompt 是否忠于 scene_layout 和 panel_plan，并且是否落实“转换画面提示词”的八段式思维链。
+          你按与“转换画面提示词”相同的画面提示词标准审查和修订，但职责边界只限于 image_prompt 写得对不对；不评价 panel_plan 好不好，不改变分格数量，不改写事件因果，不添加画风、质量词、模型参数、负面提示词或参考图规则。
       review_prompt_template:
         value: |
           请审查当前分段的 image_prompt。
@@ -1378,9 +1428,15 @@ nodes:
 
           画面提示词标准：
           - 只把已通过审查的 scene_layout 和 panel_plan 转换为完整 image_prompt，不重新设计分镜，不改写事件因果。
-          - image_prompt 必须先说明一共有几个分格；如果是多格，必须说明整页分格布局，分格大小不要完全一样，不要平均。
+          - image_prompt 必须先说明一共有几个分格；如果是多格，必须说明整页分格布局、大小关系、阅读顺序、情绪爆发点、剧情核心格和衔接格，允许符合叙事重点的跨格或破格设计，但不得新增 panel_plan 之外的事件。
           - 分格数量、分格编号和每格主要内容必须与 panel_plan.panel_count 和 panel_plan.panels.description 一一对应；如果 panel_plan 只有 1 格，只能写 1 格。
-          - 描述顺序必须先是整页分格布局，再逐格说明视角、景别、透视和构图，然后才进入前景/中景/背景空间层级、角色位置/朝向/动作、少量关键物件、光影和最后氛围。
+          - 描述顺序必须先是整页分格布局，再逐格说明镜头语言和构图意图，然后进入前景/中景/背景三层空间、角色位置/朝向/动作、叙事物件、光影冲突、动态扰动和情绪氛围。
+          - 每格镜头必须有明确视觉意图，说明机位、角度、景别、透视和画面重心如何加强主体、动作方向、物体关系和冲击力；避免默认平视、平均分配、正中对称和缺乏透视关系的描述。
+          - 每格应基于 scene_layout 使用已有场景事物构成前景、中景、背景三层空间；如缺少层次、遮挡、前后景关系或空间深度，应补足。
+          - 环境物件应服务叙事，能暗示角色身份、地位、处境或当前心境；不得堆砌无关装饰。
+          - 光影应说明光源属性、明暗对比、投影或视觉落点如何服务当前冲突和情绪；不得只写空泛氛围词。
+          - 动态应定格在有力量感的瞬间，体现动作引发的物理扰动、重力、惯性、残影或其他可见效果；静态画面也必须说明为什么静止能服务当前段落。
+          - 情绪氛围应通过色调、透视、疏密关系、留白方向、光影和镜头角度形成，不写不可见心理推理。
           - 不包含对话，不包含角色服装或外貌描写。
           - 画面中只能出现当前段落在场角色；不得描写或提及不在场角色。如必须出现复数次要角色，应给出明确数量和编号，并分别描述动作。
           - 不出现腿部、脚部、鞋履相关描述；用角色朝向、上半身动作、衣摆、武器、遮挡物或地面痕迹表达动作方向和受力关系。
@@ -1394,15 +1450,18 @@ nodes:
           - 如果 panel_plan 本身不理想，也必须以它为既定事实；只指出 image_prompt 与 panel_plan 不一致、遗漏、越界或写得不完整的问题。
 
           审查问题：
-          1. image_prompt 是否先说明一共有几个分格？多格时是否说明整页布局，且格子大小不完全一样、不平均？
+          1. image_prompt 是否先说明一共有几个分格？多格时是否说明整页布局、大小关系、阅读顺序、情绪爆发点/剧情核心格/衔接格，以及必要的跨格或破格设计？
           2. 分格数量和每格内容是否严格对应 panel_plan.panel_count 与 panel_plan.panels.description？是否新增、删除、合并、拆分或重排分格？
-          3. image_prompt 是否先根据分格计划说明整页分格布局，然后逐格说明视角、景别、透视和构图，再进入画面细节？如直接写细节而没有先定布局和镜头，应补足。
-          4. 每格是否完整描述空间层级、角色位置/朝向/动作、关键物件、光影和氛围？如只写摘要或关键词，应补足。
-          5. 每格是否避免默认正中平视、左右对称和缺乏设计感的构图？如镜头选择没有视觉意图，应加强角度、透视、遮挡或前后景。
-          6. 角色是否只来自当前段落在场角色？如新增不在场角色或提及不在场角色，应删除。
-          7. 是否出现对话、角色服装、外貌、腿部、脚部或鞋履描述？如出现，应删除或改用朝向、上半身动作、衣摆、武器、遮挡物或地面痕迹表达。
-          8. 是否写了剧情来龙去脉、预示、象征解读、作者意图、观众感受或不可见心理推理？如有，应改为可见动作、物件、光影和氛围。
-          9. 是否加入画风、质量词、模型参数、负面提示词、角色一致性固定约束、参考图规则或程序化说明？如出现，应删除。
+          3. 每格是否落实镜头语言：机位、角度、景别、透视、画面重心和物体关系是否专业且有冲击力？是否避免平视、对称、平均和缺乏设计意图的构图？
+          4. 每格是否至少形成前景、中景、背景三层空间，并自然利用 scene_layout 中已有物件、遮挡和前后景关系营造深度？
+          5. 关键环境物件是否能暗示角色身份、地位、处境或当前心境？是否出现无关装饰堆砌，或遗漏能加强叙事性的物件？
+          6. 光影是否说明光源属性、明暗对比、投影和视觉落点如何刻画冲突与情绪？如只有空泛氛围词，应补足具体光影关系。
+          7. 动态是否定格在有力量感的瞬间，并体现动作造成的扰动、重力、惯性、残影或可见效果？如画面过静或动作无力，应补足。
+          8. 情绪氛围是否通过色调、透视、疏密关系、留白方向、光影和镜头角度形成，而不是不可见心理推理？
+          9. 角色是否只来自当前段落在场角色？如新增不在场角色或提及不在场角色，应删除。
+          10. 是否出现对话、角色服装、外貌、腿部、脚部或鞋履描述？如出现，应删除或改用朝向、上半身动作、衣摆、武器、遮挡物或地面痕迹表达。
+          11. 是否写了剧情来龙去脉、预示、象征解读、作者意图、观众感受或不可见心理推理？如有，应改为可见动作、物件、光影和氛围。
+          12. 是否加入画风、质量词、模型参数、负面提示词、角色一致性固定约束、参考图规则或程序化说明？如出现，应删除。
 
           如果全部合格，passed=true。否则 passed=false，并给出可执行的修改意见。
           输出中的 think 写完整推理过程。
@@ -1418,7 +1477,7 @@ nodes:
       revision_system:
         value: |
           仅返回合法 JSON。你是画面提示词编辑，只根据审查意见重新生成完整分段的 image_prompt。
-          修订不改变 scene_layout、panel_plan、原剧本事件、角色、地点或道具；不添加画风、质量词、模型参数、负面提示词或参考图规则。
+          修订必须落实“转换画面提示词”的八段式思维链，但不改变 scene_layout、panel_plan、原剧本事件、角色、地点或道具；不添加画风、质量词、模型参数、负面提示词或参考图规则。
       revision_prompt_template:
         value: |
           请根据审查意见重新生成画面内容，只返回需要修订的字段。
@@ -1431,9 +1490,15 @@ nodes:
 
           画面提示词标准：
           - 只把已通过审查的 scene_layout 和 panel_plan 转换为完整 image_prompt，不重新设计分镜，不改写事件因果。
-          - image_prompt 必须先说明一共有几个分格；如果是多格，必须说明整页分格布局，分格大小不要完全一样，不要平均。
+          - image_prompt 必须先说明一共有几个分格；如果是多格，必须说明整页分格布局、大小关系、阅读顺序、情绪爆发点、剧情核心格和衔接格，允许符合叙事重点的跨格或破格设计，但不得新增 panel_plan 之外的事件。
           - 分格数量、分格编号和每格主要内容必须与 panel_plan.panel_count 和 panel_plan.panels.description 一一对应；如果 panel_plan 只有 1 格，只能写 1 格。
-          - 描述顺序必须先是整页分格布局，再逐格说明视角、景别、透视和构图，然后才进入前景/中景/背景空间层级、角色位置/朝向/动作、少量关键物件、光影和最后氛围。
+          - 描述顺序必须先是整页分格布局，再逐格说明镜头语言和构图意图，然后进入前景/中景/背景三层空间、角色位置/朝向/动作、叙事物件、光影冲突、动态扰动和情绪氛围。
+          - 每格镜头必须有明确视觉意图，说明机位、角度、景别、透视和画面重心如何加强主体、动作方向、物体关系和冲击力；避免默认平视、平均分配、正中对称和缺乏透视关系的描述。
+          - 每格应基于 scene_layout 使用已有场景事物构成前景、中景、背景三层空间；如缺少层次、遮挡、前后景关系或空间深度，应补足。
+          - 环境物件应服务叙事，能暗示角色身份、地位、处境或当前心境；不得堆砌无关装饰。
+          - 光影应说明光源属性、明暗对比、投影或视觉落点如何服务当前冲突和情绪；不得只写空泛氛围词。
+          - 动态应定格在有力量感的瞬间，体现动作引发的物理扰动、重力、惯性、残影或其他可见效果；静态画面也必须说明为什么静止能服务当前段落。
+          - 情绪氛围应通过色调、透视、疏密关系、留白方向、光影和镜头角度形成，不写不可见心理推理。
           - 不包含对话，不包含角色服装或外貌描写。
           - 画面中只能出现当前段落在场角色；不得描写或提及不在场角色。如必须出现复数次要角色，应给出明确数量和编号，并分别描述动作。
           - 不出现腿部、脚部、鞋履相关描述；用角色朝向、上半身动作、衣摆、武器、遮挡物或地面痕迹表达动作方向和受力关系。
@@ -1445,7 +1510,7 @@ nodes:
           1. 只返回 think 和 image_prompt；
           2. 身份字段、场景布局和分镜计划会由程序从原始分段对象继承，不要尝试改写。
           3. 重新生成完整的 image_prompt；不能只修正局部，不能压缩成短摘要，必须重新覆盖 panel_plan.panels 的全部分格。
-          4. 修订时先保留“一共有几个分格”和多格布局说明，再逐格补足视角、景别、透视和构图，最后补画面细节。
+          4. 修订时先保留“一共有几个分格”和多格布局说明，再逐格补足镜头语言、构图冲击力、三层空间、叙事物件、光影、动态和情绪氛围。
           5. 修订时禁止对话、角色服装外貌、腿脚鞋履、默认平庸构图、剧情来龙去脉、预示、象征解读、作者意图和不可见心理推理。
           6. 不改变分镜计划，不加入固定风格、一致性约束、质量词、负面词、模型参数或参考图规则；发现越界内容时删除或收束为当前计划允许的可见画面。
 
@@ -1613,8 +1678,8 @@ nodes:
         from: "$nodes.prepare_segment_storyboard_inputs.output.shared_context"
       generation_rules:
         value: |
-          风格指令：请参考《罗小黑战记》的线条、色彩逻辑和视觉质感生成高质量，细节丰富，富有张力的漫画，线条是典型的矢量图风格，干净且流畅，使用纯赛璐璐风格，色块干净明确，轮廓线利落，阴影较浅，边缘锐利，阴影偏冷色调，注意，所有角色都是胶囊形设计（达摩式 / 蛋形），下半身是个球，没有腿。strict perspective with foreshortening, near objects large far objects small, strong depth of field, layered foreground-midground-background composition. digital illustration, chibi style, children's book art style, manhwa style, clean lineart, soft cel shading, vibrant colors, dynamic action atmosphere, masterpiece, best quality, 8k
-          角色一致性：保持人物武器和参考完全一致，人物比例不变，所有角色为达摩/不倒翁体型：角色的脸为圆形，q版造型，忽略面部细节，下半身为圆润饱满的半球形底部，完全没有腿部、没有膝盖、没有脚踝、没有足部。
+          风格指令：请参考《罗小黑战记》的线条、色彩逻辑和视觉质感生成高质量，细节丰富，富有张力的漫画，线条是典型的矢量图风格，干净且流畅，使用纯赛璐璐风格，色块干净明确，轮廓线利落，阴影较浅，边缘锐利，阴影偏冷色调，注意，所有角色都是q版，下半身是个球，没有腿。strict perspective with foreshortening, near objects large far objects small, strong depth of field, layered foreground-midground-background composition. digital illustration, chibi style, children's book art style, manhwa style, clean lineart, soft cel shading, vibrant colors, dynamic action atmosphere, masterpiece, best quality, 8k
+          角色一致性：保持人物武器和参考完全一致，人物比例不变，角色的脸为圆形，q版造型，忽略面部细节，下半身为圆润饱满的半球形底部，完全没有腿部、没有膝盖、没有脚踝、没有足部。
           时代背景：场景细节丰富，注意！时代背景在中国古代，以水浒传为背景，请根据时代背景和当前情景设计环境和物件，使装饰和场景内的物体丰富，并和角色风格一致。
           透视与构图：严格遵守近大远小的透视关系，透视线在体现强烈的空间纵深感，注意，每个分格的消失点必须统一，如果有超过一个分格，分格应该采用不规则的梯形与矩形组合排版，打破平庸的视觉节奏。
           场景建筑比例：场景建筑比例也要符合 chibi style。
@@ -1624,6 +1689,10 @@ nodes:
         value: "16:9"
       resolution:
         value: 2K
+      prompts_per_item:
+        from: "$nodes.select_episode_metadata.output.storyboard_options.prompts_per_item"
+      images_per_prompt:
+        from: "$nodes.select_episode_metadata.output.storyboard_options.images_per_prompt"
     outputs:
       type: object
       required: ["panel_cards"]

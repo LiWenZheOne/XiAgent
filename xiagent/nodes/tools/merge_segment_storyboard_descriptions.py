@@ -51,7 +51,12 @@ class MergeSegmentStoryboardDescriptionsNode(BaseNode):
             )
 
         descriptions = [dict(item) for item in results if isinstance(item, Mapping)]
-        descriptions.sort(key=lambda item: _sort_index(item.get("index")))
+        descriptions.sort(
+            key=lambda item: (
+                _sort_index(item.get("index")),
+                _sort_index(item.get("prompt_variant_index")),
+            )
+        )
         return NodeResult(status="succeeded", output={"segment_descriptions": descriptions})
 
 
@@ -66,6 +71,9 @@ def _segment_description_schema() -> dict[str, Any]:
             "description": {"type": "string", "minLength": 1},
             "scene_layout": {"type": "object", "additionalProperties": True},
             "panel_plan": {"type": "object", "additionalProperties": True},
+            "prompt_variant_index": {"type": "integer", "minimum": 0},
+            "prompt_variant_count": {"type": "integer", "minimum": 1},
+            "prompt_variant_instruction": {"type": "string"},
             "image_prompt": {"type": "string", "minLength": 1},
             "review": {"type": "object", "additionalProperties": True},
             "review_history": {

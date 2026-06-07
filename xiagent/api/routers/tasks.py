@@ -758,6 +758,7 @@ async def _regenerate_storyboard_panel_prompt_for_task(
         "node_execution_id": waiting_execution.node_execution_id,
         "asset_service": services.assets,
     }
+    manual_panel_count = _manual_panel_count(item.get("panel_count"))
 
     layout_result = await _run_workflow_node(
         services=services,
@@ -772,30 +773,35 @@ async def _regenerate_storyboard_panel_prompt_for_task(
     )
     layout_items = _result_items(layout_result, node_id="analyze_scene_layout")
 
+    plan_inputs = _parallel_storyboard_inputs(
+        workflow_nodes["plan_storyboard_panels"],
+        items=layout_items,
+        shared_context=request.shared_context,
+    )
+    _apply_manual_panel_count_override(plan_inputs, manual_panel_count, review=False)
     plan_result = await _run_workflow_node(
         services=services,
         context_base=context_base,
         workflow_node=workflow_nodes["plan_storyboard_panels"],
         execution_suffix=f"{request.card.get('card_id', 'preview')}_plan",
-        inputs=_parallel_storyboard_inputs(
-            workflow_nodes["plan_storyboard_panels"],
-            items=layout_items,
-            shared_context=request.shared_context,
-        ),
+        inputs=plan_inputs,
     )
     plan_items = _result_items(plan_result, node_id="plan_storyboard_panels")
+
+    plan_review_inputs = _review_storyboard_inputs(
+        workflow_nodes["review_and_refine_storyboard_plan"],
+        items=plan_items,
+        storyboard_items=[item],
+        shared_context=request.shared_context,
+    )
+    _apply_manual_panel_count_override(plan_review_inputs, manual_panel_count, review=True)
 
     plan_review_result = await _run_workflow_node(
         services=services,
         context_base=context_base,
         workflow_node=workflow_nodes["review_and_refine_storyboard_plan"],
         execution_suffix=f"{request.card.get('card_id', 'preview')}_plan_review",
-        inputs=_review_storyboard_inputs(
-            workflow_nodes["review_and_refine_storyboard_plan"],
-            items=plan_items,
-            storyboard_items=[item],
-            shared_context=request.shared_context,
-        ),
+        inputs=plan_review_inputs,
     )
     reviewed_plan_items = _result_items(plan_review_result, node_id="review_and_refine_storyboard_plan")
 
@@ -852,10 +858,21 @@ async def _regenerate_storyboard_panel_prompt_for_task(
         },
     )
     cards = panel_result.output.get("panel_cards")
+    requested_card_id = request.card.get("card_id")
     panel_index = request.card.get("panel_index")
     if not isinstance(cards, list):
         cards = []
     matched = next(
+        (
+            card
+            for card in cards
+            if isinstance(card, dict)
+            and requested_card_id
+            and card.get("card_id") == requested_card_id
+        ),
+        None,
+    )
+    matched = matched or next(
         (
             card
             for card in cards
@@ -1048,6 +1065,47 @@ def _review_storyboard_inputs(
         if value is not None:
             payload[key] = value
     return payload
+
+
+def _manual_panel_count(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value > 0 else None
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text or text.casefold() == "auto":
+        return None
+    return int(text) if text.isdigit() and int(text) > 0 else None
+
+
+def _apply_manual_panel_count_override(
+    inputs: dict[str, Any],
+    panel_count: int | None,
+    *,
+    review: bool,
+) -> None:
+    if panel_count is None:
+        return
+    if review:
+        instruction = (
+            f"\n\n人工覆盖分格数：用户手动指定目标分格数为 {panel_count}。"
+            f"审查和修订时必须要求 panel_plan.panel_count 等于 {panel_count}，"
+            f"且 panel_plan.panels 数量也等于 {panel_count}。"
+        )
+        for key in ("review_prompt_template", "revision_prompt_template"):
+            if isinstance(inputs.get(key), str):
+                inputs[key] += instruction
+        return
+
+    instruction = (
+        f"\n\n人工覆盖分格数：用户手动指定目标分格数为 {panel_count}。"
+        f"本次重新生成必须让 panel_plan.panel_count 等于 {panel_count}，"
+        f"并且 panel_plan.panels 数量也等于 {panel_count}；不要自行改成其他分格数。"
+    )
+    if isinstance(inputs.get("prompt_template"), str):
+        inputs["prompt_template"] += instruction
 
 
 def _literal_input(inputs: Any, key: str) -> Any:

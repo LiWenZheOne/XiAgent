@@ -1,6 +1,6 @@
 import { type ChangeEvent, type DragEvent, type PointerEvent, type WheelEvent, useEffect, useMemo, useRef, useState } from "react";
 
-import { createAssetTag, generateAssetImage, listAssetTags, listAssetTagsForAsset, searchAssets, uploadAsset } from "../../api/assets";
+import { createAssetTag, generateAssetImage, listAssetTags, listAssetTagsForAsset, replaceAssetFile, searchAssets, uploadAsset } from "../../api/assets";
 import { ApiError } from "../../api/client";
 import { generateTaskAssetImage } from "../../api/tasks";
 import type { AssetRecord, AssetScope, AssetTag } from "../../api/types";
@@ -17,6 +17,7 @@ interface AssetImageCard {
   variantName?: string;
   secondaryTagsText?: string;
   prompt?: string;
+  promptVariants?: string[];
   referenceImageRef?: ImageRef;
   referenceSource?: string;
   referenceAppearanceDescription?: string;
@@ -46,6 +47,7 @@ interface ImageRef {
 
 type ImageState = Record<string, string>;
 type ImageMetaState = Record<string, Record<string, string>>;
+type ImagePoolState = Record<string, GeneratedPoolImage[]>;
 type UploadState = Record<string, string>;
 type MatchState = Record<string, AssetMatch | null>;
 type CardEditsState = Record<string, CardEditState>;
@@ -57,6 +59,7 @@ type TabKey = "character" | "scene" | "prop" | "other";
 interface AssetNameConflictDialog {
   assetNames: string[];
   scopeLabel: string;
+  overwritePlans?: AssetUploadPlan[];
 }
 
 export interface AssetImagePreview {
@@ -72,6 +75,18 @@ interface GenerationProgress {
 
 interface GenerationJob {
   card: AssetImageCard;
+  prompt: string;
+  promptIndex: number;
+}
+
+interface GeneratedPoolImage {
+  image_url: string;
+  prompt?: string;
+  prompt_index?: number;
+  source?: string;
+  runninghub_task_id?: string;
+  asset_id?: string;
+  variant?: string;
 }
 
 interface AssetIdentity {
@@ -87,6 +102,7 @@ interface AssetUploadPlan {
   fullName: string;
   identity: AssetIdentity;
   imageUrl: string;
+  existingAssetId?: string;
 }
 
 type DefaultReferenceTemplates = Partial<Record<TabKey, string>>;
@@ -113,8 +129,10 @@ export function AssetImageCardsControl({
   const cards = useMemo(() => buildAssetCards(source), [source]);
   const [images, setImages] = useState<ImageState>(() => readonlyImages(readonly ? node.output_snapshot : node.input_snapshot));
   const [imageMeta, setImageMeta] = useState<ImageMetaState>({});
+  const [imagePool, setImagePool] = useState<ImagePoolState>(() => readonlyImagePool(readonly ? node.output_snapshot : node.input_snapshot));
   const imagesRef = useRef(images);
   const imageMetaRef = useRef(imageMeta);
+  const imagePoolRef = useRef(imagePool);
   const draftPersistQueueRef = useRef<Promise<void>>(Promise.resolve());
   const [matches, setMatches] = useState<MatchState>(() => initialMatches(cards));
   const [edits, setEdits] = useState<CardEditsState>(() => initialCardEdits(cards));
@@ -163,6 +181,10 @@ export function AssetImageCardsControl({
   }, [imageMeta]);
 
   useEffect(() => {
+    imagePoolRef.current = imagePool;
+  }, [imagePool]);
+
+  useEffect(() => {
     matchesRef.current = matches;
   }, [matches]);
 
@@ -184,7 +206,7 @@ export function AssetImageCardsControl({
           const next = { ...current };
           let changed = false;
           for (const card of cards) {
-            if (Object.prototype.hasOwnProperty.call(next, card.assetKey) || card.matchedAsset || card.referenceImageRef) continue;
+            if (Object.prototype.hasOwnProperty.call(next, card.assetKey) || card.matchedAsset) continue;
             const defaultMatch = defaultMatches[card.assetKey];
             if (!defaultMatch) continue;
             next[card.assetKey] = defaultMatch;
@@ -216,11 +238,12 @@ export function AssetImageCardsControl({
   async function persistDraft(
     nextImages: ImageState,
     nextImageMeta: ImageMetaState,
+    nextImagePool: ImagePoolState = imagePool,
     nextMatches: MatchState = matches,
     nextEdits: CardEditsState = edits,
   ) {
     if (readonly || !onDraft) return;
-    const payload = interactionPayload("generate_missing", "", nextImages, nextImageMeta, nextMatches, nextEdits);
+    const payload = interactionPayload("generate_missing", "", nextImages, nextImageMeta, nextImagePool, nextMatches, nextEdits);
     const persist = () => onDraft(payload);
     const nextPersist = draftPersistQueueRef.current.then(persist, persist);
     draftPersistQueueRef.current = nextPersist.catch(() => undefined);
@@ -232,6 +255,7 @@ export function AssetImageCardsControl({
     targetAssetName: string,
     imageState: ImageState,
     imageMetaState: ImageMetaState,
+    imagePoolState: ImagePoolState,
     matchState: MatchState,
     editState: CardEditsState,
   ): Record<string, unknown> {
@@ -256,14 +280,15 @@ export function AssetImageCardsControl({
           return payload;
         })
         .filter(Boolean),
-    prompt_results: editedPromptResults(cards, editState, matchState),
+      generated_images: generatedImagesPayload(cards, imagePoolState),
+      prompt_results: editedPromptResults(cards, editState, matchState),
     };
     if (targetAssetName) payload.target_asset_name = targetAssetName;
     return payload;
   }
 
   function finishPayload(createdAssetIds: string[] = []): Record<string, unknown> {
-    const payload = interactionPayload("finish", "", images, imageMeta, matches, edits);
+    const payload = interactionPayload("finish", "", images, imageMeta, imagePool, matches, edits);
     payload.created_asset_ids = createdAssetIds;
     const assetImages = Array.isArray(payload.asset_images) ? payload.asset_images : [];
     assetImages.forEach((item, index) => {
@@ -342,6 +367,26 @@ export function AssetImageCardsControl({
     }
   }
 
+  async function overwriteConflictingAssets() {
+    const overwritePlans = assetNameConflictDialog?.overwritePlans ?? [];
+    if (!overwritePlans.length || libraryBusy) return;
+    setLibraryBusy(true);
+    setError("");
+    try {
+      const overwrittenAssets = await Promise.all(overwritePlans.map(async (plan) => {
+        if (!plan.existingAssetId) throw new Error(`${plan.fullName} 没有可覆盖的目标资产。`);
+        const imageFile = await fileFromImageUrl(plan.imageUrl, plan.fullName);
+        return replaceAssetFile({ asset_id: plan.existingAssetId, file: imageFile });
+      }));
+      setAssetNameConflictDialog(null);
+      onSubmit?.(finishPayload(overwrittenAssets.map((asset) => asset.asset_id).filter(Boolean)));
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "覆盖资产失败。");
+    } finally {
+      setLibraryBusy(false);
+    }
+  }
+
   async function exportCardsZip() {
     const readyCards = cards.filter((card) => Boolean(images[card.assetKey]));
     if (!readyCards.length) {
@@ -398,10 +443,20 @@ export function AssetImageCardsControl({
     if (startingNewRun) {
       generationSummaryRef.current = { succeeded: 0, failed: 0 };
     }
-    generationQueueRef.current = [
-      ...generationQueueRef.current,
-      ...queuedCards.map((card) => ({ card })),
-    ];
+    const jobs = queuedCards.flatMap((card) => {
+      const edit = editsRef.current[card.assetKey] ?? cardEditFromCard(card);
+      const promptsPerItem = target ? 1 : generationSettingFromSource(source, "prompts_per_item");
+      const imagesPerPrompt = target ? 1 : generationSettingFromSource(source, "images_per_prompt");
+      const prompts = target ? [edit.prompt.trim() || card.prompt || ""] : promptsForBatchGeneration(card, edit, promptsPerItem);
+      return prompts.filter(Boolean).flatMap((prompt, promptIndex) => (
+        Array.from({ length: imagesPerPrompt }, () => ({ card, prompt, promptIndex }))
+      ));
+    });
+    if (!jobs.length) {
+      setError("请先填写至少一个资产提示词。");
+      return;
+    }
+    generationQueueRef.current = [...generationQueueRef.current, ...jobs];
     setGenerationStatuses((current) => {
       const next = { ...current };
       for (const card of queuedCards) next[card.assetKey] = "waiting";
@@ -409,7 +464,7 @@ export function AssetImageCardsControl({
       return next;
     });
     setGenerationProgress((current) => ({
-      total: (current?.running ? current.total : 0) + queuedCards.length,
+      total: (current?.running ? current.total : 0) + jobs.length,
       completed: current?.running ? current.completed : 0,
       running: true,
     }));
@@ -442,7 +497,7 @@ export function AssetImageCardsControl({
     }
   }
 
-  async function runGenerationJob({ card }: GenerationJob) {
+  async function runGenerationJob({ card, prompt, promptIndex }: GenerationJob) {
     setGenerationStatuses((current) => {
       const next = { ...current, [card.assetKey]: "generating" as GenerationStatus };
       generationStatusesRef.current = next;
@@ -451,7 +506,7 @@ export function AssetImageCardsControl({
     try {
       const edit = editsRef.current[card.assetKey] ?? cardEditFromCard(card);
       const activeMatch = activeMatchForCard(matchesRef.current, card);
-      const promptResult = editedPromptResult(card, edit, activeMatch);
+      const promptResult = editedPromptResult(card, { ...edit, prompt }, activeMatch);
       const promptText = assetPromptText(card, config.options, activeMatch);
       const generationInput = {
         project_id: projectId || "global",
@@ -473,6 +528,13 @@ export function AssetImageCardsControl({
             resolution: generationInput.resolution,
           });
       const nextImages = { ...imagesRef.current, [card.assetKey]: generated.image_url };
+      const nextImagePool = {
+        ...imagePoolRef.current,
+        [card.assetKey]: [
+          ...(imagePoolRef.current[card.assetKey] ?? []),
+          { ...generated, prompt, prompt_index: promptIndex },
+        ],
+      };
       const nextImageMeta = {
         ...imageMetaRef.current,
         [card.assetKey]: {
@@ -484,8 +546,10 @@ export function AssetImageCardsControl({
       };
       imagesRef.current = nextImages;
       imageMetaRef.current = nextImageMeta;
+      imagePoolRef.current = nextImagePool;
       setImages(nextImages);
       setImageMeta(nextImageMeta);
+      setImagePool(nextImagePool);
       setGenerationErrors((current) => {
         const next = { ...current };
         delete next[card.assetKey];
@@ -505,7 +569,7 @@ export function AssetImageCardsControl({
         ...generationSummaryRef.current,
         succeeded: generationSummaryRef.current.succeeded + 1,
       };
-      await persistDraft(nextImages, nextImageMeta, matchesRef.current, editsRef.current);
+      await persistDraft(nextImages, nextImageMeta, nextImagePool, matchesRef.current, editsRef.current);
     } catch (generationError) {
       setGenerationErrors((current) => ({
         ...current,
@@ -543,14 +607,25 @@ export function AssetImageCardsControl({
       }
       const nextImages = { ...images, [card.assetKey]: url };
       const nextImageMeta = { ...imageMeta, [card.assetKey]: { source: "manual_upload", asset_id: uploaded.asset_id } };
+      const nextImagePool = {
+        ...imagePool,
+        [card.assetKey]: [
+          ...(imagePool[card.assetKey] ?? []),
+          { image_url: url, source: "manual_upload", asset_id: uploaded.asset_id },
+        ],
+      };
       setImages(nextImages);
       setImageMeta(nextImageMeta);
+      setImagePool(nextImagePool);
+      imagesRef.current = nextImages;
+      imageMetaRef.current = nextImageMeta;
+      imagePoolRef.current = nextImagePool;
       setBrokenImageUrls((current) => {
         const next = { ...current };
         delete next[card.assetKey];
         return next;
       });
-      await persistDraft(nextImages, nextImageMeta);
+      await persistDraft(nextImages, nextImageMeta, nextImagePool);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "图片上传失败。");
     } finally {
@@ -592,7 +667,7 @@ export function AssetImageCardsControl({
       },
     };
     setMatches(nextMatches);
-    void persistDraft(images, imageMeta, nextMatches);
+    void persistDraft(images, imageMeta, imagePool, nextMatches);
     setPickerCard(null);
   }
 
@@ -665,6 +740,7 @@ export function AssetImageCardsControl({
         draggingKey={draggingKey}
         group={selectedTab}
         images={images}
+        imagePool={imagePool}
         brokenImageUrls={brokenImageUrls}
         matches={matches}
         edits={edits}
@@ -677,6 +753,34 @@ export function AssetImageCardsControl({
         onDrop={dropCardImage}
         onEdit={(card, patch) => {
           setEdits((current) => ({ ...current, [card.assetKey]: { ...(current[card.assetKey] ?? cardEditFromCard(card)), ...patch } }));
+        }}
+        onSelectPoolImage={(card, image) => {
+          const selectedPrompt = promptForPoolImage(card, image);
+          const nextImages = { ...imagesRef.current, [card.assetKey]: image.image_url };
+          const nextImageMeta = {
+            ...imageMetaRef.current,
+            [card.assetKey]: {
+              source: image.source || "ai_generated",
+              ...(image.asset_id ? { asset_id: image.asset_id } : {}),
+              ...(image.runninghub_task_id ? { runninghub_task_id: image.runninghub_task_id } : {}),
+              ...(image.variant ? { variant: image.variant } : {}),
+            },
+          };
+          setImages(nextImages);
+          setImageMeta(nextImageMeta);
+          imagesRef.current = nextImages;
+          imageMetaRef.current = nextImageMeta;
+          if (!selectedPrompt) {
+            void persistDraft(nextImages, nextImageMeta, imagePoolRef.current, matchesRef.current, editsRef.current);
+            return;
+          }
+          setEdits((current) => {
+            const edit = current[card.assetKey] ?? cardEditFromCard(card);
+            const next = { ...current, [card.assetKey]: { ...edit, prompt: selectedPrompt } };
+            editsRef.current = next;
+            void persistDraft(nextImages, nextImageMeta, imagePoolRef.current, matchesRef.current, next);
+            return next;
+          });
         }}
         onGenerate={(card) => void generateCards(card)}
         onBrokenImage={(card, url) => {
@@ -729,10 +833,15 @@ export function AssetImageCardsControl({
                 <li key={assetName}>{assetName}</li>
               ))}
             </ul>
-            <p>请修改这张卡片的资产名称或标签后再入库，或先处理资产库中的同名资产。</p>
+            <p>{assetNameConflictDialog.overwritePlans?.length ? "选择覆盖会用当前卡片图像替换资产库中的同名资产文件；返回可继续修改名称或标签。" : "请修改这张卡片的资产名称或标签后再入库，或先处理资产库中的同名资产。"}</p>
             <div className="button-row end">
-              <button className="primary-button" type="button" onClick={() => setAssetNameConflictDialog(null)}>
-                知道了
+              {assetNameConflictDialog.overwritePlans?.length ? (
+                <button className="primary-button" disabled={libraryBusy} type="button" onClick={() => void overwriteConflictingAssets()}>
+                  覆盖
+                </button>
+              ) : null}
+              <button className="secondary-button" disabled={libraryBusy} type="button" onClick={() => setAssetNameConflictDialog(null)}>
+                返回
               </button>
             </div>
           </section>
@@ -762,6 +871,7 @@ function AssetCardGroup({
   group,
   cards,
   images,
+  imagePool,
   brokenImageUrls,
   matches,
   edits,
@@ -775,6 +885,7 @@ function AssetCardGroup({
   onUpload,
   onDrop,
   onEdit,
+  onSelectPoolImage,
   onGenerate,
   onBrokenImage,
   onOpenAssetPicker,
@@ -783,6 +894,7 @@ function AssetCardGroup({
   group: TabKey;
   cards: AssetImageCard[];
   images: ImageState;
+  imagePool: ImagePoolState;
   brokenImageUrls: Record<string, string>;
   matches: MatchState;
   edits: CardEditsState;
@@ -796,6 +908,7 @@ function AssetCardGroup({
   onUpload: (card: AssetImageCard, event: ChangeEvent<HTMLInputElement>) => void;
   onDrop: (card: AssetImageCard, event: DragEvent<HTMLElement>) => void;
   onEdit: (card: AssetImageCard, patch: Partial<CardEditState>) => void;
+  onSelectPoolImage: (card: AssetImageCard, image: GeneratedPoolImage) => void;
   onGenerate: (card: AssetImageCard) => void;
   onBrokenImage: (card: AssetImageCard, url: string) => void;
   onOpenAssetPicker: (card: AssetImageCard) => void;
@@ -822,6 +935,7 @@ function AssetCardGroup({
           const finalImageUrl = images[card.assetKey] ?? "";
           const generationStatus = generationStatuses[card.assetKey] ?? "";
           const generationError = generationErrors[card.assetKey] ?? "";
+          const poolImages = imagePool[card.assetKey] ?? [];
           const imageUrl = finalImageUrl || match?.imageUrl || "";
           const previewImageUrl = brokenImageUrls[card.assetKey] === imageUrl ? "" : imageUrl;
           const displayName = cardDisplayName(edit, group);
@@ -906,6 +1020,27 @@ function AssetCardGroup({
                   <input accept="image/*" disabled={busy || Boolean(uploading[card.assetKey])} id={inputId} type="file" onChange={(event) => onUpload(card, event)} />
                 ) : null}
               </label>
+              {poolImages.length ? (
+                <div className="asset-image-pool" aria-label={`${card.title} 图像池`}>
+                  <div className="asset-image-pool-head">
+                    <span>图像池</span>
+                    <small>{poolImages.length} 张</small>
+                  </div>
+                  <div className="asset-image-pool-grid">
+                    {poolImages.map((image, index) => {
+                      const active = finalImageUrl === image.image_url;
+                      return (
+                        <div className={active ? "asset-image-pool-item active" : "asset-image-pool-item"} key={`${image.image_url}-${index}`}>
+                          <button type="button" disabled={readonly} onClick={() => onSelectPoolImage(card, image)}>
+                            <img alt={`${displayName} 图像池 ${index + 1}`} src={image.image_url} />
+                            <span>{active ? "已选" : `生成图 ${index + 1}`}</span>
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
               <div className="asset-image-card-body">
                 <div className="asset-image-link-row">
                   <div>
@@ -942,7 +1077,12 @@ function AssetCardGroup({
                   {readonly ? (
                     <p>{edit.prompt || "暂无提示词"}</p>
                   ) : (
-                    <textarea aria-label="资产提示词" disabled={busy} value={edit.prompt} onChange={(event) => onEdit(card, { prompt: event.target.value })} />
+                    <textarea
+                      aria-label="资产提示词"
+                      disabled={busy}
+                      value={edit.prompt}
+                      onChange={(event) => onEdit(card, { prompt: event.target.value })}
+                    />
                   )}
                 </div>
                 {!readonly ? (
@@ -1084,8 +1224,9 @@ function buildAssetCards(source: Record<string, unknown> | null): AssetImageCard
         assetType: textValue(item.asset_type) || "other",
         assetKey: `${textValue(item.asset_type) || "asset"}:${title}:${stringList(item.asset_tags).join("|")}`,
         title,
-        prompt: textValue(item.prompt),
-      };
+      prompt: textValue(item.prompt),
+      promptVariants: promptVariantsFromPrompt(item),
+    };
     });
   }
   const approvedAssets = recordValue(source.approved_assets);
@@ -1108,6 +1249,7 @@ function buildAssetCards(source: Record<string, unknown> | null): AssetImageCard
       variantName: stringList(variant?.asset_tags)[0] || stringList(character.asset_tags)[0] || "",
       secondaryTagsText: stringList(accessory?.asset_tags).slice(1).join("、") || stringList(character.asset_tags).slice(1).join("、"),
       prompt: textValue(prompt?.prompt),
+      promptVariants: promptVariantsForAsset(promptItems, name),
       referenceImageRef: imageRefFromValue(prompt?.reference_image_ref),
       referenceSource: textValue(prompt?.reference_source) || textValue(character.reference_source),
       referenceAppearanceDescription: textValue(prompt?.reference_appearance_description) || textValue(character.reference_appearance_description) || textValue(character.matched_asset_appearance_description),
@@ -1133,6 +1275,7 @@ function genericCards(value: unknown, assetType: string, prompts: Array<Record<s
       variantName: stringList(item.asset_tags)[0] || "",
       secondaryTagsText: stringList(item.asset_tags).slice(1).join("、"),
       prompt: textValue(prompt?.prompt) || textValue(item.prompt),
+      promptVariants: promptVariantsForAsset(prompts, title),
       referenceImageRef: imageRefFromValue(prompt?.reference_image_ref) || imageRefFromValue(item.reference_image_ref) || imageRefFromRecord(item),
       referenceSource: textValue(prompt?.reference_source) || textValue(item.reference_source),
       referenceAppearanceDescription: textValue(prompt?.reference_appearance_description) || textValue(item.reference_appearance_description) || textValue(item.matched_asset_appearance_description),
@@ -1194,6 +1337,59 @@ function readonlyImages(value: unknown): ImageState {
     if (key && url) images[key] = url;
   }
   return images;
+}
+
+function promptVariantsForAsset(prompts: Array<Record<string, unknown>>, name: string): string[] {
+  const normalizedName = name.trim();
+  const matchedPrompts = prompts.filter((prompt) => {
+    const key = promptKey(prompt);
+    return key === normalizedName || key.startsWith(`${normalizedName}_`) || key.includes(normalizedName);
+  });
+  return uniqueNonEmptyStrings(matchedPrompts.flatMap(promptVariantsFromPrompt));
+}
+
+function promptVariantsFromPrompt(prompt: Record<string, unknown> | undefined): string[] {
+  if (!prompt) return [];
+  return uniqueNonEmptyStrings([
+    textValue(prompt.prompt),
+    ...stringList(prompt.prompt_variants),
+    ...arrayOfRecords(prompt.prompt_variants).map((item) => textValue(item.prompt)),
+  ]);
+}
+
+function readonlyImagePool(value: unknown): ImagePoolState {
+  const pool: ImagePoolState = {};
+  for (const item of arrayOfRecords(recordValue(value)?.generated_images)) {
+    const assetType = textValue(item.asset_type) || "asset";
+    const assetName = textValue(item.asset_name) || textValue(item.name);
+    const tags = stringList(item.asset_tags).join("|");
+    const imageUrl = textValue(item.image_url);
+    if (!assetName || !imageUrl) continue;
+    const key = textValue(item.asset_key) || `${assetType}:${assetName}:${tags}`;
+    pool[key] = [
+      ...(pool[key] ?? []),
+      {
+        image_url: imageUrl,
+        prompt: textValue(item.prompt),
+        prompt_index: typeof item.prompt_index === "number" ? item.prompt_index : undefined,
+        source: textValue(item.source),
+        asset_id: textValue(item.asset_id),
+        runninghub_task_id: textValue(item.runninghub_task_id),
+        variant: textValue(item.variant),
+      },
+    ];
+  }
+  for (const item of arrayOfRecords(recordValue(value)?.asset_images)) {
+    const assetType = textValue(item.asset_type) || "asset";
+    const assetName = textValue(item.asset_name) || textValue(item.name);
+    const tags = stringList(item.asset_tags).join("|");
+    const imageUrl = textValue(item.image_url);
+    if (!assetName || !imageUrl) continue;
+    const key = textValue(item.asset_key) || `${assetType}:${assetName}:${tags}`;
+    if ((pool[key] ?? []).some((image) => image.image_url === imageUrl)) continue;
+    pool[key] = [...(pool[key] ?? []), { image_url: imageUrl, source: textValue(item.source) || "manual_upload", asset_id: textValue(item.asset_id) }];
+  }
+  return pool;
 }
 
 function assetLibraryTags(card: AssetImageCard, edit: CardEditState, group: TabKey): string[] {
@@ -1273,7 +1469,7 @@ async function loadDefaultReferenceMatches(
 ): Promise<MatchState> {
   const templatesByGroup = new Map<TabKey, string>();
   for (const card of cards) {
-    if (card.matchedAsset || card.referenceImageRef) continue;
+    if (card.matchedAsset) continue;
     const group = tabKeyForAssetType(card.assetType);
     const templateName = templates[group];
     if (templateName) templatesByGroup.set(group, templateName);
@@ -1295,7 +1491,7 @@ async function loadDefaultReferenceMatches(
 
   const matches: MatchState = {};
   for (const card of cards) {
-    if (card.matchedAsset || card.referenceImageRef) continue;
+    if (card.matchedAsset) continue;
     const asset = assetsByGroup.get(tabKeyForAssetType(card.assetType));
     if (!asset) continue;
     matches[card.assetKey] = {
@@ -1329,6 +1525,55 @@ function cardEditFromCard(card: AssetImageCard): CardEditState {
     assetTags: assetTagsTextFromCard(card),
     prompt: card.prompt || "",
   };
+}
+
+function generationSettingFromSource(source: Record<string, unknown> | null, key: "prompts_per_item" | "images_per_prompt"): number {
+  const value = source?.[key];
+  const parsed = typeof value === "number" && Number.isFinite(value) ? Math.trunc(value) : 1;
+  return Math.max(1, Math.min(6, parsed));
+}
+
+function promptsForBatchGeneration(card: AssetImageCard, edit: CardEditState, count: number): string[] {
+  const currentPrompt = edit.prompt.trim() || card.prompt || "";
+  const prompts = uniqueNonEmptyStrings([...(card.promptVariants ?? []), currentPrompt]);
+  while (prompts.length < count && currentPrompt) prompts.push(currentPrompt);
+  return prompts.slice(0, count);
+}
+
+function promptForPoolImage(card: AssetImageCard, image: GeneratedPoolImage): string {
+  const prompt = image.prompt?.trim();
+  if (prompt) return prompt;
+  const index = typeof image.prompt_index === "number" && Number.isFinite(image.prompt_index)
+    ? Math.trunc(image.prompt_index)
+    : -1;
+  return index >= 0 ? (card.promptVariants?.[index]?.trim() ?? "") : "";
+}
+
+function uniqueNonEmptyStrings(values: Array<string | undefined>): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const clean = value?.trim();
+    if (!clean || seen.has(clean)) continue;
+    seen.add(clean);
+    result.push(clean);
+  }
+  return result;
+}
+
+function generatedImagesPayload(cards: AssetImageCard[], imagePool: ImagePoolState): Array<Record<string, unknown>> {
+  return cards.flatMap((card) => (imagePool[card.assetKey] ?? []).map((image) => ({
+    asset_key: card.assetKey,
+    asset_type: card.assetType,
+    asset_name: card.title,
+    image_url: image.image_url,
+    prompt: image.prompt,
+    prompt_index: image.prompt_index,
+    source: image.source,
+    asset_id: image.asset_id,
+    runninghub_task_id: image.runninghub_task_id,
+    variant: image.variant,
+  })));
 }
 
 function cardDisplayName(edit: CardEditState, group: TabKey): string {
@@ -1378,12 +1623,14 @@ async function findAssetNameConflicts(plans: AssetUploadPlan[], projectId?: stri
   const scope = uploadScope(projectId);
   const project_id = projectId && projectId !== "global" ? projectId : undefined;
   const duplicatedNames = identitiesDuplicatedInBatch(plans);
-  const existingNames = await existingAssetIdentityNames(plans, scope, project_id);
+  const existingPlans = await existingAssetIdentityPlans(plans, scope, project_id);
+  const existingNames = existingPlans.map((plan) => plan.fullName);
   const assetNames = Array.from(new Set([...duplicatedNames, ...existingNames])).sort((left, right) => left.localeCompare(right, "zh-Hans-CN"));
   if (!assetNames.length) return null;
   return {
     assetNames,
     scopeLabel: assetScopeLabel(scope),
+    overwritePlans: duplicatedNames.length ? [] : existingPlans,
   };
 }
 
@@ -1401,9 +1648,9 @@ function identitiesDuplicatedInBatch(plans: AssetUploadPlan[]): string[] {
     .map(([key]) => labels.get(key) ?? key);
 }
 
-async function existingAssetIdentityNames(plans: AssetUploadPlan[], scope: AssetScope, project_id?: string): Promise<string[]> {
+async function existingAssetIdentityPlans(plans: AssetUploadPlan[], scope: AssetScope, project_id?: string): Promise<AssetUploadPlan[]> {
   const uniquePlans = uniquePlansByIdentity(plans);
-  const matchedNames: string[] = [];
+  const matchedPlans: AssetUploadPlan[] = [];
   await Promise.all(uniquePlans.map(async (plan) => {
     const tagNames = assetLibraryTags(plan.card, plan.edit, plan.group);
     if (!tagNames.length) return;
@@ -1415,11 +1662,11 @@ async function existingAssetIdentityNames(plans: AssetUploadPlan[], scope: Asset
     });
     for (const candidate of candidates) {
       if (await assetRecordMatchesIdentity(candidate, plan.identity)) {
-        matchedNames.push(candidate.name || plan.fullName);
+        matchedPlans.push({ ...plan, fullName: candidate.name || plan.fullName, existingAssetId: candidate.asset_id });
       }
     }
   }));
-  return matchedNames;
+  return matchedPlans;
 }
 
 function uniquePlansByIdentity(plans: AssetUploadPlan[]): AssetUploadPlan[] {

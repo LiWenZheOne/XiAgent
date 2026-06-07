@@ -41,6 +41,8 @@ class PrepareStoryboardPanelCardsNode(BaseNode):
                     "negative_prompt": {"type": "string"},
                     "aspect_ratio": {"type": "string", "minLength": 1},
                     "resolution": {"type": "string", "minLength": 1},
+                    "prompts_per_item": {"type": "integer", "minimum": 1, "maximum": 6, "default": 1},
+                    "images_per_prompt": {"type": "integer", "minimum": 1, "maximum": 6, "default": 1},
                 },
                 "additionalProperties": False,
             },
@@ -69,22 +71,41 @@ class PrepareStoryboardPanelCardsNode(BaseNode):
     async def run(self, ctx: NodeContext | None, inputs: Mapping[str, Any]) -> NodeResult:
         _ = ctx
         assignments = _assignments_by_index(inputs.get("segment_assignments"))
-        items_by_index = _items_by_index(inputs.get("storyboard_items"))
+        items_by_key = _items_by_key(inputs.get("storyboard_items"))
         generation_rules = _text(inputs.get("generation_rules")) or _default_generation_rules()
         negative_prompt = _text(inputs.get("negative_prompt")) or _default_negative_prompt()
         aspect_ratio = _text(inputs.get("aspect_ratio")) or "16:9"
         resolution = _text(inputs.get("resolution")) or "2K"
+        default_prompt_variant_count = _bounded_int(
+            inputs.get("prompts_per_item"),
+            fallback=1,
+            minimum=1,
+            maximum=6,
+        )
+        images_per_prompt = _bounded_int(inputs.get("images_per_prompt"), fallback=1, minimum=1, maximum=6)
 
         cards: list[dict[str, Any]] = []
-        for segment in _object_list(inputs.get("segment_descriptions")):
-            segment_index = _int(segment.get("index"), len(cards))
-            segment_title = _text(segment.get("segment_title")) or f"段落 {segment_index + 1}"
+        for segment_index, segments in _group_segments(inputs.get("segment_descriptions")).items():
+            first_segment = _primary_segment(segments)
+            prompt_variant_count = max(
+                default_prompt_variant_count,
+                max((_int(segment.get("prompt_variant_count"), 1) for segment in segments), default=1),
+                len(segments),
+            )
+            generation_config = {
+                "prompts_per_item": min(6, max(1, prompt_variant_count)),
+                "images_per_prompt": images_per_prompt,
+            }
+            segment_title = _text(first_segment.get("segment_title")) or f"段落 {segment_index + 1}"
             assignment = assignments.get(segment_index, {})
-            source_item = items_by_index.get(segment_index, {})
-            status = _text(segment.get("status")) or "ready"
-            error = _error_text(segment.get("error"))
+            first_variant_index = _variant_index(first_segment)
+            source_item = items_by_key.get((segment_index, first_variant_index), {})
+            status = _status_for_segments(segments)
+            error = _error_for_segments(segments)
+            panel_plan = _mapping(first_segment.get("panel_plan"))
+            panel_count = _panel_count(panel_plan)
 
-            image_prompt = _image_prompt_text(segment.get("image_prompt"))
+            image_prompt = _image_prompt_text(first_segment.get("image_prompt"))
             if status == "failed" and not image_prompt:
                 image_prompt = "当前段落画面提示词生成失败，请重新生成提示词或手动编辑后再生成分镜图。"
             image_prompt = image_prompt or "分镜画面"
@@ -99,20 +120,39 @@ class PrepareStoryboardPanelCardsNode(BaseNode):
                 negative_prompt=negative_prompt,
                 reference_images=reference_images,
             )
+            prompt_variants = _prompt_variants(
+                segments,
+                aspect_ratio=aspect_ratio,
+                resolution=resolution,
+                generation_rules=generation_rules,
+                negative_prompt=negative_prompt,
+                reference_images=reference_images,
+            )
+            panel_count_variants = _panel_count_variants(segments)
+            panel_plan_variants = [_mapping(segment.get("panel_plan")) for segment in segments]
             cards.append(
                 {
                     "card_id": f"segment-{segment_index}",
                     "segment_index": segment_index,
                     "panel_index": 0,
+                    "prompt_variant_index": first_variant_index,
+                    "prompt_variant_count": prompt_variant_count,
+                    "prompt_variant_label": _prompt_variant_label(first_variant_index, prompt_variant_count),
                     "segment_title": segment_title,
                     "description": description,
                     "image_prompt": image_prompt,
+                    "panel_count": panel_count,
+                    "panel_plan": panel_plan,
                     "prompt": prompt,
+                    "prompt_variants": prompt_variants,
+                    "panel_count_variants": panel_count_variants,
+                    "panel_plan_variants": panel_plan_variants,
                     "negative_prompt": negative_prompt,
                     "reference_images": reference_images,
                     "visible_characters": visible_characters,
                     "aspect_ratio": aspect_ratio,
                     "resolution": resolution,
+                    "generation_config": generation_config,
                     "source_item": source_item,
                     "status": status,
                     "error": error,
@@ -147,10 +187,27 @@ def _panel_card_schema() -> dict[str, Any]:
             "card_id": {"type": "string", "minLength": 1},
             "segment_index": {"type": "integer", "minimum": 0},
             "panel_index": {"type": "integer", "minimum": 0},
+            "prompt_variant_index": {"type": "integer", "minimum": 0},
+            "prompt_variant_count": {"type": "integer", "minimum": 1},
+            "prompt_variant_label": {"type": "string"},
             "segment_title": {"type": "string", "minLength": 1},
             "description": {"type": "string", "minLength": 1},
             "image_prompt": {"type": "string", "minLength": 1},
+            "panel_count": {"type": "string"},
+            "panel_plan": {"type": "object", "additionalProperties": True},
             "prompt": {"type": "string", "minLength": 1},
+            "prompt_variants": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1},
+            },
+            "panel_count_variants": {
+                "type": "array",
+                "items": {"type": "string"},
+            },
+            "panel_plan_variants": {
+                "type": "array",
+                "items": {"type": "object", "additionalProperties": True},
+            },
             "negative_prompt": {"type": "string"},
             "reference_images": {
                 "type": "array",
@@ -173,6 +230,14 @@ def _panel_card_schema() -> dict[str, Any]:
             "visible_characters": {"type": "array", "items": {"type": "string", "minLength": 1}},
             "aspect_ratio": {"type": "string", "minLength": 1},
             "resolution": {"type": "string", "minLength": 1},
+            "generation_config": {
+                "type": "object",
+                "properties": {
+                    "prompts_per_item": {"type": "integer", "minimum": 1, "maximum": 6, "default": 1},
+                    "images_per_prompt": {"type": "integer", "minimum": 1, "maximum": 6, "default": 1},
+                },
+                "additionalProperties": False,
+            },
             "source_item": {"type": "object", "additionalProperties": True},
             "status": {"type": "string"},
             "error": {"type": "string"},
@@ -190,13 +255,83 @@ def _assignments_by_index(value: Any) -> dict[int, Mapping[str, Any]]:
     return result
 
 
-def _items_by_index(value: Any) -> dict[int, Mapping[str, Any]]:
-    result: dict[int, Mapping[str, Any]] = {}
+def _items_by_key(value: Any) -> dict[tuple[int, int], Mapping[str, Any]]:
+    result: dict[tuple[int, int], Mapping[str, Any]] = {}
     for item in _object_list(value):
         index = item.get("index")
         if isinstance(index, int) and not isinstance(index, bool):
-            result[index] = item
+            result[(index, _int(item.get("prompt_variant_index"), 0))] = item
     return result
+
+
+def _prompt_variant_label(prompt_variant_index: int, prompt_variant_count: int) -> str:
+    if prompt_variant_count <= 1:
+        return ""
+    return f"候选 {prompt_variant_index + 1}/{prompt_variant_count}"
+
+
+def _group_segments(value: Any) -> dict[int, list[Mapping[str, Any]]]:
+    grouped: dict[int, list[Mapping[str, Any]]] = {}
+    for fallback, segment in enumerate(_object_list(value)):
+        segment_index = _int(segment.get("index"), fallback)
+        grouped.setdefault(segment_index, []).append(segment)
+    for segments in grouped.values():
+        segments.sort(key=_variant_index)
+    return dict(sorted(grouped.items(), key=lambda item: item[0]))
+
+
+def _variant_index(segment: Mapping[str, Any]) -> int:
+    return _int(segment.get("prompt_variant_index"), 0)
+
+
+def _status_for_segments(segments: list[Mapping[str, Any]]) -> str:
+    if segments and all(_text(segment.get("status")) == "failed" for segment in segments):
+        return "failed"
+    return "ready"
+
+
+def _primary_segment(segments: list[Mapping[str, Any]]) -> Mapping[str, Any]:
+    for segment in segments:
+        if _text(segment.get("status")) != "failed" and _image_prompt_text(segment.get("image_prompt")):
+            return segment
+    return segments[0]
+
+
+def _error_for_segments(segments: list[Mapping[str, Any]]) -> str:
+    for segment in segments:
+        error = _error_text(segment.get("error"))
+        if error:
+            return error
+    return ""
+
+
+def _prompt_variants(
+    segments: list[Mapping[str, Any]],
+    *,
+    aspect_ratio: str,
+    resolution: str,
+    generation_rules: str,
+    negative_prompt: str,
+    reference_images: list[Mapping[str, Any]],
+) -> list[str]:
+    prompts: list[str] = []
+    for segment in segments:
+        image_prompt = _image_prompt_text(segment.get("image_prompt")) or "分镜画面"
+        prompt = _assemble_prompt(
+            image_prompt=image_prompt,
+            aspect_ratio=aspect_ratio,
+            resolution=resolution,
+            generation_rules=generation_rules,
+            negative_prompt=negative_prompt,
+            reference_images=reference_images,
+        )
+        if prompt and prompt not in prompts:
+            prompts.append(prompt)
+    return prompts
+
+
+def _panel_count_variants(segments: list[Mapping[str, Any]]) -> list[str]:
+    return [_panel_count(_mapping(segment.get("panel_plan"))) for segment in segments]
 
 
 def _reference_images(
@@ -301,6 +436,13 @@ def _assemble_prompt(
 
 
 def _image_prompt_text(value: Any) -> str:
+    return _text(value)
+
+
+def _panel_count(panel_plan: Mapping[str, Any]) -> str:
+    value = panel_plan.get("panel_count")
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return str(value)
     return _text(value)
 
 
@@ -499,6 +641,11 @@ def _error_text(value: Any) -> str:
 
 def _int(value: Any, fallback: int) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) else fallback
+
+
+def _bounded_int(value: Any, *, fallback: int, minimum: int, maximum: int) -> int:
+    parsed = _int(value, fallback)
+    return max(minimum, min(maximum, parsed))
 
 
 def _normalise_name(value: str) -> str:

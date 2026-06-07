@@ -95,29 +95,31 @@ export function ScriptTextInputControl({ busy, config, node, nodeSpec, slot, val
       </div>
 
       <div className="script-input-grid">
-        {otherFields.map((field) => (
-          <label className="form-field" key={field.key}>
-            <span>{field.label}</span>
+        <div className="script-input-meta">
+          {otherFields.map((field) => (
+            <label className={numericField(field) ? "form-field script-meta-field compact" : "form-field script-meta-field"} key={field.key}>
+              <span>{field.label}</span>
+              <input
+                aria-label={field.label}
+                readOnly={readonly || Boolean(busy)}
+                type={numericField(field) ? "number" : "text"}
+                value={String((readonly ? renderedValues?.[field.key] : values[field.key]) ?? "")}
+                onChange={(event) => setValues((current) => ({ ...current, [field.key]: event.target.value }))}
+              />
+            </label>
+          ))}
+
+          <label className="form-field script-meta-field background">
+            <span>{fieldLabel(fields, BACKGROUND_FIELD, "世界背景")}</span>
             <input
-              aria-label={field.label}
+              aria-label="世界背景"
+              placeholder="例如：水浒传"
               readOnly={readonly || Boolean(busy)}
-              type={field.schema.type === "integer" || field.schema.type === "number" ? "number" : "text"}
-              value={String((readonly ? renderedValues?.[field.key] : values[field.key]) ?? "")}
-              onChange={(event) => setValues((current) => ({ ...current, [field.key]: event.target.value }))}
+              value={background}
+              onChange={(event) => setValues((current) => ({ ...current, [BACKGROUND_FIELD]: event.target.value }))}
             />
           </label>
-        ))}
-
-        <label className="form-field">
-          <span>{fieldLabel(fields, BACKGROUND_FIELD, "世界背景")}</span>
-          <input
-            aria-label="世界背景"
-            placeholder="例如：水浒传"
-            readOnly={readonly || Boolean(busy)}
-            value={background}
-            onChange={(event) => setValues((current) => ({ ...current, [BACKGROUND_FIELD]: event.target.value }))}
-          />
-        </label>
+        </div>
 
         <div
           className={dragging ? "form-field script-textarea-field dragging" : "form-field script-textarea-field"}
@@ -353,6 +355,10 @@ function fieldLabel(fields: ScriptField[], key: string, fallback: string): strin
 
 function hasField(fields: ScriptField[], key: string): boolean {
   return fields.some((field) => field.key === key);
+}
+
+function numericField(field: ScriptField): boolean {
+  return field.schema.type === "integer" || field.schema.type === "number";
 }
 
 function episodeNameFromFileName(fileName: string): string {

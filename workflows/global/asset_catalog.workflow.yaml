@@ -129,9 +129,27 @@ nodes:
           type: string
           minLength: 1
           default: 水浒传
+      prompts_per_item:
+        from_user: true
+        required: true
+        schema:
+          type: integer
+          title: 每个资产提示词数
+          minimum: 1
+          maximum: 6
+          default: 1
+      images_per_prompt:
+        from_user: true
+        required: true
+        schema:
+          type: integer
+          title: 每个提示词生成图数
+          minimum: 1
+          maximum: 6
+          default: 1
     outputs:
       type: object
-      required: ["script", "episode_name", "background"]
+      required: ["script", "episode_name", "background", "prompts_per_item", "images_per_prompt"]
       properties:
         script:
           type: string
@@ -144,6 +162,16 @@ nodes:
           type: string
           minLength: 1
           default: 水浒传
+        prompts_per_item:
+          type: integer
+          minimum: 1
+          maximum: 6
+          default: 1
+        images_per_prompt:
+          type: integer
+          minimum: 1
+          maximum: 6
+          default: 1
       additionalProperties: false
     config:
       title: 剧本输入
@@ -183,7 +211,7 @@ nodes:
           5. 这些角色的全名是什么？代称、绰号、非全名称呼需要结合原作推断全名；多人合称要拆成具体角色，没有名称的龙套可保留为合称。
           6. 每个角色的生平背景是什么？summary 只写长期身份、原作背景和人物定位，不写当前动作、被绑、受伤、押送、服装或临时处境。
           7. 每个角色当前剧情状态是什么？character_status 只写此刻/本段剧情中的身份、处境或状态，不写生平背景。
-          8. 每个角色的长相是什么样的？有什么面部特征？在当前情景下应该是什么造型？必须结合世界背景、身份、职业/阶层、地点、时代和剧情阶段推导一个具体服装或稳定外观造型。角色脸部/头部轮廓必须保持圆形或圆鼓头，只在圆形脸的基础上设计夸张但简洁的眉眼、极简鼻、胡须和发型/头饰；眉形、眼型和胡须形状要用于表达身份、年龄和性格气质，五官应圆润、清晰，头发和头饰承担身份识别。不得写成长脸、方脸、瘦削脸、尖脸或写实面部轮廓。角色视觉设定只允许写头面、发型/头饰、上身服装、颜色、上身配件和气质；不要描述任何下半身内容，包括腿、脚、鞋履、下装，也不要用球形下半身等概括说明。
+          8. 每个角色的长相是什么样的？有什么面部特征？在当前情景下应该是什么造型？必须结合世界背景、身份、职业/阶层、地点、时代和剧情阶段推导一个具体服装或稳定外观造型。角色脸部/头部轮廓必须保持圆形或圆鼓头，只在圆形脸的基础上设计夸张但简洁的眉眼、胡须和发型/头饰；眉形、眼型和胡须形状要用于表达身份、年龄和性格气质，五官应圆润、清晰，头发和头饰承担身份识别。不得写成长脸、方脸、瘦削脸、尖脸或写实面部轮廓，不写鼻子。角色视觉设定只允许写头面、发型/头饰、上身服装、颜色、上身配件和气质；不要描述任何下半身内容，包括腿、脚、鞋履、下装，也不要用球形下半身等概括说明。
           9. 这个稳定造型应该叫什么标签？造型标签必须是可复用的服装或造型名称，如"官兵装束"、"渔民短打"、"道士服"、"僧衣"、"旅人布衣"、"水军装束"、"囚服"、"夜行衣"；禁止用被绑、受伤、押送、奔跑等临时状态命名。
           10. 哪些内容不是资产标签依据？被绑起来、被押送、受伤、疲惫、奔跑、打斗、表情、姿态、镜头动作、所在地点、天气、光照、剧情处境都不是 asset_tags 的命名依据，也不得写入 appearance_description。
           11. 这个角色的稳定视觉设定是什么？appearance_description 至少 40 字，以这是一位xx开头，按性别年龄，身份，气质，圆形脸/圆形头部轮廓，眉眼、极简鼻、胡须、发型/头饰、上身服装、颜色搭配、身份识别特征、稳定上身配件描述；不得描述任何下半身内容，包括腿、脚、鞋履、下装，也不得用球形下半身等概括说明；不要描述任何材质、布料质感、纹理或面料工艺；
@@ -210,7 +238,7 @@ nodes:
           - aliases：别名列表
           - summary：角色生平背景/身份定位梗概（≤100字）；只写角色在原作或世界背景中的长期身份、经历和人物背景，不写当前剧情状态、动作、伤势、被绑、押送、服装或临时处境
           - character_status：当前剧情阶段该角色的上下文状态；只写此刻/本段剧情中的身份、处境、状态或正在经历的情况，不写生平背景、长期履历或原作人物介绍；该字段仅供理解上下文，不作为变体依据
-          - appearance_description：回答"这个角色的稳定视觉设定是什么？"后得到的详细描述，至少 40 字；以这是一位xx开头，按性别年龄，身份，气质，圆形脸/圆形头部轮廓，夸张但简洁的眉眼、极简鼻、胡须、发型、头饰、上身服装、颜色搭配、身份识别特征、稳定上身配件描述；不得写成长脸、方脸、瘦削脸、尖脸或写实面部轮廓；不得描述任何下半身内容，包括腿、脚、鞋履、下装，也不得用球形下半身等概括说明；不得描述任何材质、布料质感、纹理或面料工艺；不得写被绑、受伤、动作、姿态、表情、场景、天气或剧情处境；
+          - appearance_description：回答"这个角色的稳定视觉设定是什么？"后得到的详细描述，至少 40 字；以这是一位xx开头，按性别年龄，身份，气质，圆形脸/圆形头部轮廓，夸张但简洁的眉眼、胡须、发型、头饰、上身服装、颜色搭配、身份识别特征、稳定上身配件描述；不得写成长脸、方脸、瘦削脸、尖脸或写实面部轮廓；不得描述任何下半身内容，包括腿、脚、鞋履、下装，也不得用球形下半身等概括说明；不得描述任何材质、布料质感、纹理或面料工艺；不得写被绑、受伤、动作、姿态、表情、场景、天气或剧情处境；
 
           根层级除 reasoning 和 characters 外不得包含其他键。
         vars:
@@ -1639,6 +1667,8 @@ nodes:
     inputs:
       approved_assets:
         from: "$nodes.review_assets.output.approved_assets"
+      prompts_per_item:
+        from: "$nodes.collect_asset_catalog_input.output.prompts_per_item"
     outputs:
       type: object
       required: ["approved_assets", "asset_count", "new_asset_count", "matched_asset_count", "has_assets_to_generate", "generation_summary"]
@@ -1699,8 +1729,8 @@ nodes:
       system:
         value: |
           你是一位视觉资产设定提示词专家。请根据给定资产信息，世界观背景，分析参考设定和目标设计的差异，生成图生图使用的修改提示词。
-          你的职责是把资产字段转成可执行的图生图修改提示词；只写资产本体的可见目标设定，不写质量词、模型参数或画风关键词。
-          角色优先写圆形脸/圆形头部轮廓、头面外貌、气质、发型/头饰、上身服装层次、颜色搭配、身份识别性上身装饰和必要上身配件；风格只作为边界约束，不作为输出内容。角色最终提示词必须明确脸部/头部轮廓保持圆形或圆鼓头，并在圆形脸基础上设计夸张但简洁的眉眼、极简鼻、胡须等面部识别特征；用眉形、眼型和胡须形状表达身份、年龄与性格气质，头发和头饰承担身份识别。不得写成长脸、方脸、瘦削脸、尖脸或写实面部轮廓。角色最终提示词不得描述任何下半身内容，包括腿、脚、鞋履、下装、下肢、四肢长短，也不得用“球形整体”“无腿”等概括说明下半身；这些只作为内部边界，不能写入输出。
+          你的职责是把资产字段转成可执行的图生图修改提示词；每次调用必须一次性生成指定数量的差异化候选提示词，而不是只生成单条后依赖外部重复调用；只写资产本体的可见目标设定，不写质量词、模型参数或画风关键词。
+          角色优先写圆形脸/圆形头部轮廓、头面外貌、气质、发型/头饰、上身服装层次、颜色搭配、身份识别性上身装饰和必要上身配件；风格只作为边界约束，不作为输出内容。角色最终提示词必须明确脸部/头部轮廓保持圆形或圆鼓头，并在圆形脸基础上设计夸张但简洁的眉眼、胡须等面部识别特征；用眉形、眼型和胡须形状表达身份、年龄与性格气质，头发和头饰承担身份识别。不得写成长脸、方脸、瘦削脸、尖脸或写实面部轮廓，不要写任何鼻子相关的描写。角色最终提示词不得描述任何下半身内容，包括腿、脚、鞋履、下装、下肢、四肢长短；这些只作为内部边界，不能写入输出。
           角色不得输出人名、身份履历、剧情动作、临时状态、表情、镜头、场景气氛、材质、布料质感、纹理或面料工艺；信息不足时也必须结合世界背景和当前桥段确定一种单一造型，不写“或”“可能”“可选”“任选”“一类”。
           地点写空间结构、建筑/地貌、布局、摆设、时代视觉元素；道具写物件本体的形制、颜色、装饰、磨损、用途和可见特征。
           必须先按 asset_type 区分 character、scene、prop，再选择对应句式。道具必须保留“图中的道具”这个对象，不得写成“图中的{asset_name}改成”。
@@ -1709,6 +1739,8 @@ nodes:
           当前资产：
           {item}
 
+          本资产需要一次性生成 {prompts_per_item} 条有差异的图生图修改提示词。
+
           请用提问式思维链完成判断，并把结论摘要写入 think：
           1. asset_type 是 character、scene 还是 prop？这一类型应该使用哪种句式？
           2. 如果是角色：参考图中哪些外貌应保留，目标设定中哪些外貌和气质必须替换或补足？
@@ -1716,14 +1748,18 @@ nodes:
           4. 如果角色信息有限：结合世界背景、当前桥段和时代身份，最合理的一种确定造型是什么？
           5. 如果是地点：这个场景的空间结构、建筑/地貌、布局、摆设、时代视觉元素和用途分别是什么？
           6. 如果是道具：这个物件的主体、形制、颜色、装饰、磨损、用途和可见特征分别是什么？
-          7. 最终提示词是否只保留可见目标设定，且没有不确定表达？
+          7. 为同一个资产设计 {prompts_per_item} 条候选时，每条候选应在哪些可见设计重点上形成差异？例如头面识别、上身装饰、颜色组织、场景结构重心、道具形制细节、磨损/装饰取舍等。
+          8. 最终每条提示词是否只保留可见目标设定，且没有不确定表达？
 
           返回 JSON 对象：
           - think：按上面问题整理的判断摘要，说明保留、替换、补足和排除的依据。
-          - prompt：最终修改用的提示词，必须按 asset_type 选择句式：
-            - character：以“请将图中角色改成一位……”开头，只写稳定人物圆形脸/圆形头部轮廓、化眉眼、极简鼻、胡须、气质、发型/头饰、上身服装、颜色组合和必要上身配件，不输出角色名，不输出任何下半身内容，不输出画风词、质量词或模型参数。
+          - prompt：第一条候选提示词，必须与 prompt_variants[0] 完全一致，用于兼容旧链路。
+          - prompt_variants：数组，必须恰好包含 {prompts_per_item} 条有差异的候选提示词；每条都必须按 asset_type 选择句式：
+            - character：以“请将图中角色改成一位……”开头，只写稳定人物圆形脸/圆形头部轮廓、化眉眼、胡须、气质、发型/头饰、上身服装、颜色组合和必要上身配件，不输出角色名，不输出任何下半身内容，不输出画风词、质量词或模型参数。
             - scene：以“请将图中场景改成……”开头，写空间、地貌/建筑、布局、摆设和时代视觉元素。
             - prop：以“请将图中的道具改成……”开头，直接写 asset_name 指向的物件本体和可见特征；例如缆绳必须写成“请将图中的道具改成一条缆绳……”，不得写成“请将图中的缆绳改成……”，不得写成人物、身份、场景或把“船用、绑扎”等标签当成主体。
+          - prompt_variants 中的每条候选都必须是完整可独立执行的图生图修改提示词，不能写成“同上”“另一版”“可选方案”等依赖其它候选的省略表达。
+          - 如果 {prompts_per_item} 为 1，prompt_variants 只包含 1 条，且 prompt 与这一条完全一致。
       prompt_fields:
         value:
           - asset_type
@@ -1731,12 +1767,14 @@ nodes:
           - asset_tags
           - target_appearance_description
           - reference_appearance_description
+          - prompts_per_item
       passthrough_fields:
         value:
           - asset_type
           - asset_name
           - asset_tags
           - target_appearance_description
+          - prompts_per_item
       items:
         from: "$nodes.filter_assets_for_generation.output.approved_assets"
       max_attempts:
@@ -1749,7 +1787,7 @@ nodes:
           type: array
           items:
             type: object
-            required: ["asset_type", "asset_name", "asset_tags", "target_appearance_description", "think", "prompt"]
+            required: ["asset_type", "asset_name", "asset_tags", "target_appearance_description", "think", "prompt", "prompt_variants"]
             properties:
               asset_type:
                 type: string
@@ -1764,12 +1802,23 @@ nodes:
               target_appearance_description:
                 type: string
                 minLength: 1
+              prompts_per_item:
+                type: integer
+                minimum: 1
+                maximum: 6
               think:
                 type: string
                 minLength: 1
               prompt:
                 type: string
                 minLength: 1
+              prompt_variants:
+                type: array
+                minItems: 1
+                maxItems: 6
+                items:
+                  type: string
+                  minLength: 1
               reference_image_ref:
                 type: object
                 required: ["kind"]
@@ -1831,6 +1880,10 @@ nodes:
         from: "$nodes.resolve_accessory_asset_refs.output.results"
       prompt_results:
         from: "$nodes.generate_prompt.output.results"
+      prompts_per_item:
+        from: "$nodes.collect_asset_catalog_input.output.prompts_per_item"
+      images_per_prompt:
+        from: "$nodes.collect_asset_catalog_input.output.images_per_prompt"
       approved_assets:
         from: "$nodes.review_assets.output.approved_assets"
       decision:
@@ -1933,7 +1986,7 @@ nodes:
                 suffix: 保持角色长相，比例、画风、和其它未提及特征不变
               character_default_reference:
                 prefix:
-                suffix: 保持画风和角色体型不变，改变原图中的所有角色特征，根据描述和水浒传的时代背景设计全新的形象，平涂，赛璐璐风格，具有清晰的色块，流畅干净的线条和锐利的边缘。
+                suffix: 保持画风和角色体型不变，改变原图中的所有角色特征，根据描述和水浒传的时代背景设计全新的形象，平涂，赛璐璐风格，具有清晰的色块，流畅干净的线条和锐利的边缘。角色是q版风格，脸部是圆形，可爱，胖嘟嘟的，不要添加任何写实的面部结构。
               scene:
                 prefix: 参考《罗小黑战记》的线条、色彩逻辑和视觉质感生成高质量、细节丰富、富有张力的冷灰色色调漫画场景，
                 suffix: 根据描述和水浒传的时代背景选择合适的构图，视角，空间关系，生成全新的场景，平涂，赛璐璐风格，具有清晰的色块，流畅干净的线条和锐利的边缘，digital illustration,  children's book art style, manhwa style, clean lineart, soft cel shading, vibrant colors, dynamic action atmosphere, masterpiece, best quality, 8k。

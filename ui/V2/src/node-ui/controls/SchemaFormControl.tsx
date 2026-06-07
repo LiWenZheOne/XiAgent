@@ -44,6 +44,9 @@ export function SchemaFormControl({ busy, config, node, nodeSpec, projectId, sna
     dropdownAssetField?.key,
     ...compactSwitchFields.map((field) => field.key),
   ].filter((key): key is string => Boolean(key)) : []);
+  const promptCountField = fields.find((field) => field.key === "prompts_per_item");
+  const imageCountField = fields.find((field) => field.key === "images_per_prompt");
+  const usesPromptCountRow = Boolean(promptCountField && imageCountField);
 
   useEffect(() => {
     setValues(initialValues(fields));
@@ -119,7 +122,19 @@ export function SchemaFormControl({ busy, config, node, nodeSpec, projectId, sna
             </div>
           </div>
         ) : null}
-        {fields.map((field) => compactFieldKeys.has(field.key) ? null : renderField(field))}
+        {fields.map((field) => {
+          if (compactFieldKeys.has(field.key)) return null;
+          if (usesPromptCountRow && field.key === "prompts_per_item" && promptCountField && imageCountField) {
+            return (
+              <div className="schema-form-count-row" key="prompt-image-count-row">
+                {renderField(promptCountField)}
+                {renderField(imageCountField)}
+              </div>
+            );
+          }
+          if (usesPromptCountRow && field.key === "images_per_prompt") return null;
+          return renderField(field);
+        })}
       </div>
 
       {error ? <p className="form-error">{error}</p> : null}

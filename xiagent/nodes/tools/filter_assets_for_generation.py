@@ -22,6 +22,7 @@ class FilterAssetsForGenerationNode(BaseNode):
                         "type": "object",
                         "additionalProperties": True,
                     },
+                    "prompts_per_item": {"type": "integer", "minimum": 1, "maximum": 6, "default": 1},
                 },
                 "required": ["approved_assets"],
                 "additionalProperties": False,
@@ -84,6 +85,7 @@ class FilterAssetsForGenerationNode(BaseNode):
         filtered: dict[str, list[dict[str, Any]]] = {}
         total_asset_count = 0
         matched_asset_count = 0
+        prompts_per_item = _bounded_int(inputs.get("prompts_per_item"), fallback=1, minimum=1, maximum=6)
         for key in ("characters", "assets", "props"):
             value = approved_assets.get(key)
             items = value if isinstance(value, list) else []
@@ -95,9 +97,9 @@ class FilterAssetsForGenerationNode(BaseNode):
                 if _is_existing_asset(item):
                     matched_asset_count += 1
                     continue
-                filtered_items.append(
-                    await _with_reference_context(ctx, _with_target_appearance_description(dict(item)))
-                )
+                next_item = await _with_reference_context(ctx, _with_target_appearance_description(dict(item)))
+                next_item["prompts_per_item"] = prompts_per_item
+                filtered_items.append(next_item)
             filtered[key] = filtered_items
 
         new_asset_count = sum(len(items) for items in filtered.values())
@@ -282,3 +284,10 @@ def _asset_appearance_description(asset: Any) -> str | None:
 
 def _optional_text(value: Any) -> str | None:
     return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _bounded_int(value: Any, *, fallback: int, minimum: int, maximum: int) -> int:
+    if isinstance(value, bool):
+        return fallback
+    parsed = value if isinstance(value, int) else fallback
+    return max(minimum, min(maximum, parsed))

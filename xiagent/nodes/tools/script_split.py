@@ -9,6 +9,7 @@ from xiagent.nodes.base import BaseNode, NodeContext, NodeDescriptor, NodeResult
 
 _PANEL_HINT_PATTERN = re.compile(r"^\s*[\(（]\s*([0-9０-９]*)(?:\s*[-－—–~～]\s*([0-9０-９]+))?\s*[\)）]\s*")
 _PANEL_MARKER_PATTERN = re.compile(r"[\(（]\s*([0-9０-９]*)(?:\s*[-－—–~～]\s*([0-9０-９]+))?\s*[\)）]")
+_AUTO_PANEL_HINT = "auto"
 
 
 class ScriptSplitNode(BaseNode):
@@ -56,7 +57,7 @@ class ScriptSplitNode(BaseNode):
                 "required": ["count", "segments"],
                 "additionalProperties": False,
             },
-            description="Split a script into storyboard segments and extract panel count hints.",
+            description="Split a script into storyboard segments without treating marker numbers as panel count hints.",
         )
 
     async def run(self, ctx: NodeContext | None, inputs: Mapping[str, Any]) -> NodeResult:
@@ -97,16 +98,11 @@ class ScriptSplitNode(BaseNode):
                 hint_match = None
 
             if marker_min is not None:
-                panel_min, panel_max, panel_hint = _panel_counts(marker_min, marker_max)
+                panel_min, panel_max, panel_hint = _auto_panel_counts()
             elif hint_match is None:
-                panel_hint = "1"
-                panel_min = 1
-                panel_max = 1
+                panel_min, panel_max, panel_hint = _auto_panel_counts()
             else:
-                panel_min, panel_max, panel_hint = _panel_counts(
-                    hint_match.group(1),
-                    hint_match.group(2),
-                )
+                panel_min, panel_max, panel_hint = _auto_panel_counts()
                 text = text[hint_match.end() :].strip()
                 if not text:
                     continue
@@ -146,21 +142,5 @@ def _split_marked_segments(script: str) -> list[tuple[str | None, str | None, st
     return segments
 
 
-def _panel_counts(first_text: str | None, second_text: str | None) -> tuple[int, int, str]:
-    first = _panel_number(first_text) or 1
-    second = _panel_number(second_text) if second_text is not None else first
-    if second is None:
-        second = first
-    panel_min = min(first, second)
-    panel_max = max(first, second)
-    panel_hint = str(first) if second_text is None else f"{first}-{second}"
-    return panel_min, panel_max, panel_hint
-
-
-def _panel_number(value: str | None) -> int | None:
-    if value is None:
-        return None
-    normalized = value.strip().translate(str.maketrans("０１２３４５６７８９", "0123456789"))
-    if not normalized:
-        return None
-    return int(normalized)
+def _auto_panel_counts() -> tuple[int, int, str]:
+    return 1, 1, _AUTO_PANEL_HINT

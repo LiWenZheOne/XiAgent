@@ -228,6 +228,8 @@ def test_select_episode_node_loads_and_displays_episode_context(test_settings) -
     assert select_node["outputs"]["properties"]["storyboard_options"]["properties"] == {
         "no_material": {"type": "boolean"},
         "enrich_description": {"type": "boolean"},
+        "prompts_per_item": {"type": "integer", "minimum": 1, "maximum": 6, "default": 1},
+        "images_per_prompt": {"type": "integer", "minimum": 1, "maximum": 6, "default": 1},
     }
     assert "output" not in select_node["ui"]["controls"]
 
@@ -313,6 +315,10 @@ def test_select_episode_metadata_schema_collects_optional_storyboard_switches(
     validate_json_value(input_specs["enrich_description"]["schema"], False)
     assert input_specs["no_material"]["required"] is False
     assert input_specs["enrich_description"]["required"] is False
+    assert input_specs["prompts_per_item"]["required"] is False
+    assert input_specs["images_per_prompt"]["required"] is False
+    assert input_specs["prompts_per_item"]["schema"]["default"] == 1
+    assert input_specs["images_per_prompt"]["schema"]["default"] == 1
     assert "storyboard_target" not in _select_episode_outputs(contract)["properties"]
 
     with pytest.raises(ValidationError):
@@ -456,12 +462,20 @@ def test_prepare_segment_storyboard_inputs_output_schema(test_settings) -> None:
                         ],
                         "key_props": [],
                     },
+                    "prompt_variant_index": 0,
+                    "prompt_variant_count": 1,
+                    "prompt_variant_instruction": "这是当前段落唯一一份分镜提示词候选，按最适合剧情的方案生成。",
                 }
             ],
             "shared_context": {
                 "full_script": "完整剧本",
                 "world_background": "水浒世界，北宋末年。",
-                "storyboard_options": {"no_material": True, "enrich_description": True},
+                "storyboard_options": {
+                    "no_material": True,
+                    "enrich_description": True,
+                    "prompts_per_item": 1,
+                    "images_per_prompt": 1,
+                },
                 "prompt_rules": {
                     "material_rule": "- 删除所有材质和质感审查，只保留空间、结构、色彩、光影、功能和动作信息。",
                     "enrich_rule": "- 额外落实遮挡物、空间深度和物理反馈。",
@@ -491,7 +505,7 @@ def test_scene_layout_and_panel_plan_nodes_use_parallel_segment_items(test_setti
     assert layout_node["inputs"]["shared_context"] == {
         "from": "$nodes.prepare_segment_storyboard_inputs.output.shared_context",
     }
-    assert "只分析当前段落的实际空间布局" in layout_node["inputs"]["system"]["value"]
+    assert "每次只分析当前段落的场景布局和角色行动路线" in layout_node["inputs"]["system"]["value"]
     assert "{paragraph_text}" in layout_node["inputs"]["prompt_template"]["value"]
     assert "{world_background}" in layout_node["inputs"]["prompt_template"]["value"]
     assert "{full_script}" in layout_node["inputs"]["prompt_template"]["value"]
@@ -505,11 +519,12 @@ def test_scene_layout_and_panel_plan_nodes_use_parallel_segment_items(test_setti
         "location",
         "scene_description",
         "key_props",
+        "prompt_variant_instruction",
     ]
     prompt_template = layout_node["inputs"]["prompt_template"]["value"]
     assert "{scene_description}" in prompt_template
     assert "场景资产描述" in prompt_template
-    assert "必须优先吸收其中的稳定空间结构" in prompt_template
+    assert "只吸收其中和空间关系直接相关的稳定信息" in prompt_template
     assert layout_node["inputs"]["continue_on_item_error"]["value"] is True
     layout_success_schema = _success_item_schema(layout_node)
     assert "scene_layout" in layout_success_schema["required"]
@@ -559,7 +574,11 @@ def test_scene_layout_and_panel_plan_nodes_use_parallel_segment_items(test_setti
     assert "{full_script}" in plan_node["inputs"]["prompt_template"]["value"]
     plan_prompt = plan_node["inputs"]["prompt_template"]["value"]
     assert "分镜计划标准" in plan_prompt
-    assert "panel_count 必须严格落实建议分格数" in plan_prompt
+    assert "目标分格数：{panel_count}" in plan_prompt
+    assert "如果目标分格数是正整数，必须严格输出该数量的分格" in plan_prompt
+    assert "当目标分格数是正整数时，panel_plan.panel_count 必须等于目标分格数" in plan_prompt
+    assert "不要根据括号中的数字决定分格数量" in plan_prompt
+    assert "panel_plan.panels 的数量必须与 panel_plan.panel_count 一致" in plan_prompt
     assert "每格只写 description" in plan_prompt
     assert "可以在 description 中自然标注空境、特写、出框/破格动作或景别节奏" in plan_prompt
     assert "是否需要空境来交代地点、承接情绪或让动作节奏有停顿" in plan_prompt
@@ -650,11 +669,13 @@ def test_review_convert_and_prompt_review_nodes(test_settings) -> None:
     assert "分镜计划标准" in plan_revision_prompt
     assert "只判断 scene_layout 和 panel_plan 是否符合分镜计划标准" in plan_review_prompt
     assert "不生成 image_prompt，不审查画面提示词写法" in plan_review_prompt
-    assert "核心剧情动作是否被准确识别" in plan_review_prompt
-    assert "页面排版是否形成清楚阅读节奏" in plan_review_prompt
-    assert "入格剧情瞬间是否足以让因果关系成立" in plan_review_prompt
-    assert "动作连续、视线引导、空间方向承接、情绪递进或反差切换" in plan_review_prompt
-    assert "不写 image_prompt，不写自然语言长篇画面提示词" in plan_revision_prompt
+    assert "scene_layout 是否只说明空间关系" in plan_review_prompt
+    assert "如果当前段落 item.panel_count 是正整数" in plan_review_prompt
+    assert "panel_plan.panel_count 是否严格等于它" in plan_review_prompt
+    assert "panel_plan.panels 数量是否与 panel_plan.panel_count 一致" in plan_review_prompt
+    assert "每格是否只用 description 描述当前分镜发生什么" in plan_review_prompt
+    assert "分格之间的动作是否连续、清楚、不跳步" in plan_review_prompt
+    assert "不得生成拆分角色、道具、行动节点、衔接方式、镜头、景别、机位、角度、构图、光影、氛围、材质、画面提示词" in review_node["inputs"]["revision_system"]["value"]
     assert "输出中的 think 写完整推理过程" in plan_review_prompt
     assert "必须返回 think" in plan_revision_prompt
     assert "目标 JSON 示例" in plan_review_prompt
@@ -701,25 +722,23 @@ def test_review_convert_and_prompt_review_nodes(test_settings) -> None:
     assert convert_node["inputs"]["items"] == {"from": "$nodes.review_and_refine_storyboard_plan.output.results"}
     prompt = convert_node["inputs"]["prompt_template"]["value"]
     system = convert_node["inputs"]["system"]["value"]
-    assert "忠于计划" in prompt
-    assert "画面提示词标准" in prompt
-    assert "think：完整推理过程" in prompt
-    assert "成熟漫画分镜说明" in prompt
-    assert "分格形状、镜头机位、角度和景别" in prompt
-    assert "自然空间层级与主要遮挡" in prompt
-    assert "关键物件与材质状态" in prompt
-    assert "光源明暗投影和整体氛围" in prompt
-    assert "必须严格等于 panel_plan.panel_count" in prompt
-    assert "如果 panel_plan 只有 1 格" in prompt
-    assert "必须与 panel_plan.panels 一一对应" in prompt
-    assert "禁止新增分格、删除分格、合并分格、拆分分格或重排分格" in prompt
-    assert "禁止机械写占比" in prompt
-    assert "不要把场景扩写成道具清单" in prompt
-    assert "不写剧情来龙去脉、预示、象征解读" in prompt
-    assert "不要使用 Markdown" in prompt
-    assert "组装到“画面：”" in prompt
-    assert "不要拆成多字段对象" in prompt
-    assert "目标 JSON 示例" in prompt
+    assert "已确定的分镜计划" in prompt
+    assert "## 要求" in prompt
+    assert '"think": "按思维链逐项回答"' in prompt
+    assert "专业的分镜脚本师" in prompt
+    assert "分格布局" in prompt
+    assert "镜头语言" in prompt
+    assert "构图审查" in prompt
+    assert "深度审查" in prompt
+    assert "会说话的物件" in prompt
+    assert "光影审查" in prompt
+    assert "动态审查" in prompt
+    assert "情绪审查" in prompt
+    assert "不新增分格、不删除分格、不合并分格、不重排分格" in prompt
+    assert "避免平视和平均" in prompt
+    assert "前景、中景、背景" in prompt
+    assert "重力或惯性" in prompt
+    assert "## 输出 JSON" in prompt
     assert convert_node["inputs"]["required_input_fields"]["value"] == ["scene_layout", "panel_plan"]
     convert_success_schema = _success_item_schema(convert_node)
     assert {"think", "image_prompt"}.issubset(set(convert_success_schema["required"]))
@@ -742,6 +761,9 @@ def test_review_convert_and_prompt_review_nodes(test_settings) -> None:
         "panel_plan",
         "review",
         "review_history",
+        "prompt_variant_index",
+        "prompt_variant_count",
+        "prompt_variant_instruction",
     ]
     assert convert_node["inputs"]["continue_on_item_error"]["value"] is True
     validate_json_value(
@@ -779,20 +801,21 @@ def test_review_convert_and_prompt_review_nodes(test_settings) -> None:
     prompt_revision_prompt = prompt_review_node["inputs"]["revision_prompt_template"]["value"]
     assert "画面提示词标准" in prompt_review_prompt
     assert "画面提示词标准" in prompt_revision_prompt
-    assert "完整覆盖 panel_plan.panels 的每一格" in prompt_review_prompt
+    assert "八段式思维链" in prompt_review_node["inputs"]["review_system"]["value"]
+    assert "八段式思维链" in prompt_review_node["inputs"]["revision_system"]["value"]
     assert "只检查 image_prompt 是否符合画面提示词标准" in prompt_review_prompt
     assert "不评价 panel_plan 本身是否最佳" in prompt_review_prompt
     assert "如果 panel_plan 本身不理想，也必须以它为既定事实" in prompt_review_prompt
-    assert "只描述可见画面内容和情绪氛围" in prompt_review_prompt
-    assert "声明的分格数量是否严格等于 panel_plan.panel_count" in prompt_review_prompt
-    assert "每格出现的角色是否逐格对应 panel_plan" in prompt_review_prompt
-    assert "机械写“前景占多少、中景占多少、背景占多少”" in prompt_review_prompt
-    assert "关键物件是否少而准" in prompt_review_prompt
-    assert "光影是否具体写出光源位置、冷暖关系" in prompt_review_prompt
-    assert "多分格页面是否形成镜头节奏和情绪递进" in prompt_review_prompt
+    assert "情绪爆发点/剧情核心格/衔接格" in prompt_review_prompt
+    assert "机位、角度、景别、透视、画面重心和物体关系" in prompt_review_prompt
+    assert "前景、中景、背景三层空间" in prompt_review_prompt
+    assert "角色身份、地位、处境或当前心境" in prompt_review_prompt
+    assert "光源属性、明暗对比、投影和视觉落点" in prompt_review_prompt
+    assert "扰动、重力、惯性、残影" in prompt_review_prompt
+    assert "色调、透视、疏密关系、留白方向" in prompt_review_prompt
     assert "不能压缩成短摘要" in prompt_revision_prompt
     assert "必须重新覆盖 panel_plan.panels 的全部分格" in prompt_revision_prompt
-    assert "修订时禁止机械区域比例、道具清单" in prompt_revision_prompt
+    assert "镜头语言、构图冲击力、三层空间、叙事物件、光影、动态和情绪氛围" in prompt_revision_prompt
     assert "输出中的 think 写完整推理过程" in prompt_review_prompt
     assert "只返回 think 和 image_prompt" in prompt_revision_prompt
     assert "目标 JSON 示例" in prompt_review_prompt
@@ -801,7 +824,7 @@ def test_review_convert_and_prompt_review_nodes(test_settings) -> None:
     prompt_review_success_schema = _success_item_schema(prompt_review_node)
     assert {"think", "image_prompt", "prompt_review", "prompt_review_history"}.issubset(set(prompt_review_success_schema["required"]))
     assert "think" in prompt_review_success_schema["properties"]
-    assert "完整覆盖所有分格" in prompt_review_prompt
+    assert "分格数量和每格内容是否严格对应" in prompt_review_prompt
     validate_json_value(
         prompt_review_node["outputs"],
         {"results": [_storyboard_segment_value(include_image_prompt=True)]},
@@ -841,6 +864,12 @@ def test_prepare_storyboard_panel_cards_output_schema(test_settings) -> None:
     assert node["inputs"]["storyboard_items"] == {
         "from": "$nodes.prepare_segment_storyboard_inputs.output.items",
     }
+    assert node["inputs"]["prompts_per_item"] == {
+        "from": "$nodes.select_episode_metadata.output.storyboard_options.prompts_per_item",
+    }
+    assert node["inputs"]["images_per_prompt"] == {
+        "from": "$nodes.select_episode_metadata.output.storyboard_options.images_per_prompt",
+    }
 
     validate_json_value(
         schema,
@@ -853,6 +882,8 @@ def test_prepare_storyboard_panel_cards_output_schema(test_settings) -> None:
                     "segment_title": "雪夜",
                     "description": "林冲披旧毡笠在风雪中前行。",
                     "image_prompt": "林冲披旧毡笠在风雪中前行。",
+                    "panel_count": "2",
+                    "panel_plan": {"panel_count": 2, "panels": [{"description": "起"}, {"description": "承"}]},
                     "prompt": "## 画面内容\n林冲披旧毡笠在风雪中前行。\n\n## 画面风格关键词\n风格指令：参考《罗小黑战记》。",
                     "reference_images": [
                         {
@@ -870,6 +901,10 @@ def test_prepare_storyboard_panel_cards_output_schema(test_settings) -> None:
                     ],
                     "aspect_ratio": "16:9",
                     "resolution": "2K",
+                    "generation_config": {
+                        "prompts_per_item": 2,
+                        "images_per_prompt": 3,
+                    },
                 }
             ],
         },
@@ -900,6 +935,19 @@ def test_review_storyboard_image_output_schema(test_settings) -> None:
                     "segment_index": 0,
                     "panel_index": 0,
                     "prompt": "分镜提示词",
+                    "prompt_variants": ["分镜提示词", "分镜提示词备选"],
+                    "generated_images": [
+                        {
+                            "image_url": "https://cdn.test/storyboard-1.png",
+                            "prompt": "分镜提示词",
+                            "prompt_index": 0,
+                        },
+                        {
+                            "image_url": "https://cdn.test/storyboard-2.png",
+                            "prompt": "分镜提示词备选",
+                            "prompt_index": 1,
+                        },
+                    ],
                     "selected_image_url": "https://cdn.test/storyboard.png",
                 }
             ],

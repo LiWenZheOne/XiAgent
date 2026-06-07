@@ -41,19 +41,32 @@ interface PanelCard {
   segment_title: string;
   description: string;
   prompt: string;
+  promptVariants?: string[];
+  panelCountVariants?: string[];
+  panel_count?: string;
+  panel_plan?: Record<string, unknown>;
   negative_prompt?: string;
   reference_images: ReferenceImage[];
   generated_images: GeneratedImage[];
   selected_image_url: string;
   aspect_ratio: string;
   resolution: string;
+  generation_config?: GenerationConfig;
   source_item?: Record<string, unknown>;
   status?: GenerationStatus;
   error?: string;
 }
 
+interface GenerationConfig {
+  prompts_per_item?: number;
+  images_per_prompt?: number;
+}
+
 interface GeneratedImage {
   image_url: string;
+  prompt?: string;
+  prompt_index?: number;
+  panel_count?: string;
   source?: string;
   runninghub_task_id?: string;
   asset_id?: string;
@@ -73,6 +86,8 @@ type GenerationStatus = "waiting" | "generating" | "ready" | "failed" | "prompt_
 
 interface GenerationJob {
   card: PanelCard;
+  prompt: string;
+  promptIndex: number;
 }
 
 interface GenerationProgress {
@@ -103,8 +118,9 @@ export function StoryboardPanelCardsControl({
   taskId,
 }: NodeUiControlProps) {
   const readonly = config.mode === "readonly" || !onSubmit;
-  const source = recordValue(readonly ? node.output_snapshot : node.input_snapshot);
-  const output = recordValue(node.output_snapshot);
+  const sourceSnapshot = readonly ? node.output_snapshot : node.input_snapshot;
+  const source = useMemo(() => recordValue(sourceSnapshot), [sourceSnapshot]);
+  const output = useMemo(() => recordValue(node.output_snapshot), [node.output_snapshot]);
   const cards = useMemo(() => buildPanelCards(source, output), [source, output]);
   const [drafts, setDrafts] = useState<DraftMap>(() => initialDrafts(cards, source, output));
   const draftsRef = useRef(drafts);
@@ -190,7 +206,7 @@ export function StoryboardPanelCardsControl({
     });
   }
 
-  function enqueueGeneration(cardsToQueue: PanelCard[]) {
+  function enqueueGeneration(cardsToQueue: PanelCard[], batch = false) {
     if (readonly || busy) return;
     const queuedCards = cardsToQueue.filter((card) => {
       const status = draftsRef.current[card.card_id]?.status;
@@ -205,12 +221,22 @@ export function StoryboardPanelCardsControl({
     if (startingNewRun) {
       generationSummaryRef.current = { succeeded: 0, failed: 0 };
     }
-    generationQueueRef.current = [
-      ...generationQueueRef.current,
-      ...queuedCards.map((card) => ({ card })),
-    ];
+    const jobs = queuedCards.flatMap((card) => {
+        const draft = draftsRef.current[card.card_id] ?? draftFromCard(card);
+        const promptsPerItem = batch ? generationSetting(card, "prompts_per_item") : 1;
+        const imagesPerPrompt = batch ? generationSetting(card, "images_per_prompt") : 1;
+        const prompts = batch ? promptsForBatchGeneration(card, draft, promptsPerItem) : [draft.prompt || card.prompt];
+        return prompts.filter(Boolean).flatMap((prompt, promptIndex) => (
+          Array.from({ length: imagesPerPrompt }, () => ({ card, prompt, promptIndex }))
+        ));
+      });
+    if (!jobs.length) {
+      setError("请先填写至少一个分段提示词。");
+      return;
+    }
+    generationQueueRef.current = [...generationQueueRef.current, ...jobs];
     setGenerationProgress((current) => ({
-      total: (current?.running ? current.total : 0) + queuedCards.length,
+      total: (current?.running ? current.total : 0) + jobs.length,
       completed: current?.running ? current.completed : 0,
       running: true,
     }));
@@ -248,7 +274,7 @@ export function StoryboardPanelCardsControl({
     }
   }
 
-  async function runGenerationJob({ card }: GenerationJob) {
+  async function runGenerationJob({ card, prompt, promptIndex }: GenerationJob) {
     const draft = draftsRef.current[card.card_id] ?? draftFromCard(card);
     const imageRefs = imageRefsFromReferenceImages(draft.reference_images);
     if (!imageRefs.length) {
@@ -262,7 +288,7 @@ export function StoryboardPanelCardsControl({
         project_id: projectId || "global",
         node_id: node.node_id,
         card_id: card.card_id,
-        prompt: draft.prompt,
+        prompt,
         image_refs: imageRefs.map((ref) => ({ ...ref })),
         negative_prompt: card.negative_prompt,
         aspect_ratio: card.aspect_ratio,
@@ -280,7 +306,10 @@ export function StoryboardPanelCardsControl({
             resolution: generationInput.resolution,
           });
       updateCard(card.card_id, (current) => {
-        const nextImages = [...current.generated_images, image];
+        const nextImages = [
+          ...current.generated_images,
+          { ...image, prompt, prompt_index: promptIndex, panel_count: panelCountForPromptIndex(card, promptIndex, current.panel_count) },
+        ];
         return {
           ...current,
           generated_images: nextImages,
@@ -297,7 +326,7 @@ export function StoryboardPanelCardsControl({
   }
 
   function generateCard(card: PanelCard) {
-    enqueueGeneration([card]);
+    enqueueGeneration([card], false);
   }
 
   function generateMissing() {
@@ -306,7 +335,7 @@ export function StoryboardPanelCardsControl({
       setError("所有分镜卡片都已有选定图像。");
       return;
     }
-    enqueueGeneration(missingCards);
+    enqueueGeneration(missingCards, true);
   }
 
   async function regeneratePrompt(card: PanelCard) {
@@ -349,6 +378,7 @@ export function StoryboardPanelCardsControl({
       updateCard(card.card_id, (current) => ({
         ...current,
         prompt: nextCard?.prompt || current.prompt,
+        panel_count: nextCard ? panelCountFromCard(nextCard) : current.panel_count,
         status: "prompt_ready",
         error: "",
       }));
@@ -536,11 +566,16 @@ export function StoryboardPanelCardsControl({
                                 className="storyboard-generated-select"
                                 type="button"
                                 disabled={readonly}
-                                onClick={() => updateCard(card.card_id, (current) => ({ ...current, selected_image_url: image.image_url }))}
+                                onClick={() => updateCard(card.card_id, (current) => ({
+                                  ...current,
+                                  selected_image_url: image.image_url,
+                                  prompt: promptForGeneratedImage(card, image) || current.prompt,
+                                  panel_count: panelCountForGeneratedImage(image) || current.panel_count,
+                                }))}
                               >
                                 <img alt={`生成图 ${index + 1}`} loading="lazy" src={thumbnailUrl} />
                                 <span className={active ? "storyboard-generated-badge active" : "storyboard-generated-badge"}>
-                                  {active ? "已选定稿" : "备选"}
+                                  {active ? "已选定稿" : `生成图 ${index + 1}`}
                                 </span>
                               </button>
                               <button
@@ -597,7 +632,10 @@ export function StoryboardPanelCardsControl({
                       aria-label="分段提示词"
                       readOnly={readonly}
                       value={draft.prompt}
-                      onChange={(event) => updateCard(card.card_id, (current) => ({ ...current, prompt: event.target.value }))}
+                      onChange={(event) => updateCard(card.card_id, (current) => ({
+                        ...current,
+                        prompt: event.target.value,
+                      }))}
                     />
                   </section>
 
@@ -738,12 +776,17 @@ function normalizeCard(value: unknown): PanelCard | null {
     segment_title: text(item.segment_title) || `段落 ${numberValue(item.segment_index) + 1}`,
     description: text(item.description),
     prompt: text(item.prompt),
+    promptVariants: promptVariantsFromRecord(item),
+    panelCountVariants: panelCountVariantsFromRecord(item),
+    panel_count: text(item.panel_count),
+    panel_plan: recordValue(item.panel_plan),
     negative_prompt: text(item.negative_prompt),
     reference_images: referenceImages(item.reference_images),
     generated_images: generatedImages(item.generated_images),
     selected_image_url: text(item.selected_image_url),
     aspect_ratio: text(item.aspect_ratio) || "16:9",
     resolution: text(item.resolution) || "2K",
+    generation_config: generationConfig(item.generation_config),
     source_item: recordValue(item.source_item),
     status: generationStatus(item.status),
     error: text(item.error),
@@ -795,8 +838,38 @@ function selectedImageUrl(draft: PanelDraft): string {
 }
 
 function panelCountFromCard(card?: PanelCard): string {
+  const plan = recordValue(card?.panel_plan);
+  const plannedCount = text(card?.panel_count) || text(plan.panel_count);
   const sourceCount = card?.source_item ? text(card.source_item.panel_count) : "";
-  return normalizedPanelCount(sourceCount) || "1";
+  return normalizedPanelCount(plannedCount) || normalizedPanelCount(sourceCount) || "1";
+}
+
+function panelCountForPromptIndex(card: PanelCard, promptIndex: number, fallback: string): string {
+  const index = Number.isFinite(promptIndex) ? Math.trunc(promptIndex) : -1;
+  if (index >= 0) {
+    const variantCount = normalizedPanelCount(card.panelCountVariants?.[index] ?? "");
+    if (variantCount) return variantCount;
+  }
+  return normalizedPanelCount(fallback) || panelCountFromCard(card);
+}
+
+function generationSetting(card: PanelCard, key: keyof GenerationConfig): number {
+  const value = card.generation_config?.[key] ?? recordValue(card.source_item?.generation_config)[key];
+  return boundedNumber(value, 1, 6, 1);
+}
+
+function generationConfig(value: unknown): GenerationConfig | undefined {
+  const record = recordValue(value);
+  if (!Object.keys(record).length) return undefined;
+  return {
+    prompts_per_item: boundedNumber(record.prompts_per_item, 1, 6, 1),
+    images_per_prompt: boundedNumber(record.images_per_prompt, 1, 6, 1),
+  };
+}
+
+function boundedNumber(value: unknown, minimum: number, maximum: number, fallback: number): number {
+  const parsed = typeof value === "number" && Number.isFinite(value) ? Math.trunc(value) : fallback;
+  return Math.max(minimum, Math.min(maximum, parsed));
 }
 
 function normalizedPanelCount(value: string): string {
@@ -871,6 +944,54 @@ function referenceImageUrl(ref: ReferenceImage, previewUrls: Record<string, stri
   return "";
 }
 
+function promptsForBatchGeneration(card: PanelCard, draft: PanelDraft, count: number): string[] {
+  const currentPrompt = draft.prompt.trim() || card.prompt || "";
+  const prompts = uniqueNonEmptyStrings([...(card.promptVariants ?? []), currentPrompt]);
+  while (prompts.length < count && currentPrompt) prompts.push(currentPrompt);
+  return prompts.slice(0, count);
+}
+
+function promptForGeneratedImage(card: PanelCard, image: GeneratedImage): string {
+  const prompt = image.prompt?.trim();
+  if (prompt) return prompt;
+  const index = typeof image.prompt_index === "number" && Number.isFinite(image.prompt_index)
+    ? Math.trunc(image.prompt_index)
+    : -1;
+  return index >= 0 ? (card.promptVariants?.[index]?.trim() ?? "") : "";
+}
+
+function panelCountForGeneratedImage(image: GeneratedImage): string {
+  return normalizedPanelCount(text(image.panel_count));
+}
+
+function promptVariantsFromRecord(item: Record<string, unknown>): string[] {
+  const variants = uniqueNonEmptyStrings([
+    ...stringList(item.prompt_variants),
+    ...arrayOfRecords(item.prompt_variants).map((variant) => text(variant.prompt)),
+  ]);
+  return variants.length ? variants : uniqueNonEmptyStrings([text(item.prompt)]);
+}
+
+function panelCountVariantsFromRecord(item: Record<string, unknown>): string[] {
+  const values = [
+    ...stringList(item.panel_count_variants),
+    ...arrayOfRecords(item.panel_plan_variants).map((plan) => normalizedPanelCount(text(plan.panel_count))),
+  ].map(normalizedPanelCount).filter(Boolean);
+  return values.length ? values : [normalizedPanelCount(text(item.panel_count)) || normalizedPanelCount(text(recordValue(item.panel_plan).panel_count))];
+}
+
+function uniqueNonEmptyStrings(values: Array<string | undefined>): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const clean = value?.trim();
+    if (!clean || seen.has(clean)) continue;
+    seen.add(clean);
+    result.push(clean);
+  }
+  return result;
+}
+
 function generatedImages(value: unknown): GeneratedImage[] {
   if (!Array.isArray(value)) return [];
   return value
@@ -880,6 +1001,9 @@ function generatedImages(value: unknown): GeneratedImage[] {
       source: text(item.source),
       runninghub_task_id: text(item.runninghub_task_id),
       asset_id: text(item.asset_id),
+      prompt: text(item.prompt),
+      prompt_index: numberValue(item.prompt_index),
+      panel_count: text(item.panel_count),
     }))
     .filter((item) => item.image_url);
 }
@@ -935,14 +1059,18 @@ function recordValue(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
+function arrayOfRecords(value: unknown): Array<Record<string, unknown>> {
+  return Array.isArray(value) ? value.map((item) => recordValue(item)).filter((item) => Object.keys(item).length) : [];
+}
+
 function text(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function stringList(value: unknown): string[] | undefined {
-  if (!Array.isArray(value)) return undefined;
+function stringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
   const items = value.map((item) => text(item)).filter(Boolean);
-  return items.length ? items : undefined;
+  return items;
 }
 
 function numberValue(value: unknown): number {

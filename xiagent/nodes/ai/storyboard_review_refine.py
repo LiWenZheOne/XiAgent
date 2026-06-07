@@ -93,7 +93,7 @@ class StoryboardReviewRefineNode(BaseNode):
                 message="items must be a non-empty array",
             )
 
-        items_by_index = _items_by_index(inputs.get("storyboard_items"))
+        items_by_key = _items_by_key(inputs.get("storyboard_items"))
         shared_context = _mapping(inputs.get("shared_context"))
         review_system = _required_text(inputs.get("review_system"), "review_system")
         review_prompt_template = _required_text(inputs.get("review_prompt_template"), "review_prompt_template")
@@ -108,9 +108,9 @@ class StoryboardReviewRefineNode(BaseNode):
         output_item_schema = _success_item_schema(_output_item_schema(ctx))
 
         tasks = [
-            self._review_and_refine_segment(
-                source=current_item,
-                item=items_by_index.get(_int(current_item.get("index"), 0), {}),
+                self._review_and_refine_segment(
+                    source=current_item,
+                    item=items_by_key.get(_item_key(current_item), {}),
                 shared_context=shared_context,
                 review_system=review_system,
                 review_prompt_template=review_prompt_template,
@@ -128,7 +128,7 @@ class StoryboardReviewRefineNode(BaseNode):
         ]
         results = list(await asyncio.gather(*tasks))
 
-        results.sort(key=lambda item: _int(item.get("index"), 0))
+        results.sort(key=lambda item: _item_key(item))
         return NodeResult(status="succeeded", output={"results": results})
 
     async def _review_and_refine_segment(
@@ -361,13 +361,19 @@ def _refined_segment_schema() -> dict[str, Any]:
     }
 
 
-def _items_by_index(value: Any) -> dict[int, Mapping[str, Any]]:
-    result: dict[int, Mapping[str, Any]] = {}
+def _items_by_key(value: Any) -> dict[tuple[int, int], Mapping[str, Any]]:
+    result: dict[tuple[int, int], Mapping[str, Any]] = {}
     for item in _object_list(value):
-        index = item.get("index")
-        if isinstance(index, int) and not isinstance(index, bool):
-            result[index] = item
+        if isinstance(item.get("index"), int) and not isinstance(item.get("index"), bool):
+            result[_item_key(item)] = item
     return result
+
+
+def _item_key(item: Mapping[str, Any]) -> tuple[int, int]:
+    return (
+        _int(item.get("index"), 0),
+        _int(item.get("prompt_variant_index"), 0),
+    )
 
 
 def _render_template(

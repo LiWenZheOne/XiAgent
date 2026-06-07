@@ -284,7 +284,7 @@ def test_asset_catalog_workflow_contract_structure(test_settings) -> None:
     assert contract["workflow"]["scope"] == "global"
     nodes_by_id = {node["id"]: node for node in contract["nodes"]}
     assert nodes_by_id["collect_asset_catalog_input"]["outputs"]["required"] == [
-        "script", "episode_name", "background",
+        "script", "episode_name", "background", "prompts_per_item", "images_per_prompt",
     ]
     assert "default" not in nodes_by_id["collect_asset_catalog_input"]["inputs"]["episode_name"]["schema"]
     assert "default" not in nodes_by_id["collect_asset_catalog_input"]["outputs"]["properties"]["episode_name"]
@@ -710,6 +710,10 @@ def test_asset_catalog_generate_prompt_output_schema(test_settings) -> None:
                     "target_appearance_description": "黑灰短发，眉眼锋利，短须明显，上身灰色囚衣，气质沉稳。",
                     "think": "角色当前状态为囚服，默认变体为官服，需将官服改为囚服。",
                     "prompt": "请将图中角色改成一位黑灰短发、眉眼锋利、短须明显、上身灰色囚衣、气质沉稳的角色",
+                    "prompt_variants": [
+                        "请将图中角色改成一位黑灰短发、眉眼锋利、短须明显、上身灰色囚衣、气质沉稳的角色",
+                        "请将图中角色改成一位圆鼓头轮廓、浓眉细眼、短须分明、上身灰蓝囚衣叠穿旧布马甲、气质克制的角色",
+                    ],
                     "reference_image_ref": {
                         "kind": "data_uri",
                         "data": "data:image/png;base64,dGVtcGxhdGU=",
@@ -734,34 +738,42 @@ def test_asset_catalog_generate_prompt_is_character_design_text() -> None:
     assert generate_prompt["inputs"]["items"] == {
         "from": "$nodes.filter_assets_for_generation.output.approved_assets",
     }
+    assert nodes_by_id["filter_assets_for_generation"]["inputs"]["prompts_per_item"] == {
+        "from": "$nodes.collect_asset_catalog_input.output.prompts_per_item",
+    }
     assert generate_prompt["inputs"]["prompt_fields"]["value"] == [
         "asset_type",
         "asset_name",
         "asset_tags",
         "target_appearance_description",
         "reference_appearance_description",
+        "prompts_per_item",
     ]
     assert generate_prompt["inputs"]["passthrough_fields"]["value"] == [
         "asset_type",
         "asset_name",
         "asset_tags",
         "target_appearance_description",
+        "prompts_per_item",
     ]
     assert "reference_image_ref" not in nodes_by_id["generate_prompt"]["outputs"]["properties"]["results"]["items"]["required"]
     assert "视觉资产设定提示词专家" in system_prompt
     assert "图生图使用的修改提示词" in system_prompt
+    assert "一次性生成指定数量的差异化候选提示词" in system_prompt
+    assert "本资产需要一次性生成 {prompts_per_item} 条有差异的图生图修改提示词" in prompt_template
+    assert "prompt：第一条候选提示词" in prompt_template
+    assert "prompt_variants：数组，必须恰好包含 {prompts_per_item} 条有差异的候选提示词" in prompt_template
+    assert "如果 {prompts_per_item} 为 1" in prompt_template
     assert "只写资产本体的可见目标设定" in system_prompt
     assert "角色优先写圆形脸/圆形头部轮廓、头面外貌、气质、发型/头饰、上身服装层次、颜色搭配、身份识别性上身装饰和必要上身配件" in system_prompt
     assert "角色最终提示词必须明确脸部/头部轮廓保持圆形或圆鼓头" in system_prompt
-    assert "在圆形脸基础上设计夸张但简洁的眉眼、极简鼻、图案化胡须等面部识别特征" in system_prompt
+    assert "在圆形脸基础上设计夸张但简洁的眉眼、胡须等面部识别特征" in system_prompt
     assert "用眉形、眼型和胡须形状表达身份、年龄与性格气质" in system_prompt
-    assert "五官保持图案化、圆润、清晰" in system_prompt
     assert "头发和头饰承担身份识别" in system_prompt
     assert "不得写成长脸、方脸、瘦削脸、尖脸或写实面部轮廓" in system_prompt
     assert "风格只作为边界约束，不作为输出内容" in system_prompt
     assert "人名、身份履历、剧情动作、临时状态、表情、镜头、场景气氛" in system_prompt
     assert "角色最终提示词不得描述任何下半身内容，包括腿、脚、鞋履、下装、下肢、四肢长短" in system_prompt
-    assert "不得用“球形整体”“无腿”等概括说明下半身" in system_prompt
     assert "这些只作为内部边界，不能写入输出" in system_prompt
     assert "短小四肢" not in prompt_template
     assert "材质、布料质感、纹理或面料工艺" in system_prompt
@@ -775,21 +787,21 @@ def test_asset_catalog_generate_prompt_is_character_design_text() -> None:
     assert "asset_type 是 character、scene 还是 prop" in prompt_template
     assert "哪些外貌和气质必须替换或补足" in prompt_template
     assert "如何在圆形脸/圆形头部轮廓不变的前提下" in prompt_template
-    assert "用夸张但简洁的眉形、眼型、极简鼻、图案化胡须、发型/头饰体现身份、气质和年龄" in prompt_template
+    assert "用夸张但简洁的眉形、眼型、胡须、发型/头饰体现身份、气质和年龄" in prompt_template
     assert "能让角色更具体、更可画" in prompt_template
     assert "最终 prompt 不得出现任何下半身内容，包括腿、脚、鞋履、下装" in prompt_template
     assert "不得写球形下半身等概括说明" in prompt_template
     assert "最合理的一种确定造型是什么" in prompt_template
     assert "如果是地点：这个场景的空间结构、建筑/地貌、布局、摆设、时代视觉元素和用途分别是什么" in prompt_template
     assert "如果是道具：这个物件的主体、形制、颜色、装饰、磨损、用途和可见特征分别是什么" in prompt_template
-    assert "最终提示词是否只保留可见目标设定" in prompt_template
+    assert "最终每条提示词是否只保留可见目标设定" in prompt_template
     assert "- asset_name" not in prompt_template
     assert "- asset_tags" not in prompt_template
     assert "- target_appearance_description" not in prompt_template
     assert "reference_image_ref" not in prompt_template
-    assert "最终修改用的提示词" in prompt_template
+    assert "候选提示词" in prompt_template
     assert "character：以“请将图中角色改成一位……”开头" in prompt_template
-    assert "只写稳定人物圆形脸/圆形头部轮廓、图案化眉眼、极简鼻、图案化胡须" in prompt_template
+    assert "只写稳定人物圆形脸/圆形头部轮廓、化眉眼、胡须" in prompt_template
     assert "不输出任何下半身内容" in prompt_template
     assert "不输出画风词、质量词或模型参数" in prompt_template
     assert "scene：以“请将图中场景改成……”开头" in prompt_template
@@ -1009,6 +1021,12 @@ def test_asset_catalog_image_completion_references_prompt_results() -> None:
     }
     assert upload_inputs["enriched_characters"] == {
         "from": "$nodes.enrich_characters.output.characters",
+    }
+    assert upload_inputs["prompts_per_item"] == {
+        "from": "$nodes.collect_asset_catalog_input.output.prompts_per_item",
+    }
+    assert upload_inputs["images_per_prompt"] == {
+        "from": "$nodes.collect_asset_catalog_input.output.images_per_prompt",
     }
     upload_ui = nodes_by_id["upload_images"]["ui"]
     assert upload_ui["controls"]["interaction"]["control_id"] == "ui.interaction.asset_image_cards.v1"
@@ -1295,7 +1313,8 @@ class FakeAssetCatalogRouter(ChatModelRouter):
                 '{"asset_type": "character", "asset_name": "林冲", "asset_tags": ["囚服"], '
                 '"target_appearance_description": "黑灰短发，眉眼锋利，短须明显，上身灰色囚衣，气质沉稳。", '
                 '"think": "角色当前状态为囚服，默认变体为官服，需将官服改为囚服。", '
-                '"prompt": "请将图中角色改成一位黑灰短发、眉眼锋利、短须明显、上身灰色囚衣、气质沉稳的角色"}'
+                '"prompt": "请将图中角色改成一位黑灰短发、眉眼锋利、短须明显、上身灰色囚衣、气质沉稳的角色", '
+                '"prompt_variants": ["请将图中角色改成一位黑灰短发、眉眼锋利、短须明显、上身灰色囚衣、气质沉稳的角色"]}'
             ),
             # summarize_episode
             (
@@ -1370,7 +1389,8 @@ class FakeAssetCatalogRouter(ChatModelRouter):
                 '{"asset_type": "character", "asset_name": "林冲", "asset_tags": ["囚服"], '
                 '"target_appearance_description": "黑灰短发，眉眼锋利，短须明显，上身灰色囚衣，气质沉稳。", '
                 '"think": "角色当前状态为囚服，默认变体为官服，需将官服改为囚服。", '
-                '"prompt": "请将图中角色改成一位黑灰短发、眉眼锋利、短须明显、上身灰色囚衣、气质沉稳的角色"}'
+                '"prompt": "请将图中角色改成一位黑灰短发、眉眼锋利、短须明显、上身灰色囚衣、气质沉稳的角色", '
+                '"prompt_variants": ["请将图中角色改成一位黑灰短发、眉眼锋利、短须明显、上身灰色囚衣、气质沉稳的角色"]}'
             )
         elif "请为以下剧本生成集剧情概括" in request_text:
             text = (
@@ -1435,6 +1455,10 @@ def _asset_catalog_test_answer():
             return "测试集"
         if prompt.endswith("background: "):
             return "水浒传"
+        if prompt.endswith("prompts_per_item: "):
+            return "1"
+        if prompt.endswith("images_per_prompt: "):
+            return "1"
         if prompt.endswith("approved_assets (JSON): "):
             return (
                 '{"characters": [{"asset_type": "character", "asset_name": "林冲", '
@@ -1472,6 +1496,10 @@ def _asset_catalog_all_matched_answer():
             return "测试集"
         if prompt.endswith("background: "):
             return "水浒传"
+        if prompt.endswith("prompts_per_item: "):
+            return "1"
+        if prompt.endswith("images_per_prompt: "):
+            return "1"
         if prompt.endswith("approved_assets (JSON): "):
             return (
                 '{"characters": [{"asset_type": "character", "asset_name": "林冲", '

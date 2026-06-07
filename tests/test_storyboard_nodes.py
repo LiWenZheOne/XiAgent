@@ -63,16 +63,16 @@ async def test_script_split_uses_markers_over_blank_lines(test_settings) -> None
             {
                 "index": 0,
                 "text": "山门前，主角拔剑。",
-                "panel_hint": "2",
-                "panel_count_min": 2,
-                "panel_count_max": 2,
+                "panel_hint": "auto",
+                "panel_count_min": 1,
+                "panel_count_max": 1,
             },
             {
                 "index": 1,
                 "text": "The chase crosses the market.\n\n没有标记的收束段落。",
-                "panel_hint": "2-3",
-                "panel_count_min": 2,
-                "panel_count_max": 3,
+                "panel_hint": "auto",
+                "panel_count_min": 1,
+                "panel_count_max": 1,
             },
         ],
     }
@@ -100,28 +100,28 @@ async def test_script_split_uses_parentheses_as_segment_markers(test_settings) -
             {
                 "index": 0,
                 "text": "鲁智深说何涛领了命，随即下厅，来到桃花山商议。",
-                "panel_hint": "1",
+                "panel_hint": "auto",
                 "panel_count_min": 1,
                 "panel_count_max": 1,
             },
             {
                 "index": 1,
                 "text": "林冲踏雪进入野猪林，花枪横在身侧。",
-                "panel_hint": "3",
-                "panel_count_min": 3,
-                "panel_count_max": 3,
+                "panel_hint": "auto",
+                "panel_count_min": 1,
+                "panel_count_max": 1,
             },
             {
                 "index": 2,
                 "text": "两个公差互看一眼，悄悄靠近。",
-                "panel_hint": "2-4",
-                "panel_count_min": 2,
-                "panel_count_max": 4,
+                "panel_hint": "auto",
+                "panel_count_min": 1,
+                "panel_count_max": 1,
             },
             {
                 "index": 3,
                 "text": "山神庙门前风雪更急。",
-                "panel_hint": "1",
+                "panel_hint": "auto",
                 "panel_count_min": 1,
                 "panel_count_max": 1,
             },
@@ -136,7 +136,7 @@ async def test_script_split_uses_blank_lines_for_unmarked_script(test_settings) 
 
     assert result.output["count"] == 3
     assert [segment["index"] for segment in result.output["segments"]] == [0, 1, 2]
-    assert [segment["panel_hint"] for segment in result.output["segments"]] == ["1", "1", "1"]
+    assert [segment["panel_hint"] for segment in result.output["segments"]] == ["auto", "auto", "auto"]
 
 
 async def test_script_split_can_limit_segment_count(test_settings) -> None:
@@ -151,7 +151,7 @@ async def test_script_split_can_limit_segment_count(test_settings) -> None:
     assert [segment["text"] for segment in result.output["segments"]] == ["第一段"]
 
 
-async def test_context_assemblers_use_raw_panel_hint_without_min_max() -> None:
+async def test_context_assemblers_use_ai_panel_count_strategy() -> None:
     segments = [
         {
             "index": 0,
@@ -177,8 +177,10 @@ async def test_context_assemblers_use_raw_panel_hint_without_min_max() -> None:
         },
     )
 
-    assert "建议分格数：3-4" in segment_result.output["context_string"]
-    assert "建议分格数：3-4" in storyboard_result.output["context_string"]
+    assert "分格数策略：由 AI 根据本段情节、动作密度和情绪节奏自行设计。" in segment_result.output["context_string"]
+    assert "分格数策略：由 AI 根据本段情节、动作密度和情绪节奏自行设计。" in storyboard_result.output["context_string"]
+    assert "建议分格数：3-4" not in segment_result.output["context_string"]
+    assert "建议分格数：3-4" not in storyboard_result.output["context_string"]
     assert "最少" not in segment_result.output["context_string"]
     assert "最多" not in storyboard_result.output["context_string"]
 

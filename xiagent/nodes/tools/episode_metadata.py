@@ -165,6 +165,8 @@ class EpisodeMetadataFromAssetNode(BaseNode):
                     "episode_asset_id": {"type": "string", "minLength": 1},
                     "no_material": {"type": "boolean"},
                     "enrich_description": {"type": "boolean"},
+                    "prompts_per_item": {"type": "integer", "minimum": 1, "maximum": 6, "default": 1},
+                    "images_per_prompt": {"type": "integer", "minimum": 1, "maximum": 6, "default": 1},
                 },
                 "additionalProperties": False,
             },
@@ -201,6 +203,8 @@ class EpisodeMetadataFromAssetNode(BaseNode):
             "storyboard_options": {
                 "no_material": _bool(inputs.get("no_material")),
                 "enrich_description": _bool(inputs.get("enrich_description")),
+                "prompts_per_item": _bounded_int(inputs.get("prompts_per_item"), fallback=1, minimum=1, maximum=6),
+                "images_per_prompt": _bounded_int(inputs.get("images_per_prompt"), fallback=1, minimum=1, maximum=6),
             },
         }
         if not output["source_script"]:
@@ -234,6 +238,8 @@ def _episode_output_schema() -> dict[str, Any]:
                 "properties": {
                     "no_material": {"type": "boolean"},
                     "enrich_description": {"type": "boolean"},
+                    "prompts_per_item": {"type": "integer", "minimum": 1, "maximum": 6, "default": 1},
+                    "images_per_prompt": {"type": "integer", "minimum": 1, "maximum": 6, "default": 1},
                 },
                 "additionalProperties": False,
             },
@@ -300,6 +306,11 @@ def _text(value: Any) -> str:
 
 def _bool(value: Any) -> bool:
     return value is True
+
+
+def _bounded_int(value: Any, *, fallback: int, minimum: int, maximum: int) -> int:
+    parsed = value if isinstance(value, int) and not isinstance(value, bool) else fallback
+    return max(minimum, min(maximum, parsed))
 
 
 def _object(value: Any) -> dict[str, Any]:

@@ -769,14 +769,21 @@ def test_storyboard_panel_prompt_regeneration_runs_full_segment_chain(test_setti
                     }
                 },
                 {
-                    "think": "完整推理过程：单格集中表现密议压力。",
+                    "think": "完整推理过程：两格表现密议压力。",
                     "segment_title": "机密房密议",
                     "panel_plan": {
-                        "panel_count": 1,
-                        "page_layout": "单格整页",
+                        "panel_count": 2,
+                        "page_layout": "两格横向推进",
                         "panels": [
                             {
                                 "panel_index": 1,
+                                "narrative_purpose": "建立机密房空间",
+                                "characters": ["何涛", "众公差"],
+                                "visible_props": ["方桌"],
+                                "frame_content": "何涛进入机密房。",
+                            },
+                            {
+                                "panel_index": 2,
                                 "narrative_purpose": "表现众人围桌密议的压迫感",
                                 "characters": ["何涛", "众公差"],
                                 "visible_props": ["方桌"],
@@ -793,8 +800,8 @@ def test_storyboard_panel_prompt_regeneration_runs_full_segment_chain(test_setti
                     "revision_summary": "通过",
                 },
                 {
-                    "think": "完整推理过程：按单格计划转换为画面内容。",
-                    "image_prompt": "何涛与众公差在机密房内围着方桌密议。一共有1格。第1格出现何涛和众公差。整页为单格整页，方桌占据中景中心，何涛侧对镜头，众公差围在桌边，背景墙面压低空间，光线集中在桌面形成紧张气氛。",
+                    "think": "完整推理过程：按两格计划转换为画面内容。",
+                    "image_prompt": "何涛与众公差在机密房内围着方桌密议。一共有2格。第1格何涛进入机密房。第2格出现何涛和众公差。整页为两格横向推进，方桌占据中景中心，何涛侧对镜头，众公差围在桌边，背景墙面压低空间，光线集中在桌面形成紧张气氛。",
                 },
                 {
                     "think": "完整推理过程：画面提示词忠于分镜计划。",
@@ -872,7 +879,7 @@ def test_storyboard_panel_prompt_regeneration_runs_full_segment_chain(test_setti
                 "item": {
                     "index": 0,
                     "paragraph_text": "何涛来到机密房里和众公差商议。",
-                    "panel_count": "1",
+                    "panel_count": "2",
                     "present_characters": ["何涛", "众公差"],
                     "location": "机密房",
                     "key_props": ["方桌"],
@@ -901,13 +908,15 @@ def test_storyboard_panel_prompt_regeneration_runs_full_segment_chain(test_setti
     assert response.status_code == 200, response.json()
     body = response.json()
     assert body["segment_description"]["segment_title"] == "机密房密议"
-    assert body["segment_description"]["panel_plan"]["panel_count"] == 1
+    assert body["segment_description"]["panel_plan"]["panel_count"] == 2
     assert body["segment_description"]["prompt_review"]["passed"] is True
     assert "何涛（参考图1）与众公差（参考图2）在机密房内围着方桌密议" in body["card"]["prompt"]
     assert "图1是角色何涛" in body["card"]["prompt"]
     assert "图2是角色众公差" in body["card"]["prompt"]
     assert "何涛（参考图1）" in body["card"]["prompt"]
     assert "众公差（参考图2）" in body["card"]["prompt"]
+    assert "用户手动指定目标分格数为 2" in fake_router.requests[1].messages[-1].content
+    assert "panel_plan.panel_count 等于 2" in fake_router.requests[2].messages[-1].content
     assert detail_response.status_code == 200
     detail = detail_response.json()
     event_types = [event["event_type"] for event in detail["events"]]

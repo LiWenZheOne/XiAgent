@@ -29,6 +29,8 @@ class PrepareSegmentStoryboardInputsNode(BaseNode):
                         "properties": {
                             "no_material": {"type": "boolean"},
                             "enrich_description": {"type": "boolean"},
+                            "prompts_per_item": {"type": "integer", "minimum": 1, "maximum": 6, "default": 1},
+                            "images_per_prompt": {"type": "integer", "minimum": 1, "maximum": 6, "default": 1},
                         },
                         "additionalProperties": False,
                     },
@@ -52,6 +54,9 @@ class PrepareSegmentStoryboardInputsNode(BaseNode):
                                 "scene_description",
                                 "key_props",
                                 "segment_assignment",
+                                "prompt_variant_index",
+                                "prompt_variant_count",
+                                "prompt_variant_instruction",
                             ],
                             "properties": {
                                 "index": {"type": "integer", "minimum": 0},
@@ -68,6 +73,9 @@ class PrepareSegmentStoryboardInputsNode(BaseNode):
                                     "items": {"type": "string", "minLength": 1},
                                 },
                                 "segment_assignment": {"type": "object"},
+                                "prompt_variant_index": {"type": "integer", "minimum": 0},
+                                "prompt_variant_count": {"type": "integer", "minimum": 1},
+                                "prompt_variant_instruction": {"type": "string"},
                             },
                             "additionalProperties": False,
                         },
@@ -83,6 +91,8 @@ class PrepareSegmentStoryboardInputsNode(BaseNode):
                                 "properties": {
                                     "no_material": {"type": "boolean"},
                                     "enrich_description": {"type": "boolean"},
+                                    "prompts_per_item": {"type": "integer", "minimum": 1, "maximum": 6, "default": 1},
+                                    "images_per_prompt": {"type": "integer", "minimum": 1, "maximum": 6, "default": 1},
                                 },
                                 "additionalProperties": False,
                             },
@@ -129,6 +139,12 @@ class PrepareSegmentStoryboardInputsNode(BaseNode):
         }
 
         items: list[dict[str, Any]] = []
+        prompt_variant_count = _bounded_int(
+            storyboard_options.get("prompts_per_item"),
+            fallback=1,
+            minimum=1,
+            maximum=6,
+        )
         for segment in segments:
             if "index" not in segment or not _is_int_like(segment["index"]):
                 continue
@@ -138,18 +154,28 @@ class PrepareSegmentStoryboardInputsNode(BaseNode):
                 {"segment_index": index, "characters": [], "key_props": []},
             )
             assignment = _compact_assignment(raw_assignment)
-            items.append(
-                {
-                    "index": index,
-                    "paragraph_text": _text(segment.get("text")),
-                    "panel_count": _panel_count(segment),
-                    "present_characters": _present_character_names(assignment),
-                    "location": _text(assignment.get("location")),
-                    "scene_description": _scene_description(raw_assignment),
-                    "key_props": _string_list(assignment.get("key_props")),
-                    "segment_assignment": assignment,
-                }
-            )
+            base_item = {
+                "index": index,
+                "paragraph_text": _text(segment.get("text")),
+                "panel_count": _panel_count(segment),
+                "present_characters": _present_character_names(assignment),
+                "location": _text(assignment.get("location")),
+                "scene_description": _scene_description(raw_assignment),
+                "key_props": _string_list(assignment.get("key_props")),
+                "segment_assignment": assignment,
+            }
+            for prompt_variant_index in range(prompt_variant_count):
+                items.append(
+                    {
+                        **base_item,
+                        "prompt_variant_index": prompt_variant_index,
+                        "prompt_variant_count": prompt_variant_count,
+                        "prompt_variant_instruction": _prompt_variant_instruction(
+                            prompt_variant_index,
+                            prompt_variant_count,
+                        ),
+                    }
+                )
 
         if not items:
             raise ValidationError(
@@ -191,15 +217,27 @@ def _is_int_like(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
-def _storyboard_options(value: Any) -> dict[str, bool]:
+def _storyboard_options(value: Any) -> dict[str, Any]:
     options = dict(value) if isinstance(value, Mapping) else {}
     return {
         "no_material": options.get("no_material") is True,
         "enrich_description": options.get("enrich_description") is True,
+        "prompts_per_item": _bounded_int(
+            options.get("prompts_per_item"),
+            fallback=1,
+            minimum=1,
+            maximum=6,
+        ),
+        "images_per_prompt": _bounded_int(
+            options.get("images_per_prompt"),
+            fallback=1,
+            minimum=1,
+            maximum=6,
+        ),
     }
 
 
-def _prompt_rules(options: Mapping[str, bool]) -> dict[str, str]:
+def _prompt_rules(options: Mapping[str, Any]) -> dict[str, str]:
     if options.get("no_material") is True:
         material_rule = (
             "- 删除所有材质和质感审查，只保留空间、结构、色彩、光影、功能和动作信息。"
@@ -232,16 +270,26 @@ def _prompt_rules(options: Mapping[str, bool]) -> dict[str, str]:
 
 
 def _panel_count(segment: Mapping[str, Any]) -> str:
-    hint = _text(segment.get("panel_hint"))
-    if hint:
-        return hint
-    minimum = segment.get("panel_count_min")
-    maximum = segment.get("panel_count_max")
-    if _is_int_like(minimum) and _is_int_like(maximum):
-        if minimum == maximum:
-            return str(minimum)
-        return f"{minimum}-{maximum}"
-    return "1"
+    _ = segment
+    return "auto"
+
+
+def _prompt_variant_instruction(index: int, count: int) -> str:
+    if count <= 1:
+        return "这是当前段落唯一一份分镜提示词候选，按最适合剧情的方案生成。"
+    return (
+        f"这是当前段落第 {index + 1}/{count} 份分镜提示词候选。"
+        "请在忠于同一段剧情、角色、地点和道具的前提下，设计一套独立候选方案，"
+        "与其它候选在分镜节奏、叙事取舍、核心画面重心或镜头组织上形成可辨差异，"
+        "但不要为了差异而新增剧情、角色或道具。"
+    )
+
+
+def _bounded_int(value: Any, *, fallback: int, minimum: int, maximum: int) -> int:
+    if isinstance(value, bool):
+        return fallback
+    parsed = value if isinstance(value, int) else fallback
+    return max(minimum, min(maximum, parsed))
 
 
 def _compact_assignment(assignment: Mapping[str, Any]) -> dict[str, Any]:

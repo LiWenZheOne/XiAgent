@@ -105,11 +105,9 @@ class AssembleStoryboardContextNode(BaseNode):
                 continue
             index = int(segment.get("index", 0))
             text = str(segment.get("text", "")).strip()
-            panel_hint = str(segment.get("panel_hint", "1"))
-
             parts.append(f"--- 段落 {index} ---")
             parts.append(f"原文：{text}")
-            parts.append(f"建议分格数：{panel_hint}")
+            parts.append("分格数策略：由 AI 根据本段情节、动作密度和情绪节奏自行设计。")
 
             assignment = assignment_by_index.get(index)
             if assignment is not None:

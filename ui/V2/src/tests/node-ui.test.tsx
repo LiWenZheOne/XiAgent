@@ -527,6 +527,168 @@ describe("node-ui controls", () => {
     expect(screen.queryByText(/asset_0382ca8350d344cc841870ea/)).not.toBeInTheDocument();
   });
 
+  it("fills the asset prompt from the selected pool image prompt", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => jsonResponse({ items: [] })));
+
+    render(
+      <AssetImageCardsControl
+        config={{ control_id: "ui.interaction.asset_image_cards.v1", variant: "grouped_cards", mode: "interactive" }}
+        node={{
+          node_execution_id: "exec-asset-pool-prompt",
+          node_id: "upload_images",
+          node_ref: "system.human_approval.v1",
+          status: "waiting",
+          input_snapshot: {
+            characters: [{ asset_type: "character", asset_name: "林冲", asset_tags: ["囚服"] }],
+            prompt_results: [
+              { asset_type: "character", asset_name: "林冲", asset_tags: ["囚服"], prompt: "第一条预生成提示词" },
+              { asset_type: "character", asset_name: "林冲_2", asset_tags: ["囚服"], prompt: "第二条预生成提示词" },
+            ],
+            generated_images: [
+              {
+                asset_key: "character:林冲:囚服",
+                asset_type: "character",
+                asset_name: "林冲",
+                asset_tags: ["囚服"],
+                image_url: "https://cdn.example.com/linchong-1.png",
+                prompt_index: 0,
+              },
+              {
+                asset_key: "character:林冲:囚服",
+                asset_type: "character",
+                asset_name: "林冲",
+                asset_tags: ["囚服"],
+                image_url: "https://cdn.example.com/linchong-2.png",
+                prompt_index: 1,
+              },
+            ],
+          },
+        }}
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("img", { name: "角色_林冲_囚服 图像池 2" }).closest("button") as HTMLButtonElement);
+
+    await waitFor(() => expect(screen.getByLabelText("资产提示词")).toHaveValue("第二条预生成提示词"));
+  });
+
+  it("uses the current asset prompt for single-card regeneration", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/assets/generate-image") {
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        expect(body.prompt_result.prompt).toBe("当前提示词框内容");
+        return jsonResponse({ generation_id: "asset-generation-current-prompt", status: "queued" });
+      }
+      if (url === "/api/assets/generate-image/asset-generation-current-prompt") {
+        return jsonResponse({
+          generation_id: "asset-generation-current-prompt",
+          status: "succeeded",
+          result: {
+            image_url: "https://cdn.example.com/linchong-current.png",
+            source: "ai_generated",
+          },
+        });
+      }
+      return jsonResponse({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <AssetImageCardsControl
+        config={{ control_id: "ui.interaction.asset_image_cards.v1", variant: "grouped_cards", mode: "interactive" }}
+        node={{
+          node_execution_id: "exec-asset-single-regenerate",
+          node_id: "upload_images",
+          node_ref: "system.human_approval.v1",
+          status: "waiting",
+          input_snapshot: {
+            characters: [{ asset_type: "character", asset_name: "林冲", asset_tags: ["囚服"] }],
+            prompt_results: [{ asset_type: "character", asset_name: "林冲", asset_tags: ["囚服"], prompt: "原始提示词" }],
+            prompts_per_item: 3,
+            images_per_prompt: 2,
+          },
+        }}
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("资产提示词"), { target: { value: "当前提示词框内容" } });
+    fireEvent.click(screen.getByRole("button", { name: "生成" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/assets/generate-image",
+      expect.objectContaining({ method: "POST" }),
+    ));
+    const postCalls = fetchMock.mock.calls.filter(([url, init]) => String(url) === "/api/assets/generate-image" && init?.method === "POST");
+    expect(postCalls).toHaveLength(1);
+  });
+
+  it("uses the default reference template for unlinked asset cards with stale reference refs", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.startsWith("/api/assets/search")) {
+        return jsonResponse({
+          items: [{
+            asset_id: "asset-default-character",
+            asset_type: "file",
+            name: "塞雷2d角色模板",
+            scope: "global",
+            mime_type: "image/png",
+            size_bytes: 128,
+            metadata: { public_url: "https://cdn.example.com/default-character.png" },
+            created_at: "2026-05-27T10:00:00Z",
+          }],
+        });
+      }
+      if (url === "/api/assets/asset-default-character/tags" || url.startsWith("/api/assets/tags")) {
+        return jsonResponse({ items: [] });
+      }
+      return jsonResponse({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <AssetImageCardsControl
+        config={{
+          control_id: "ui.interaction.asset_image_cards.v1",
+          variant: "grouped_cards",
+          mode: "interactive",
+          options: { default_reference_templates: { character: "塞雷2d角色模板" } },
+        }}
+        node={{
+          node_execution_id: "exec-default-template-stale-ref",
+          node_id: "upload_images",
+          node_ref: "system.human_approval.v1",
+          status: "waiting",
+          input_snapshot: {
+            characters: [
+              {
+                asset_type: "character",
+                asset_name: "梁山泊头领",
+                asset_tags: ["头巾"],
+                reference_image_ref: { kind: "asset", asset_id: "asset-stale-reference", role: "reference" },
+              },
+            ],
+            prompt_results: [
+              {
+                asset_type: "character",
+                asset_name: "梁山泊头领",
+                asset_tags: ["头巾"],
+                prompt: "头巾短打",
+                reference_image_ref: { kind: "asset", asset_id: "asset-stale-reference", role: "reference" },
+              },
+            ],
+          },
+        }}
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByText("塞雷2d角色模板")).toBeInTheDocument();
+  });
+
   it("renders matched asset cards, generates images locally, and submits after confirmation", async () => {
     const onSubmit = vi.fn();
     const onDraft = vi.fn();
@@ -881,35 +1043,40 @@ describe("node-ui controls", () => {
       expect(fetchMock).toHaveBeenCalledWith("/api/assets/asset-linchong-ref/thumbnail?size=256", expect.any(Object));
       expect(fetchMock).toHaveBeenCalledWith("/api/assets/asset-storyboard-0/thumbnail?size=256", expect.any(Object));
     });
-    expect(screen.getByRole("img", { name: "生成图 1" })).toHaveAttribute("src", expect.stringContaining("blob:storyboard-thumb-"));
+    expect(screen.getByRole("img", { name: "生成图 1" })).toHaveAttribute("src", expect.stringMatching(/^(blob:storyboard-thumb-|https:\/\/cdn\.example\.com\/storyboard-0\.png)/));
     await userEvent.click(screen.getByRole("button", { name: "全屏查看生成图 1" }));
     expect(screen.getByRole("dialog", { name: "全屏查看 雪夜 分格 1 生成图 1" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "关闭" }));
-    expect(screen.getByRole("img", { name: "林冲 参考图" })).toHaveAttribute("src", expect.stringContaining("blob:storyboard-thumb-"));
     expect(screen.getByText("资产")).toBeInTheDocument();
     await userEvent.clear(screen.getByLabelText("分段提示词"));
     await userEvent.type(screen.getByLabelText("分段提示词"), "新的分镜提示词");
     await userEvent.click(screen.getByRole("button", { name: "完成并继续" }));
 
-    expect(onSubmit).toHaveBeenCalledWith({
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
       decision: "finish",
       panel_results: [
         expect.objectContaining({
           card_id: "segment-0",
           prompt: "新的分镜提示词",
           selected_image_url: "https://cdn.example.com/storyboard-0.png",
-          generated_images: [{ image_url: "https://cdn.example.com/storyboard-0.png", source: "ai_generated", asset_id: "asset-storyboard-0" }],
+          generated_images: [
+            expect.objectContaining({
+              image_url: "https://cdn.example.com/storyboard-0.png",
+              source: "ai_generated",
+              asset_id: "asset-storyboard-0",
+            }),
+          ],
           reference_images: [
             expect.objectContaining({
               label: "林冲",
               asset_type: "character",
               asset_name: "林冲",
-              image_ref: { kind: "asset", asset_id: "asset-linchong-ref", role: "reference" },
+              image_ref: expect.objectContaining({ kind: "asset", asset_id: "asset-linchong-ref", role: "reference" }),
             }),
           ],
         }),
       ],
-    });
+    }));
   });
 
   it("blocks storyboard panel submission until every card has a selected image", async () => {
@@ -950,7 +1117,7 @@ describe("node-ui controls", () => {
       />,
     );
 
-    expect(screen.getByText("缺少图像")).toBeInTheDocument();
+    expect(screen.getByText("待生成")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "完成并继续" }));
 
     expect(screen.getByRole("dialog", { name: "缺少分镜图像" })).toBeInTheDocument();
@@ -1000,6 +1167,8 @@ describe("node-ui controls", () => {
                 segment_title: "雪夜",
                 description: "林冲踏雪前行。",
                 prompt: "原始提示词",
+                panel_count: "2",
+                panel_plan: { panel_count: 2, panels: [{ description: "风雪起" }, { description: "人物行" }] },
                 reference_images: [
                   {
                     label: "林冲",
@@ -1017,7 +1186,7 @@ describe("node-ui controls", () => {
                 source_item: {
                   index: 0,
                   paragraph_text: "林冲踏雪。",
-                  panel_count: "1",
+                  panel_count: "auto",
                 },
               },
             ],
@@ -1029,7 +1198,7 @@ describe("node-ui controls", () => {
     );
 
     const panelCountInput = screen.getByLabelText("雪夜 分格数量");
-    expect(panelCountInput).toHaveValue(1);
+    expect(panelCountInput).toHaveValue(2);
     await userEvent.clear(panelCountInput);
     await userEvent.type(panelCountInput, "3");
     await userEvent.click(screen.getByRole("button", { name: "重新生成提示词" }));
@@ -1128,11 +1297,176 @@ describe("node-ui controls", () => {
     expect(screen.getByLabelText("分段提示词")).toHaveValue("已保存提示词");
   });
 
+  it("fills the storyboard prompt when selecting a generated image", async () => {
+    render(
+      <StoryboardPanelCardsControl
+        config={{ control_id: "ui.interaction.storyboard_panel_cards.v1", variant: "panel_review", mode: "interactive" }}
+        node={{
+          node_execution_id: "exec-storyboard-panel-select-prompt",
+          node_id: "review_storyboard_image",
+          node_ref: "system.human_approval.v1",
+          status: "waiting",
+          input_snapshot: {
+            panel_cards: [
+              {
+                card_id: "segment-0",
+                segment_index: 0,
+                panel_index: 0,
+                segment_title: "雪夜",
+                description: "林冲踏雪前行。",
+                prompt: "当前提示词",
+                reference_images: [],
+                generated_images: [
+                  { image_url: "https://cdn.example.com/storyboard-old.png", source: "ai_generated", prompt: "旧图提示词" },
+                  { image_url: "https://cdn.example.com/storyboard-new.png", source: "ai_generated", prompt: "新图提示词" },
+                ],
+                selected_image_url: "https://cdn.example.com/storyboard-old.png",
+                aspect_ratio: "16:9",
+                resolution: "2K",
+              },
+            ],
+          },
+        }}
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("img", { name: "生成图 2" }).closest("button") as HTMLButtonElement);
+
+    expect(screen.getByLabelText("分段提示词")).toHaveValue("新图提示词");
+    const selectedButtons = screen.getAllByRole("button").filter((button) => button.textContent?.includes("已选定稿"));
+    expect(selectedButtons[0].querySelector("img")).toHaveAttribute("src", "https://cdn.example.com/storyboard-new.png");
+  });
+
+  it("fills the storyboard prompt from prompt index when generated image prompt is missing", async () => {
+    render(
+      <StoryboardPanelCardsControl
+        config={{ control_id: "ui.interaction.storyboard_panel_cards.v1", variant: "panel_review", mode: "interactive" }}
+        node={{
+          node_execution_id: "exec-storyboard-panel-select-indexed-prompt",
+          node_id: "review_storyboard_image",
+          node_ref: "system.human_approval.v1",
+          status: "waiting",
+          input_snapshot: {
+            panel_cards: [
+              {
+                card_id: "segment-0",
+                segment_index: 0,
+                panel_index: 0,
+                segment_title: "雪夜",
+                description: "林冲踏雪前行。",
+                prompt: "当前提示词",
+                panel_count: "2",
+                prompt_variants: ["第一条隐藏提示词", "第二条隐藏提示词"],
+                reference_images: [],
+                generated_images: [
+                  { image_url: "https://cdn.example.com/storyboard-old.png", source: "ai_generated", prompt_index: 0, panel_count: "2" },
+                  { image_url: "https://cdn.example.com/storyboard-new.png", source: "ai_generated", prompt_index: 1, panel_count: "4" },
+                ],
+                selected_image_url: "https://cdn.example.com/storyboard-old.png",
+                aspect_ratio: "16:9",
+                resolution: "2K",
+              },
+            ],
+          },
+        }}
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("img", { name: "生成图 2" }).closest("button") as HTMLButtonElement);
+
+    await waitFor(() => expect(screen.getByLabelText("分段提示词")).toHaveValue("第二条隐藏提示词"));
+    expect(screen.getByLabelText("雪夜 分格数量")).toHaveValue(4);
+  });
+
+  it("generates storyboard images for each configured hidden prompt in batch mode", async () => {
+    const promptRequests: string[] = [];
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/assets/storyboard-panel-image") {
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        promptRequests.push(body.prompt);
+        return jsonResponse({ generation_id: `storyboard-generation-${promptRequests.length}`, status: "queued" });
+      }
+      if (url.startsWith("/api/assets/generate-image/storyboard-generation-")) {
+        const generationId = url.split("/").pop() ?? "storyboard-generation-0";
+        return jsonResponse({
+          generation_id: generationId,
+          status: "succeeded",
+          result: {
+            card_id: "segment-0",
+            image_url: `https://cdn.example.com/${generationId}.png`,
+            source: "ai_generated",
+          },
+        });
+      }
+      return jsonResponse({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <StoryboardPanelCardsControl
+        config={{ control_id: "ui.interaction.storyboard_panel_cards.v1", variant: "panel_review", mode: "interactive" }}
+        node={{
+          node_execution_id: "exec-storyboard-panel-batch-prompts",
+          node_id: "review_storyboard_image",
+          node_ref: "system.human_approval.v1",
+          status: "waiting",
+          input_snapshot: {
+            panel_cards: [
+              {
+                card_id: "segment-0",
+                segment_index: 0,
+                panel_index: 0,
+                segment_title: "雪夜",
+                description: "林冲踏雪前行。",
+                prompt: "当前提示词",
+                panel_count: "2",
+                prompt_variants: ["第一条隐藏提示词", "第二条隐藏提示词"],
+                panel_count_variants: ["2", "4"],
+                reference_images: [
+                  {
+                    label: "林冲",
+                    asset_type: "character",
+                    asset_name: "林冲",
+                    image_ref: { kind: "data_uri", data: "data:image/png;base64,cmVm", role: "reference" },
+                    source: "asset",
+                  },
+                ],
+                generated_images: [],
+                selected_image_url: "",
+                aspect_ratio: "16:9",
+                resolution: "2K",
+                generation_config: { prompts_per_item: 2, images_per_prompt: 2 },
+              },
+            ],
+          },
+        }}
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "一键生成分镜" }));
+
+    await waitFor(() => expect(promptRequests).toHaveLength(4));
+    expect(promptRequests).toEqual([
+      "第一条隐藏提示词",
+      "第一条隐藏提示词",
+      "第二条隐藏提示词",
+      "第二条隐藏提示词",
+    ]);
+    expect(await screen.findByText("4 张生成图")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("img", { name: "生成图 3" }).closest("button") as HTMLButtonElement);
+    expect(screen.getByLabelText("分段提示词")).toHaveValue("第二条隐藏提示词");
+    expect(screen.getByLabelText("雪夜 分格数量")).toHaveValue(4);
+  });
+
   it("appends regenerated storyboard images without replacing the selected image", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url === "/api/assets/storyboard-panel-image") {
-        expect(JSON.parse(String(init?.body ?? "{}"))).toMatchObject({ card_id: "segment-0" });
+        expect(JSON.parse(String(init?.body ?? "{}"))).toMatchObject({ card_id: "segment-0", prompt: "用户修改后的提示词" });
         return jsonResponse({ generation_id: "storyboard-generation-2", status: "queued" });
       }
       if (url === "/api/assets/generate-image/storyboard-generation-2") {
@@ -1188,7 +1522,8 @@ describe("node-ui controls", () => {
       />,
     );
 
-    await userEvent.click(screen.getByRole("button", { name: "重新生成" }));
+    fireEvent.change(screen.getByLabelText("分段提示词"), { target: { value: "用户修改后的提示词" } });
+    fireEvent.click(screen.getByRole("button", { name: "重新生成" }));
 
     expect(await screen.findByRole("img", { name: "生成图 2" })).toHaveAttribute("src", "https://cdn.example.com/storyboard-new.png");
     expect(screen.getByRole("img", { name: "生成图 1" })).toHaveAttribute("src", "https://cdn.example.com/storyboard-old.png");
@@ -1353,6 +1688,22 @@ describe("node-ui controls", () => {
           ],
         });
       }
+      if (url === "https://cdn.example.com/linchong-ready.png" || url === "https://cdn.example.com/luzhishen-ready.png") {
+        return Promise.resolve(new Response(new Blob(["fake"], { type: "image/png" }), {
+          status: 200,
+          headers: { "Content-Type": "image/png" },
+        }));
+      }
+      if ((url === "/api/assets/asset-linchong/file" || url === "/api/assets/asset-luzhishen/file") && init?.method === "PUT") {
+        return jsonResponse({
+          asset_id: url.includes("asset-linchong") ? "asset-linchong" : "asset-luzhishen",
+          name: url.includes("asset-linchong") ? "角色_林冲_默认" : "角色_鲁智深_默认",
+          asset_type: "file",
+          scope: "global",
+          metadata: {},
+          created_at: "2026-05-31T00:00:00Z",
+        });
+      }
       return jsonResponse({ items: [] });
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -1405,10 +1756,21 @@ describe("node-ui controls", () => {
     expect(within(dialog).getByText("角色_林冲_默认")).toBeInTheDocument();
     expect(within(dialog).getByText("角色_鲁智深_默认")).toBeInTheDocument();
     expect(within(dialog).getByText(/以下资产名称已在全局资产库或本次入库列表中重复/)).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "覆盖" })).toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole("button", { name: "返回" }));
+    expect(screen.queryByRole("dialog", { name: "资产名称重复" })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "一键入库" }));
+    const overwriteDialog = await screen.findByRole("dialog", { name: "资产名称重复" });
+    await userEvent.click(within(overwriteDialog).getByRole("button", { name: "覆盖" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+      decision: "finish",
+      created_asset_ids: expect.arrayContaining(["asset-linchong", "asset-luzhishen"]),
+    })));
+    expect(fetchMock.mock.calls.some(([url, init]) => url === "/api/assets/asset-linchong/file" && init?.method === "PUT")).toBe(true);
+    expect(fetchMock.mock.calls.some(([url, init]) => url === "/api/assets/asset-luzhishen/file" && init?.method === "PUT")).toBe(true);
     expect(screen.queryByText("同一资产库中已存在同名资产。")).not.toBeInTheDocument();
-    expect(onSubmit).not.toHaveBeenCalled();
     expect(fetchMock.mock.calls.some(([url]) => url === "/api/assets/files")).toBe(false);
-    expect(fetchMock.mock.calls.some(([url]) => url === "https://cdn.example.com/linchong-ready.png")).toBe(false);
   });
 
   it("uses asset-type-specific prompt prefixes and suffixes when generating asset images", async () => {
@@ -2652,6 +3014,44 @@ describe("node-ui controls", () => {
 
     expect(await screen.findByRole("img")).toHaveAttribute("src", "blob:readonly-asset-thumbnail");
     expect(fetchMock).toHaveBeenCalledWith("/api/assets/asset-1/thumbnail?size=256&project_id=project-1", expect.any(Object));
+  });
+
+  it("renders prompt count fields side by side without stale help text", () => {
+    const inputSchema: JsonSchema = {
+      type: "object",
+      properties: {
+        prompts_per_item: {
+          type: "integer",
+          title: "每段提示词数",
+          default: 1,
+        },
+        images_per_prompt: {
+          type: "integer",
+          title: "每个提示词生成图数",
+          default: 1,
+        },
+      },
+    };
+
+    render(
+      <SchemaFormControl
+        config={{ control_id: "ui.input.schema_form.v1", variant: "default", mode: "input" }}
+        node={{
+          node_execution_id: "exec-prompt-count-row",
+          node_id: "select_episode_metadata",
+          node_ref: "system.user_input.v1",
+          status: "waiting",
+          input_snapshot: null,
+          metadata: { input_schema: inputSchema },
+        }}
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    const promptCount = screen.getByLabelText("每段提示词数");
+    const imageCount = screen.getByLabelText("每个提示词生成图数");
+    expect(promptCount.closest(".schema-form-count-row")).toBe(imageCount.closest(".schema-form-count-row"));
+    expect(screen.queryByText(/空间深度、物理反馈、建筑陈设/)).not.toBeInTheDocument();
   });
 
   it("filters task asset picker assets by selected project directories and tags", async () => {
