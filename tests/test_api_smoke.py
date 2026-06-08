@@ -13,6 +13,7 @@ from xiagent.api.routers.tasks import _task_episode_name, _task_uses_episode_sum
 from xiagent.infrastructure.database import connect_db
 from xiagent.infrastructure.migrations import migrate
 from xiagent.models import ChatModelRouter, ChatRequest, ChatResponse
+from xiagent.runtime.execution_store import insert_event
 from xiagent.runtime.models import NodeExecutionRecord
 
 
@@ -1549,6 +1550,14 @@ def test_task_list_detail_and_stream_return_project_scoped_runtime_data(test_set
             params={"project_id": first_project["project_id"]},
             headers=headers,
         )
+        resume_stream_response = client.get(
+            f"/api/tasks/{first_task['task_id']}/stream",
+            params={
+                "project_id": first_project["project_id"],
+                "since_event_id": detail_response.json()["events"][0]["event_id"],
+            },
+            headers=headers,
+        )
 
     assert list_response.status_code == 200
     assert [item["task_id"] for item in list_response.json()["items"]] == [
@@ -1569,8 +1578,147 @@ def test_task_list_detail_and_stream_return_project_scoped_runtime_data(test_set
 
     assert stream_response.status_code == 200
     assert stream_response.headers["content-type"].startswith("text/event-stream")
-    assert "event: task_created\n" in stream_response.text
-    assert "event: task_succeeded\n" in stream_response.text
+    assert "event: task_created\n" not in stream_response.text
+    assert "event: task_succeeded\n" not in stream_response.text
+
+    assert resume_stream_response.status_code == 200
+    assert "event: task_created\n" not in resume_stream_response.text
+    assert "event: task_succeeded\n" in resume_stream_response.text
+
+
+def test_task_detail_returns_lightweight_event_summaries(test_settings) -> None:
+    app = create_app(settings=test_settings)
+    large_notes = "用户正在连续编辑。" * 1000
+    with TestClient(app) as client:
+        client.post(
+            "/api/auth/register",
+            json={"username": "task-detail-light-events", "password": "secret-123"},
+        )
+        headers = _auth_headers(client, username="task-detail-light-events")
+        project = client.post(
+            "/api/projects",
+            json={"name": "Light Detail Project"},
+            headers=headers,
+        ).json()
+        task = _create_task_with_user_input(
+            client,
+            headers=headers,
+            project_id=project["project_id"],
+            contract=_approval_contract(),
+            input_data={"topic": "needs draft"},
+        )
+        draft_response = client.put(
+            f"/api/tasks/{task['task_id']}/interactions/draft",
+            json={
+                "project_id": project["project_id"],
+                "node_id": "review",
+                "input": {"decision": "approve", "notes": large_notes},
+            },
+            headers=headers,
+        )
+        repeat_draft_response = client.put(
+            f"/api/tasks/{task['task_id']}/interactions/draft",
+            json={
+                "project_id": project["project_id"],
+                "node_id": "review",
+                "input": {"decision": "approve", "notes": large_notes},
+            },
+            headers=headers,
+        )
+        detail_response = client.get(
+            f"/api/tasks/{task['task_id']}",
+            params={"project_id": project["project_id"]},
+            headers=headers,
+        )
+
+    assert draft_response.status_code == 200
+    assert repeat_draft_response.status_code == 200
+    assert detail_response.status_code == 200
+    detail = detail_response.json()
+    draft_events = [
+        event for event in detail["events"] if event["event_type"] == "node_draft_saved"
+    ]
+    assert len(draft_events) == 1
+    draft_event = draft_events[0]
+    assert draft_event["node_id"] == "review"
+    assert draft_event["changed_keys"] == ["decision", "notes"]
+    assert "input_snapshot_after" not in draft_event.get("payload", {})
+    assert "input_patch" not in draft_event.get("payload", {})
+    assert large_notes not in json.dumps(draft_event, ensure_ascii=False)
+    review_execution = next(
+        execution
+        for execution in detail["node_executions"]
+        if execution["node_id"] == "review"
+    )
+    assert review_execution["input_snapshot"]["notes"] == large_notes
+
+
+def test_task_detail_summarizes_legacy_large_event_payloads(test_settings) -> None:
+    app = create_app(settings=test_settings)
+    legacy_notes = "历史大草稿内容。" * 12000
+    legacy_payload = {
+        "node_id": "review",
+        "message": "legacy draft saved",
+        "changed_keys": ["notes"],
+        "input_patch": {"notes": legacy_notes},
+        "input_snapshot_after": {"notes": legacy_notes},
+    }
+    with TestClient(app) as client:
+        client.post(
+            "/api/auth/register",
+            json={"username": "task-detail-legacy-events", "password": "secret-123"},
+        )
+        headers = _auth_headers(client, username="task-detail-legacy-events")
+        project = client.post(
+            "/api/projects",
+            json={"name": "Legacy Detail Project"},
+            headers=headers,
+        ).json()
+        task = _create_task_with_user_input(
+            client,
+            headers=headers,
+            project_id=project["project_id"],
+            contract=_approval_contract(),
+            input_data={"topic": "legacy draft"},
+        )
+        asyncio.run(
+            _insert_legacy_large_event(
+                test_settings.database_path,
+                task_id=task["task_id"],
+                payload=legacy_payload,
+            )
+        )
+        detail_response = client.get(
+            f"/api/tasks/{task['task_id']}",
+            params={"project_id": project["project_id"]},
+            headers=headers,
+        )
+        export_response = client.get(
+            f"/api/tasks/{task['task_id']}/debug-export",
+            params={"project_id": project["project_id"]},
+            headers=headers,
+        )
+
+    assert detail_response.status_code == 200
+    detail = detail_response.json()
+    legacy_summary = next(
+        event for event in detail["events"] if event.get("message") == "legacy draft saved"
+    )
+    assert legacy_summary["node_id"] == "review"
+    assert legacy_summary["changed_keys"] == ["notes"]
+    assert "input_snapshot_after" not in legacy_summary.get("payload", {})
+    assert "input_patch" not in legacy_summary.get("payload", {})
+    assert legacy_notes not in json.dumps(legacy_summary, ensure_ascii=False)
+
+    assert export_response.status_code == 200
+    export_payload = export_response.json()
+    legacy_full_event = next(
+        event
+        for event in export_payload["events"]
+        if event["payload"].get("message") == "legacy draft saved"
+    )
+    assert legacy_full_event["payload"]["input_patch"]["notes"] == legacy_notes
+    assert legacy_full_event["payload"]["input_snapshot_after"]["notes"] == legacy_notes
 
 
 def test_task_debug_export_returns_downloadable_execution_history(test_settings) -> None:
@@ -1660,12 +1808,15 @@ def test_task_debug_export_returns_downloadable_execution_history(test_settings)
     ]
     assert draft_events
     draft_payload = draft_events[-1]["payload"]
-    assert draft_payload["input_patch"] == {
-        "decision": "approve",
-        "api_key": "***redacted***",
-    }
-    assert draft_payload["input_snapshot_after"]["decision"] == "approve"
-    assert draft_payload["input_snapshot_after"]["api_key"] == "***redacted***"
+    assert draft_payload["changed_keys"] == ["api_key", "decision"]
+    assert "input_patch" not in draft_payload
+    assert "input_snapshot_after" not in draft_payload
+    assert any(
+        execution["node_id"] == "review"
+        and execution["input_snapshot"].get("decision") == "approve"
+        and execution["input_snapshot"].get("api_key") == "sk-debug-secret"
+        for execution in payload["node_executions"]
+    )
 
 
 def test_delete_task_archives_project_scoped_runtime_data(test_settings) -> None:
@@ -2045,6 +2196,18 @@ def test_request_validation_errors_use_standard_error_shape(test_settings) -> No
     assert body["error"]["details"]
     assert body["error"]["details"]["errors"][0]["loc"] == ["body", "password"]
     assert "input" not in body["error"]["details"]["errors"][0]
+
+
+async def _insert_legacy_large_event(database_path, *, task_id: str, payload: dict) -> None:
+    async with connect_db(database_path) as db:
+        await insert_event(
+            db,
+            task_id=task_id,
+            event_type="node_draft_saved",
+            payload=payload,
+            created_at="2026-06-08T00:00:00+00:00",
+        )
+        await db.commit()
 
 
 async def _fetch_archived_task_rows(database_path, task_id: str) -> dict:

@@ -40,4 +40,13 @@ describe("V2 CSS safeguards", () => {
     expect(selectorRule(".control-card")).toContain("break-inside: avoid");
     expect(selectorRule(".control-card")).toContain("margin: 0 0 14px");
   });
+
+  it("keeps asset image picker actions reachable while the asset grid scrolls", () => {
+    expect(selectorRule(".asset-image-picker-dialog")).toContain("grid-template-rows");
+    expect(selectorRule(".asset-image-picker-dialog .asset-picker-body")).toContain("min-height: 0");
+    expect(selectorRule(".asset-image-picker-dialog .asset-picker-results")).toContain("overflow: auto");
+    expect(selectorRule(".asset-image-picker-dialog .asset-check-grid")).toContain("align-content: start");
+    expect(selectorRule(".asset-image-picker-dialog > .asset-picker-footer")).toContain("position: sticky");
+    expect(selectorRule(".asset-image-picker-dialog > .asset-picker-footer")).toContain("bottom: 0");
+  });
 });

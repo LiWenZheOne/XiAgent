@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -1175,6 +1175,7 @@ describe("XiAgent V2 app", () => {
   it("syncs the selected task row from task event stream refreshes", async () => {
     let taskStatus = "waiting";
     let nodeStatus = "waiting";
+    let detailRequestCount = 0;
     let streamController = null as unknown as ReadableStreamDefaultController<Uint8Array>;
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
@@ -1200,6 +1201,7 @@ describe("XiAgent V2 app", () => {
         });
       }
       if (url === "/api/tasks/schema-task?project_id=global" && method === "GET") {
+        detailRequestCount += 1;
         return jsonResponse({
           task: {
             task_id: "schema-task",
@@ -1241,13 +1243,21 @@ describe("XiAgent V2 app", () => {
     await userEvent.click(await screen.findByRole("button", { name: "打开 RunningHub Text To Image Test" }));
 
     expect(within(screen.getByRole("button", { name: "打开 RunningHub Text To Image Test" })).getByText("等待用户")).toBeInTheDocument();
+    await waitFor(() => expect(detailRequestCount).toBe(1));
     taskStatus = "succeeded";
     nodeStatus = "succeeded";
-    streamController.enqueue(new TextEncoder().encode('event: task_succeeded\ndata: {"node_id":"generate_image"}\n\n'));
+    await act(async () => {
+      streamController.enqueue(new TextEncoder().encode('event: node_started\ndata: {"node_id":"generate_image"}\n\n'));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      streamController.enqueue(new TextEncoder().encode('event: node_succeeded\ndata: {"node_id":"generate_image"}\n\n'));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      streamController.enqueue(new TextEncoder().encode('event: task_succeeded\ndata: {"node_id":"generate_image"}\n\n'));
+    });
 
     await waitFor(() => {
       expect(within(screen.getByRole("button", { name: "打开 RunningHub Text To Image Test" })).getByText("成功")).toBeInTheDocument();
     });
+    expect(detailRequestCount).toBe(2);
     expect(within(screen.getByLabelText("任务运行详情")).getAllByText("成功").length).toBeGreaterThanOrEqual(2);
     streamController.close();
   });

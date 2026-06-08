@@ -86,7 +86,7 @@ ui/
 
 任务创建时必须保存工作流快照。作者修改 YAML/JSON 后，不影响已创建任务；新建任务才读取最新工作流。
 
-任务详情页按节点级事件实时更新，使用 SSE：
+任务详情页以当前任务状态和节点执行快照渲染首屏；节点级事件只作为实时状态提示和轻量时间线补充。实时更新使用 SSE：
 
 ```text
 GET /api/tasks/{task_id}/stream
@@ -100,6 +100,7 @@ GET /api/tasks/{task_id}/stream
 - 节点不需要用户交互时，后端继续执行下一个节点。
 - 节点需要用户交互时，后端发 `node_waiting` 和 `task_waiting`，页面在当前节点块内展示交互控件。
 - 用户提交交互后，前端调用恢复或交互提交接口，后端继续执行，SSE 继续推送后续节点事件。
+- SSE 初始连接不得默认回放完整历史事件 payload。断线补偿使用 `since_event_id` 或 `Last-Event-ID` 游标读取轻量事件摘要；前端收到连续事件时必须合并或节流任务详情刷新。
 
 ## 用户交互节点
 
@@ -335,6 +336,8 @@ GET /api/tasks/{task_id}/events
 - 节点 attempt 历史。
 - waiting 节点信息。
 - 输入快照、输出快照、错误、metadata、asset_refs。
+- 轻量事件摘要列表，用于普通时间线展示；摘要只保留 `event_id`、`event_type`、`node_id`、`message`、`created_at`、`changed_keys` 等 UI 必需字段。
+- 普通详情不得返回完整历史 `task_events.payload`、大输入快照或调试 payload。完整历史只通过导出调试包或按需事件详情接口提供。
 
 节点级事件流：
 
@@ -357,6 +360,8 @@ downstream_cleared
 task_succeeded
 task_failed
 ```
+
+事件流只推送实时轻量通知或基于游标的轻量补偿，不承担打开详情时的历史状态重建；历史任务主视图必须由任务详情中的节点快照渲染。
 
 用户交互提交：
 

@@ -204,6 +204,144 @@ python -m uvicorn xiagent.api.app:app --host 0.0.0.0 --port 8000
 - SQLite 文件路径、资产目录和工作流目录需要部署进程具备读写权限。
 - 多进程或多实例部署前，应评估进程内 token、SQLite 文件锁、资产目录一致性和未来 PostgreSQL 替换方案。
 
+## 当前生产服务器手动部署
+
+当前生产站点使用仓库根目录 `/www/wwwroot/xiagent`，后端由仓库内 `.venv` 运行 Uvicorn，V2 前端由 Nginx 直接托管静态构建产物 `ui/V2/dist`。V1 UI 已废弃，生产更新时不要构建或切换到 `ui/V1`。
+
+生产 SSH 连接信息放在本地忽略目录 `prod-secrets/`，该目录已被 `.gitignore` 排除，不提交到版本库。当前连接记录是 `prod-secrets/lhkp-2m6moqeh.md`，私钥文件是 `prod-secrets/V1.pem`。
+
+生产数据和运行配置需要保持在仓库外：
+
+| 项目 | 生产路径 |
+| --- | --- |
+| 服务器地址 | `1.12.250.142` |
+| SSH 用户 | `root` |
+| 本地连接记录 | `prod-secrets/lhkp-2m6moqeh.md` |
+| 本地 SSH 私钥 | `prod-secrets/V1.pem` |
+| SQLite 数据库 | `/var/lib/xiagent/xiagent.sqlite3` |
+| 资产目录 | `/var/lib/xiagent/assets` |
+| 工作流目录 | `/www/wwwroot/xiagent/workflows` |
+| 模型本地配置 | `/www/wwwroot/xiagent/xiagent/models/local_config.toml` |
+| Nginx 站点配置 | `/www/server/panel/vhost/nginx/xiagent.conf` |
+
+本地连接服务器：
+
+```powershell
+ssh -i "D:\Users\beixing01\Documents\5.Project\03.kaifa\XiAgent\prod-secrets\V1.pem" root@1.12.250.142
+```
+
+进入生产仓库并备份当前状态：
+
+```bash
+cd /www/wwwroot/xiagent
+
+TS="$(date +%Y%m%d-%H%M%S)"
+BACKUP="/root/xiagent-deploy-backup-$TS"
+mkdir -p "$BACKUP"
+
+git status --short --branch > "$BACKUP/git-status-before.txt"
+git log -1 --oneline > "$BACKUP/git-head-before.txt"
+cp -a .env.production "$BACKUP/.env.production" 2>/dev/null || true
+cp -a /etc/xiagent/xiagent.env "$BACKUP/xiagent.env" 2>/dev/null || true
+cp -a xiagent/models/local_config.toml "$BACKUP/local_config.toml" 2>/dev/null || true
+
+if command -v sqlite3 >/dev/null 2>&1; then
+  sqlite3 /var/lib/xiagent/xiagent.sqlite3 ".backup '$BACKUP/xiagent.sqlite3'"
+else
+  cp -a /var/lib/xiagent/xiagent.sqlite3 "$BACKUP/xiagent.sqlite3"
+fi
+```
+
+拉取 GitHub 最新 `master`：
+
+```bash
+git fetch --prune origin
+git status --short --branch
+git log --oneline HEAD..origin/master
+git pull --ff-only origin master
+```
+
+如果需要同步本机模型配置，先从本地执行上传命令，再继续服务器部署：
+
+```powershell
+scp -i "D:\Users\beixing01\Documents\5.Project\03.kaifa\XiAgent\prod-secrets\V1.pem" `
+  "D:\Users\beixing01\Documents\5.Project\03.kaifa\XiAgent\xiagent\models\local_config.toml" `
+  root@1.12.250.142:/www/wwwroot/xiagent/xiagent/models/local_config.toml
+```
+
+服务器上确认配置权限：
+
+```bash
+chmod 600 /www/wwwroot/xiagent/xiagent/models/local_config.toml
+sha256sum /www/wwwroot/xiagent/xiagent/models/local_config.toml
+```
+
+写入生产运行环境。生产 API 只监听本机地址，由 Nginx 对外代理：
+
+```bash
+cat > /www/wwwroot/xiagent/.env.production <<'ENV'
+XIAGENT_DATABASE_PATH=/var/lib/xiagent/xiagent.sqlite3
+XIAGENT_ASSET_STORAGE_DIR=/var/lib/xiagent/assets
+XIAGENT_WORKFLOW_DIR=/www/wwwroot/xiagent/workflows
+XIAGENT_API_HOST=127.0.0.1
+XIAGENT_API_PORT=8000
+ENV
+```
+
+安装后端依赖并构建 V2 前端：
+
+```bash
+cd /www/wwwroot/xiagent
+.venv/bin/python -m pip install -e .
+
+cd ui/V2
+npm ci
+npm run build
+```
+
+重启 API，并在需要刷新静态站点时重载 Nginx：
+
+```bash
+cd /www/wwwroot/xiagent
+./stop-prod.sh
+./start-prod.sh
+
+nginx -t
+nginx -s reload
+```
+
+验收检查：
+
+```bash
+curl -fsS http://127.0.0.1:8000/api/health
+curl -fsS http://1.12.250.142/api/health
+curl -sS -D /tmp/xiagent-index.headers http://1.12.250.142/ -o /tmp/xiagent-index.html
+sed -n '1,10p' /tmp/xiagent-index.headers
+sed -n '1,14p' /tmp/xiagent-index.html
+
+cd /www/wwwroot/xiagent
+git status --short --branch
+git rev-parse --short HEAD
+ps -fp "$(cat api-server.pid)"
+ss -ltnp | grep ':8000'
+```
+
+验收标准：
+
+- `/api/health` 返回 `{"status":"ok"}`。
+- 首页 HTML 标题为 `XiAgent V2`。
+- 首页引用的静态资源来自 `ui/V2/dist/assets/index-*.js` 和 `ui/V2/dist/assets/index-*.css`。
+- `git status --short --branch` 显示 `master...origin/master`，没有业务代码差异。
+- API 进程命令形如 `.venv/bin/python -m uvicorn xiagent.api.app:app --host 127.0.0.1 --port 8000`。
+
+注意事项：
+
+- V2 前端是静态构建产物，没有独立常驻前端进程；“重启 V2 前端”通常指重新执行 `npm run build` 并重载 Nginx。
+- `npm ci` 可能提示依赖漏洞。不要在生产部署中直接执行 `npm audit fix --force`，避免引入破坏性依赖升级；应单独评估、测试后再处理。
+- `start-prod.sh` 会读取仓库根目录 `.env.production`。部署后必须确认该文件仍指向 `/var/lib/xiagent`，避免误用仓库内 `.data`。
+- 部署过程如果只是在服务刚启动时出现短暂 `curl: Failed to connect`，先等待并重试；只有进程退出或日志报错时才按启动失败处理。
+- 回滚时优先使用备份目录中的 `git-head-before.txt` 找到旧提交，再结合数据库备份和 `local_config.toml` 备份恢复。
+
 ## 工作流测试部署
 
 无 UI 工作流调试优先使用标准 CLI：

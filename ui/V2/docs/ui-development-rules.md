@@ -47,6 +47,8 @@
 - 登录后调用 `/api/projects`，选择真实项目；默认应为 `global`。
 - 用户应先在项目入口页选择项目，再进入该项目工作台；工作台内部不得再维护一个并列的项目下拉来弱化项目与任务层级。
 - 任务列表、任务详情、事件流、交互提交、资产查询、工作流查询都必须带当前 `project_id`。
+- 任务详情首屏必须以 `/api/tasks/{task_id}` 返回的任务、workflow snapshot、节点执行快照和轻量事件摘要为准；`events` 字段只能包含 `event_id`、`event_type`、`node_id`、`message`、`created_at`、`changed_keys` 等 UI 必需字段，不得把完整历史 `task_events.payload`、大输入快照或调试 payload 放入普通详情响应。
+- `/api/tasks/{task_id}/stream` 只用于实时轻量通知，默认不得回放完整历史事件。断线补偿应使用 `since_event_id` 或 `Last-Event-ID` 这类游标读取轻量摘要；前端收到连续 stream 事件时必须合并或节流详情刷新，不能一条事件触发一次完整 `getTask`。
 - 创建任务调用 `/api/tasks` 时，body 必须包含当前项目 `project_id` 和选中的工作流契约；业务 `input_data` 不得作为创建任务前置表单要求。
 - 工作流必填业务参数在任务创建后的起始输入节点或声明 `from_user: true` 的业务节点中填写。提交后由运行时校验 payload，写入该节点 `input_snapshot`，再通过该节点 `output_snapshot` 暴露给下游；不得写入或引用 `$workflow.input.*`。
 - 工作流列表调用 `/api/workflows?project_id=<current>`；不能用无项目上下文的全部工作流列表驱动用户创建任务。
@@ -84,6 +86,7 @@
   - `ui.input.asset_picker.v1` 是 schema 表单内的单资产选择字段控件，负责按项目范围、资产类型和标签过滤资产库，提交值为选中资产的 `asset_id` 字符串；`list` 变体使用弹窗列表，`dropdown` 变体直接在表单内以下拉框展示全部匹配资产。典型用途是分镜生成工作流首节点按 `集元数据` 标签选择集信息资产。
   - `ui.input.schema_form.v1` 中若 `dropdown` 资产选择字段与布尔字段共同出现，V2 应把资产下拉框与布尔开关组合成紧凑主输入行；布尔字段使用开关样式但保持原生 checkbox 语义和布尔 payload，不得改变字段名或提交结构。
   - `ui.input.asset_image_picker.v1` 是 schema 表单内的字段级资产图片控件，负责资产库选择、本地上传到资产库后写入结构化图片引用对象；单图字段提交 `{kind:"asset", asset_id:"...", role:"reference"}`，多图字段提交同结构数组，不得把公开 URL 写入工作流输入。资产库页签必须提供项目选择弹窗，项目列表来自 `/api/projects` 并包含 `global` 与用户自建项目，确认项目后目录、标签和资产搜索使用同一项目上下文，项目上下文使用 `scope=combined&project_id=<selected>`，全局上下文使用 `scope=global`。前端可使用公开 URL 进行临时预览，但该 URL 不能进入节点输入、节点输出或 `prompt_results`。
+  - `ui.input.asset_image_picker.v1` 的资产库弹窗必须把项目选择、目录/标签筛选和图片网格限制在弹窗内部布局中滚动，底部“确认选择”操作栏必须始终位于当前弹窗可见区域内；资产数量、长文件名或低视口高度都不得把确认按钮挤出或裁切到不可点击位置。
   - `ui.input.schema_form.v1` 在同一个输入 schema 中同时出现 `prompts_per_item` 和 `images_per_prompt` 时，必须把“每段提示词数”和“每个提示词生成图数”作为同一行的紧凑数值字段展示，窄屏再自动折行；这类数量字段不得展示与字段含义无关的长说明文本。
   - `ui.input.script_text.v1` 用于剧本输入节点，提交 payload 仍遵循节点 schema，默认写入 `script` 与 `background` 字段；控件支持直接粘贴文本、拖拽或按钮上传 `.txt`，并在支持 `DecompressionStream` 的浏览器中解析 `.docx` 正文。上传入口必须靠近剧本文本区标题，拖入区域必须有视觉反馈；DOCX 解析失败时必须提示用户另存为 TXT 或直接粘贴，不得阻塞手动输入路径。
   - `ui.interaction.asset_summary_table.v1` 用于 P3 资产列表汇总节点，按角色、地点、道具三个 tab 展示资产列表；一行一个资产，列出该资产已有字段、单一 `匹配资产` 字段和图像列，但不得展示内部 `asset_type` 字段列，也不得展示 `variant_description` 变体描述列；隐藏字段仍可随行数据保留并提交，不作为人工确认表格的可编辑列。匹配资产字段可打开按类型过滤且可搜索的资产选择框；列表必须支持新增和删除行，提交 `approved_assets` 时以后端收到的编辑后列表为准；图像列支持逐行选取本地图像上传，提交 `decision`、`approved_assets` 与已补充的 `asset_images`。新增资产的主入口应是 `补充缺失资产`：用户在一个输入框中描述需要补充的资产，前端调用受保护的资产草稿接口，由 LLM 结合用户描述、原始剧本、世界背景和当前资产列表自动判断新增几个资产、分别属于角色、地点或道具哪一类，并补全字段；地点草稿统一输出 `asset_type=scene`，道具草稿必须遵守“可独立拿取/使用/赠予/争夺/流转的小型或中型物件”边界，船、马车、建筑和可进入空间归地点，不归道具；道具 `description` 必须同时包含来历/来源和外观/造型。生成结果只作为预览和修改意见，不得自动写入主表，也不得让主表在“生成前/生成后”出现两套状态；用户点击合并后必须写入主表并保存等待节点 draft，刷新页面或重新进入任务时应从 `approved_assets` 恢复合并后的表格。用户点击确认继续时，控件只提交当前主表 `approved_assets`、`additional_asset_request` 和已补充图片；后续工作流不再额外解析新增资产描述。LLM 草稿不得直接入库、不得绕过用户确认，模型不可用时可以提供手动新增当前分类空行兜底。

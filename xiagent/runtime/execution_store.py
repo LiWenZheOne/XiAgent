@@ -86,6 +86,71 @@ class SqliteExecutionStore:
             await cursor.close()
         return [_event_from_row(row) for row in rows]
 
+    async def list_event_summaries(
+        self,
+        task_id: str,
+        *,
+        since_event_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        async with connect_db(self._database_path) as db:
+            if since_event_id:
+                cursor = await db.execute(
+                    """
+                    select
+                        event_id,
+                        task_id,
+                        event_type,
+                        created_at,
+                        json_extract(payload_json, '$.node_id') as node_id,
+                        json_extract(payload_json, '$.message') as message,
+                        json_extract(payload_json, '$.changed_keys') as changed_keys_json
+                    from task_events
+                    where task_id = ?
+                      and rowid > (
+                          select rowid
+                          from task_events
+                          where task_id = ? and event_id = ?
+                      )
+                    order by created_at asc, rowid asc
+                    """,
+                    (task_id, task_id, since_event_id),
+                )
+            else:
+                cursor = await db.execute(
+                    """
+                    select
+                        event_id,
+                        task_id,
+                        event_type,
+                        created_at,
+                        json_extract(payload_json, '$.node_id') as node_id,
+                        json_extract(payload_json, '$.message') as message,
+                        json_extract(payload_json, '$.changed_keys') as changed_keys_json
+                    from task_events
+                    where task_id = ?
+                    order by created_at asc, rowid asc
+                    """,
+                    (task_id,),
+                )
+            rows = await cursor.fetchall()
+            await cursor.close()
+        return [_event_summary_from_row(row) for row in rows]
+
+    async def latest_event_id(self, task_id: str) -> str | None:
+        async with connect_db(self._database_path) as db:
+            row = await _fetch_one(
+                db,
+                """
+                select event_id
+                from task_events
+                where task_id = ?
+                order by created_at desc, rowid desc
+                limit 1
+                """,
+                (task_id,),
+            )
+        return str(row["event_id"]) if row is not None else None
+
 
 async def insert_event(
     db: aiosqlite.Connection,
@@ -200,3 +265,28 @@ def _event_from_row(row: aiosqlite.Row) -> TaskEventRecord:
         payload=_load_json(row["payload_json"]),
         created_at=row["created_at"],
     )
+
+
+def _event_summary_from_row(row: aiosqlite.Row) -> dict[str, Any]:
+    changed_keys = _load_json(row["changed_keys_json"]) if row["changed_keys_json"] else []
+    if not isinstance(changed_keys, list):
+        changed_keys = []
+    summary = {
+        "event_id": row["event_id"],
+        "task_id": row["task_id"],
+        "event_type": row["event_type"],
+        "node_id": row["node_id"],
+        "message": row["message"],
+        "created_at": row["created_at"],
+        "changed_keys": [str(key) for key in changed_keys],
+    }
+    summary["payload"] = {
+        key: value
+        for key, value in {
+            "node_id": summary["node_id"],
+            "message": summary["message"],
+            "changed_keys": summary["changed_keys"],
+        }.items()
+        if value not in (None, "", [])
+    }
+    return summary

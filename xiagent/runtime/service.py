@@ -11,7 +11,6 @@ from xiagent.core.errors import NotFoundError, PermissionDeniedError, Validation
 from xiagent.core.ids import new_id
 from xiagent.core.schemas import validate_json_value
 from xiagent.core.services import AssetService, UserService
-from xiagent.infrastructure.api_logging import sanitize_api_payload
 from xiagent.infrastructure.database import connect_db
 from xiagent.nodes.base import AssetRef, NodeContext
 from xiagent.nodes.registry import NodeRegistry
@@ -296,6 +295,14 @@ class SqliteRuntimeService:
             if isinstance(waiting_execution.input_snapshot, dict)
             else {}
         )
+        changed_keys = sorted(
+            str(key)
+            for key, value in input.items()
+            if current_input.get(key) != value
+        )
+        if not changed_keys:
+            return await self._get_task_by_id(task_id)
+
         draft_input = current_input | dict(input)
         now = _utc_now()
         async with connect_db(self._database_path) as db:
@@ -332,9 +339,8 @@ class SqliteRuntimeService:
                 payload={
                     "node_id": node_id,
                     "node_execution_id": waiting_execution.node_execution_id,
-                    "input_patch": sanitize_api_payload(input),
-                    "input_snapshot_after": sanitize_api_payload(draft_input),
-                    "changed_keys": sorted(str(key) for key in input.keys()),
+                    "changed_keys": changed_keys,
+                    "message": _draft_saved_message(changed_keys),
                 },
                 created_at=now,
             )
@@ -360,6 +366,30 @@ class SqliteRuntimeService:
     ) -> list[TaskEventRecord]:
         await self._authorize_task_read(user_id=user_id, project_id=project_id, task_id=task_id)
         return await self._store.list_events(task_id)
+
+    async def list_event_summaries(
+        self,
+        *,
+        user_id: str,
+        project_id: str,
+        task_id: str,
+        since_event_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        await self._authorize_task_read(user_id=user_id, project_id=project_id, task_id=task_id)
+        return await self._store.list_event_summaries(
+            task_id,
+            since_event_id=since_event_id,
+        )
+
+    async def latest_event_id(
+        self,
+        *,
+        user_id: str,
+        project_id: str,
+        task_id: str,
+    ) -> str | None:
+        await self._authorize_task_read(user_id=user_id, project_id=project_id, task_id=task_id)
+        return await self._store.latest_event_id(task_id)
 
     async def list_tasks(self, *, user_id: str, project_id: str) -> list[TaskRecord]:
         await self._user_service.ensure_project_access(
@@ -1591,6 +1621,14 @@ def _rerun_started_payload(*, node_id: str, rerun_revision_note: str) -> dict[st
     if clean_revision_note:
         payload["rerun_revision_note"] = clean_revision_note
     return payload
+
+
+def _draft_saved_message(changed_keys: list[str]) -> str:
+    if not changed_keys:
+        return "草稿无变化"
+    preview = "、".join(changed_keys[:5])
+    suffix = f" 等 {len(changed_keys)} 项" if len(changed_keys) > 5 else ""
+    return f"已保存草稿：{preview}{suffix}"
 
 
 def _loads_contract(value: str) -> dict[str, Any]:

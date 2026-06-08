@@ -770,6 +770,7 @@ function TaskDetailPanel({
   const liveRevealDelayRef = useRef(0);
   const scheduledRevealIdsRef = useRef<Set<string>>(new Set());
   const baselineEventIdsRef = useRef<Set<string>>(new Set());
+  const detailRefreshTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     setLiveEvents([]);
@@ -782,6 +783,23 @@ function TaskDetailPanel({
     baselineEventIdsRef.current = new Set();
     setPendingTransitionNodeId(null);
   }, [projectId, taskId]);
+
+  useEffect(() => {
+    return () => {
+      if (detailRefreshTimerRef.current !== null) {
+        window.clearTimeout(detailRefreshTimerRef.current);
+        detailRefreshTimerRef.current = null;
+      }
+    };
+  }, [projectId, taskId]);
+
+  function requestDetailRefresh() {
+    if (detailRefreshTimerRef.current !== null) return;
+    detailRefreshTimerRef.current = window.setTimeout(() => {
+      detailRefreshTimerRef.current = null;
+      setRefreshKey((current) => current + 1);
+    }, 150);
+  }
 
   function revealNodeStep(nodeId: string | null | undefined, delayMs = 0) {
     if (!nodeId) return;
@@ -889,7 +907,7 @@ function TaskDetailPanel({
           scheduleNodeStepReveal(nodeIdFromTaskEvent(liveEvent));
         }
         baselineEventIdsRef.current.add(eventKey);
-        setRefreshKey((current) => current + 1);
+        requestDetailRefresh();
       },
       (nextError) => setError(readableError(nextError, "任务事件连接失败，请刷新后重试。")),
     );

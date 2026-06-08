@@ -43,6 +43,7 @@ XiAgent UI work is versioned under `ui/<version>/...` and must deliver a real en
 - Task creation pages must not collect workflow business parameters. They show launch information and create the task; required user input is submitted later through a node that declares `from_user: true`.
 - Render node user input schemas as labels, forms, pickers, toggles, image selectors, cards, status badges, and media previews only through the node UI control path. Node input/output should be presented as user-facing cards, not as raw object dumps.
 - Task detail rendering must follow the workflow snapshot and node UI config persisted for that task. Do not make old snapshots display new behavior by aliasing an old `control_id`, variant, mode, or binding to a new control in frontend code. To make an existing task use new UI config, explicitly migrate or update that task's snapshot/config.
+- Task detail first paint must render current state from task metadata, workflow snapshot, node execution snapshots, and lightweight event summaries. Do not download or replay full historical `task_events.payload` in ordinary task detail or stream flows; full event payloads belong in explicit debug export or on-demand event detail paths. Stream-driven refreshes must be coalesced or throttled.
 
 ## Node UI Controls
 

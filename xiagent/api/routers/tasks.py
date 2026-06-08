@@ -15,7 +15,7 @@ from xiagent.core.errors import ValidationError, XiAgentError
 from xiagent.infrastructure.api_logging import sanitize_api_payload
 from xiagent.nodes.base import NodeContext
 from xiagent.nodes.ai.image_references import resolve_image_ref_with_asset_service
-from xiagent.runtime.event_stream import format_sse_event
+from xiagent.runtime.event_stream import format_sse_event_payload
 from xiagent.runtime.models import NodeExecutionRecord
 from xiagent.users.models import UserRecord
 
@@ -171,6 +171,7 @@ async def export_task_debug_package(
         current_user=current_user,
         project_id=project_id,
         task_id=task_id,
+        full_events=True,
     )
     export_payload = {
         "export_version": "task_debug_export.v1",
@@ -192,6 +193,7 @@ async def _load_task_detail_payload(
     current_user: UserRecord,
     project_id: str,
     task_id: str,
+    full_events: bool = False,
 ) -> dict[str, Any]:
     task = await services.runtime.get_task(
         user_id=current_user.user_id,
@@ -203,11 +205,21 @@ async def _load_task_detail_payload(
         project_id=project_id,
         task_id=task_id,
     )
-    events = await services.runtime.list_events(
-        user_id=current_user.user_id,
-        project_id=project_id,
-        task_id=task_id,
-    )
+    if full_events:
+        events = [
+            asdict(event)
+            for event in await services.runtime.list_events(
+                user_id=current_user.user_id,
+                project_id=project_id,
+                task_id=task_id,
+            )
+        ]
+    else:
+        events = await services.runtime.list_event_summaries(
+            user_id=current_user.user_id,
+            project_id=project_id,
+            task_id=task_id,
+        )
     workflow_snapshot = await services.runtime.get_task_workflow_snapshot(
         user_id=current_user.user_id,
         project_id=project_id,
@@ -220,7 +232,7 @@ async def _load_task_detail_payload(
         "task": task_item,
         "node_executions": [asdict(execution) for execution in node_executions],
         "node_attempts": _group_node_attempts(node_executions),
-        "events": [asdict(event) for event in events],
+        "events": events,
         "workflow_snapshot": workflow_snapshot,
     }
 
@@ -265,28 +277,59 @@ async def stream_task_events(
     request: Request,
     services: Annotated[ApiServices, Depends(get_services)],
     current_user: Annotated[UserRecord, Depends(get_current_user)],
+    since_event_id: str | None = None,
 ) -> StreamingResponse:
     user_id = current_user.user_id
 
     async def stream_events():
-        sent_event_ids: set[str] = set()
-        while not await request.is_disconnected():
-            events = await services.runtime.list_events(
+        cursor_event_id = (
+            since_event_id
+            or request.headers.get("last-event-id")
+            or await services.runtime.latest_event_id(
                 user_id=user_id,
                 project_id=project_id,
                 task_id=task_id,
             )
-            new_events = [event for event in events if event.event_id not in sent_event_ids]
-            for event in new_events:
-                sent_event_ids.add(event.event_id)
-                yield format_sse_event(event)
-            if any(_task_event_is_terminal(event.event_type) for event in events):
+        )
+        while not await request.is_disconnected():
+            events = await services.runtime.list_event_summaries(
+                user_id=user_id,
+                project_id=project_id,
+                task_id=task_id,
+                since_event_id=cursor_event_id,
+            )
+            for event in events:
+                cursor_event_id = str(event["event_id"])
+                yield format_sse_event_payload(
+                    event_id=str(event["event_id"]),
+                    event_type=str(event["event_type"]),
+                    payload=_event_summary_stream_payload(event),
+                )
+            task = await services.runtime.get_task(
+                user_id=user_id,
+                project_id=project_id,
+                task_id=task_id,
+            )
+            if task.status in {"succeeded", "failed", "archived"}:
                 break
-            if not new_events:
+            if not events:
                 yield ": heartbeat\n\n"
             await asyncio.sleep(1)
 
     return StreamingResponse(stream_events(), media_type="text/event-stream")
+
+
+def _event_summary_stream_payload(event: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in {
+            "node_id": event.get("node_id"),
+            "message": event.get("message"),
+            "changed_keys": event.get("changed_keys"),
+            "created_at": event.get("created_at"),
+        }.items()
+        if value not in (None, "", [])
+    }
 
 
 @router.post("/{task_id}/resume")
@@ -1193,7 +1236,3 @@ def _task_episode_name(node_executions: list[NodeExecutionRecord]) -> str:
             if isinstance(episode_name, str) and episode_name.strip():
                 return episode_name.strip()
     return ""
-
-
-def _task_event_is_terminal(event_type: str) -> bool:
-    return event_type in {"task_succeeded", "task_failed", "task_cancelled", "task_canceled", "task_archived"}

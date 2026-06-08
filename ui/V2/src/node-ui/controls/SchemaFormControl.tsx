@@ -506,7 +506,7 @@ function AssetImagePickerDialog({
   return (
     <div className="asset-picker-modal" role="dialog" aria-label="选择资产图片">
       <button className="modal-scrim" type="button" onClick={onClose} aria-label="关闭资产选择" />
-      <section className="asset-picker-dialog">
+      <section className="asset-picker-dialog asset-image-picker-dialog">
         <header className="asset-picker-header">
           <h3>选择资产图片</h3>
           <button className="ghost-button" type="button" onClick={onClose}>关闭</button>
@@ -517,7 +517,7 @@ function AssetImagePickerDialog({
         </div>
 
         {tab === "library" ? (
-          <>
+          <div className="asset-image-picker-library-panel">
             <div className="asset-picker-project-row">
               <div className="asset-picker-project-summary">
                 <span className="eyebrow">资产项目</span>
@@ -598,7 +598,7 @@ function AssetImagePickerDialog({
                 </div>
               </section>
             </div>
-          </>
+          </div>
         ) : (
           <div className="asset-upload-panel">
             <label className="compact-field">
