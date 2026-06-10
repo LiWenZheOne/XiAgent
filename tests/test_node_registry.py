@@ -1548,6 +1548,16 @@ async def test_storyboard_task_summary_exports_selected_panel_images() -> None:
         "total_panel_count": 2,
         "completed_panel_count": 1,
         "missing_panel_count": 1,
+        "failed_panels": [
+            {
+                "card_id": "panel-2",
+                "segment_index": 0,
+                "panel_index": 1,
+                "segment_title": "芦苇荡遇敌",
+                "panel_title": "官兵退散",
+                "reason": "missing_image",
+            }
+        ],
     }
     assert result.output["asset_images"] == [
         {

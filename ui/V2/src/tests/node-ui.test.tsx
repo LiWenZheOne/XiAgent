@@ -1178,7 +1178,7 @@ describe("node-ui controls", () => {
     }));
   });
 
-  it("blocks storyboard panel submission until every card has a selected image", async () => {
+  it("allows storyboard panel submission when some cards have no selected image", async () => {
     const onSubmit = vi.fn();
     render(
       <StoryboardPanelCardsControl
@@ -1220,8 +1220,17 @@ describe("node-ui controls", () => {
     expect(screen.getByText("待生成")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "完成并继续" }));
 
-    expect(screen.getByRole("dialog", { name: "缺少分镜图像" })).toBeInTheDocument();
-    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog", { name: "缺少分镜图像" })).not.toBeInTheDocument();
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+      decision: "finish",
+      panel_results: [
+        expect.objectContaining({
+          card_id: "segment-0",
+          selected_image_url: "",
+          generated_images: [],
+        }),
+      ],
+    }));
   });
 
   it("uses the edited panel count when regenerating storyboard prompts", async () => {
@@ -2617,6 +2626,16 @@ describe("node-ui controls", () => {
           total_panel_count: 2,
           completed_panel_count: 1,
           missing_panel_count: 1,
+          failed_panels: [
+            {
+              card_id: "panel-2",
+              segment_index: 0,
+              panel_index: 1,
+              segment_title: "芦苇荡遇敌",
+              panel_title: "官兵退散",
+              reason: "missing_image",
+            },
+          ],
         },
         asset_images: [
           {
@@ -2641,6 +2660,8 @@ describe("node-ui controls", () => {
     expect(screen.getByText("总分镜").closest("div")).toHaveTextContent("2");
     expect(screen.getByText("已完成").closest("div")).toHaveTextContent("1");
     expect(screen.getByText("未完成").closest("div")).toHaveTextContent("1");
+    expect(screen.getByRole("region", { name: "未完成分镜列表" })).toHaveTextContent("芦苇荡遇敌 / 官兵退散");
+    expect(screen.getByRole("region", { name: "未完成分镜列表" })).toHaveTextContent("未选择或生成分镜图像");
     expect(screen.getByRole("img", { name: "芦苇荡遇敌_水港伏击 图像" })).toHaveAttribute("src", "https://cdn.example.com/panel-1.png");
     await userEvent.click(screen.getByRole("button", { name: "导出分镜为压缩包" }));
     await waitFor(() => expect(clickMock).toHaveBeenCalled());

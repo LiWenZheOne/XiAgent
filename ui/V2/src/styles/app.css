@@ -2678,6 +2678,44 @@ dd {
   font-size: 22px;
 }
 
+.storyboard-summary-failures {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fff7f7;
+}
+
+.storyboard-summary-failures h4 {
+  margin: 0;
+  color: #991b1b;
+  font-size: 14px;
+}
+
+.storyboard-summary-failures ul {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.storyboard-summary-failures li {
+  display: grid;
+  gap: 3px;
+  padding: 8px 10px;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.storyboard-summary-failures span,
+.storyboard-summary-failures small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .asset-task-summary-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));

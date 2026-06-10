@@ -39,6 +39,10 @@ class StoryboardTaskSummaryNode(BaseNode):
                             "total_panel_count": {"type": "integer", "minimum": 0},
                             "completed_panel_count": {"type": "integer", "minimum": 0},
                             "missing_panel_count": {"type": "integer", "minimum": 0},
+                            "failed_panels": {
+                                "type": "array",
+                                "items": {"type": "object", "additionalProperties": True},
+                            },
                         },
                         "additionalProperties": True,
                     },
@@ -56,6 +60,7 @@ class StoryboardTaskSummaryNode(BaseNode):
             "total_panel_count": len(panel_results),
             "completed_panel_count": len(asset_images),
             "missing_panel_count": max(len(panel_results) - len(asset_images), 0),
+            "failed_panels": [_failed_panel(panel) for panel in panel_results if _panel_asset_image(panel) is None],
         }
         return NodeResult(
             status="succeeded",
@@ -88,6 +93,23 @@ def _panel_asset_image(panel: Mapping[str, Any]) -> dict[str, Any] | None:
     if asset_id:
         image["asset_id"] = asset_id
     return image
+
+
+def _failed_panel(panel: Mapping[str, Any]) -> dict[str, Any]:
+    segment_index = _int(panel.get("segment_index"), default=0)
+    panel_index = _int(panel.get("panel_index"), default=0)
+    failure = {
+        "card_id": _text(panel.get("card_id")) or f"segment-{segment_index}-panel-{panel_index}",
+        "segment_index": segment_index,
+        "panel_index": panel_index,
+        "segment_title": _text(panel.get("segment_title")) or f"第{segment_index + 1}段",
+        "panel_title": _text(panel.get("panel_title")) or _text(panel.get("title")) or f"第{panel_index + 1}格",
+        "reason": "missing_image",
+    }
+    error = _text(panel.get("error"))
+    if error:
+        failure["error"] = error
+    return failure
 
 
 def _selected_generated_image(panel: Mapping[str, Any], image_url: str) -> Mapping[str, Any] | None:

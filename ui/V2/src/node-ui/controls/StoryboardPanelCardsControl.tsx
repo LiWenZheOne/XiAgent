@@ -138,7 +138,6 @@ export function StoryboardPanelCardsControl({
   const [prompting, setPrompting] = useState<Record<string, boolean>>({});
   const [uploading, setUploading] = useState<Record<string, string>>({});
   const [draggingCardId, setDraggingCardId] = useState("");
-  const [missingImageDialogOpen, setMissingImageDialogOpen] = useState(false);
   const [previewImage, setPreviewImage] = useState<AssetImagePreview | null>(null);
   const [error, setError] = useState("");
   const [picker, setPicker] = useState<AssetSearchDialogState | null>(null);
@@ -490,10 +489,6 @@ export function StoryboardPanelCardsControl({
   }
 
   function finish() {
-    if (cards.some((card) => !selectedImageUrl(drafts[card.card_id] ?? draftFromCard(card)))) {
-      setMissingImageDialogOpen(true);
-      return;
-    }
     onSubmit?.(payloadFromDrafts(cards, drafts));
   }
 
@@ -720,34 +715,6 @@ export function StoryboardPanelCardsControl({
       </div>
       {error ? <p className="form-error">{error}</p> : null}
 
-      {missingImageDialogOpen ? (
-        <div className="confirm-backdrop" role="presentation">
-          <section className="confirm-dialog storyboard-missing-image-dialog" role="dialog" aria-modal="true" aria-label="缺少分镜图像">
-            <div>
-              <p className="eyebrow">无法完成</p>
-              <h2>还有分镜没有选定图像</h2>
-            </div>
-            <p>请先为所有分镜生成或选择定稿图像，再完成工作流。</p>
-            <div className="button-row end">
-              <button className="secondary-button" type="button" onClick={() => setMissingImageDialogOpen(false)}>
-                知道了
-              </button>
-              <button
-                className="primary-button"
-                disabled={busy}
-                type="button"
-                onClick={() => {
-                  setMissingImageDialogOpen(false);
-                  generateMissing();
-                }}
-              >
-                一键生成分镜
-              </button>
-            </div>
-          </section>
-        </div>
-      ) : null}
-
       {previewImage ? <AssetImageFullscreenViewer image={previewImage} onClose={() => setPreviewImage(null)} /> : null}
 
       {picker ? (
@@ -921,6 +888,8 @@ function payloadFromDrafts(cards: PanelCard[], drafts: DraftMap): Record<string,
         reference_images: draft.reference_images,
         selected_image_url: selectedImageUrl(draft),
         generated_images: draft.generated_images,
+        status: draft.status || "",
+        error: draft.error || "",
       };
     }),
   };

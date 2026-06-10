@@ -27,6 +27,16 @@ interface ExportImage {
   assetId?: string;
 }
 
+interface FailedStoryboardPanel {
+  cardId: string;
+  segmentIndex: number;
+  panelIndex: number;
+  segmentTitle: string;
+  panelTitle: string;
+  reason?: string;
+  error?: string;
+}
+
 export function AssetTaskSummaryControl({ config, node, projectId }: NodeUiControlProps) {
   const source = summarySource(node.output_snapshot) ?? summarySource(node.input_snapshot) ?? {};
   const storyboardMode = config.variant === "storyboard_complete";
@@ -110,6 +120,20 @@ export function AssetTaskSummaryControl({ config, node, projectId }: NodeUiContr
           </>
         )}
       </div>
+      {storyboardMode && storyboardSummary?.failedPanels.length ? (
+        <section className="storyboard-summary-failures" aria-label="未完成分镜列表">
+          <h4>未完成分镜</h4>
+          <ul>
+            {storyboardSummary.failedPanels.map((panel) => (
+              <li key={panel.cardId}>
+                <strong>{panel.segmentTitle} / {panel.panelTitle}</strong>
+                <span>第{panel.segmentIndex + 1}段 · 第{panel.panelIndex + 1}格</span>
+                <small>{panel.error || failureReasonLabel(panel.reason)}</small>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
       {images.length ? (
         <div className="asset-task-summary-list" aria-label={storyboardMode ? "最终分镜图像" : "最终资产图像"}>
           {images.map((image, index) => (
@@ -499,14 +523,36 @@ function readGenerationSummary(source: Record<string, unknown>): { newAssetCount
   };
 }
 
-function readStoryboardSummary(source: Record<string, unknown>): { totalPanelCount: number; completedPanelCount: number; missingPanelCount: number } | null {
+function readStoryboardSummary(source: Record<string, unknown>): {
+  totalPanelCount: number;
+  completedPanelCount: number;
+  missingPanelCount: number;
+  failedPanels: FailedStoryboardPanel[];
+} | null {
   const summary = recordValue(source.generation_summary);
   if (!summary) return null;
   return {
     totalPanelCount: numberValue(summary.total_panel_count),
     completedPanelCount: numberValue(summary.completed_panel_count),
     missingPanelCount: numberValue(summary.missing_panel_count),
+    failedPanels: arrayValue(summary.failed_panels)
+      .map((item) => recordValue(item))
+      .filter((item): item is Record<string, unknown> => Boolean(item))
+      .map((item, index) => ({
+        cardId: textValue(item.card_id) || `failed-panel-${index}`,
+        segmentIndex: numberValue(item.segment_index),
+        panelIndex: numberValue(item.panel_index),
+        segmentTitle: textValue(item.segment_title) || `第${numberValue(item.segment_index) + 1}段`,
+        panelTitle: textValue(item.panel_title) || `第${numberValue(item.panel_index) + 1}格`,
+        reason: textValue(item.reason),
+        error: textValue(item.error),
+      })),
   };
+}
+
+function failureReasonLabel(reason?: string): string {
+  if (reason === "missing_image") return "未选择或生成分镜图像";
+  return reason || "未完成";
 }
 
 function arrayValue(value: unknown): unknown[] {
