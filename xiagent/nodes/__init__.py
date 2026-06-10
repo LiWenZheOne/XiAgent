@@ -55,6 +55,7 @@ from xiagent.nodes.tools.resolve_segment_image_refs import ResolveSegmentImageRe
 from xiagent.nodes.tools.runninghub_workflow_images import RunningHubWorkflowImagesNode
 from xiagent.nodes.tools.script_split import ScriptSplitNode
 from xiagent.nodes.tools.extract_panel_image_urls import ExtractPanelImageUrlsNode
+from xiagent.nodes.tools.storyboard_task_summary import StoryboardTaskSummaryNode
 from xiagent.nodes.tools.storyboard_prompt import (
     StoryboardPromptAssemblerNode,
     StoryboardPromptAssemblerNodeV2,
@@ -92,6 +93,7 @@ def build_node_registry(settings: Settings) -> NodeRegistry:
     registry.register(StoryboardPromptAssemblerNode())
     registry.register(StoryboardPromptAssemblerNodeV2())
     registry.register(ExtractPanelImageUrlsNode())
+    registry.register(StoryboardTaskSummaryNode())
     registry.register(
         AssignAssetsToSegmentsNode(
             model_router=router,
@@ -192,5 +194,6 @@ __all__ = [
     "AssetMetadataFromUploadNode",
     "EpisodeMetadataFinalizeNode",
     "EpisodeMetadataFromAssetNode",
+    "StoryboardTaskSummaryNode",
     "build_node_registry",
 ]

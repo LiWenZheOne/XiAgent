@@ -31,6 +31,7 @@ from xiagent.nodes.tools.prepare_storyboard_panel_cards import (
 from xiagent.nodes.tools.prepare_storyboard_asset_index import (
     PrepareStoryboardAssetIndexNode,
 )
+from xiagent.nodes.tools.storyboard_task_summary import StoryboardTaskSummaryNode
 from xiagent.nodes.tools.resolve_accessory_asset_refs import ResolveAccessoryAssetRefsNode
 from xiagent.nodes.tools.resolve_character_variant_refs import ResolveCharacterVariantRefsNode
 from xiagent.nodes.tools.resolve_segment_image_refs import ResolveSegmentImageRefsNode
@@ -100,6 +101,7 @@ def test_build_node_registry_registers_builtin_nodes(test_settings) -> None:
         "tool.prepare_asset_semantic_match.v1",
         "tool.prepare_storyboard_panel_cards.v1",
         "tool.prepare_storyboard_asset_index.v1",
+        "tool.storyboard_task_summary.v1",
         "ai.assign_assets_to_segments.v1",
         "ai.deepseek_chat.v1",
         "ai.deepseek_structured_json.v1",
@@ -1504,6 +1506,60 @@ async def test_complete_asset_images_merges_manual_and_generated_images() -> Non
     assert result.output["asset_images"] == [
         {"asset_type": "character", "asset_name": "林冲", "image_url": "https://cdn.test/linchong.png", "source": "manual_upload"},
         {"asset_type": "character", "asset_name": "鲁智深", "image_url": "https://cdn.test/luzhishen.png", "source": "ai_generated"},
+    ]
+
+
+async def test_storyboard_task_summary_exports_selected_panel_images() -> None:
+    node = StoryboardTaskSummaryNode()
+
+    result = await node.run(
+        ctx=None,
+        inputs={
+            "panel_results": [
+                {
+                    "card_id": "panel-1",
+                    "segment_index": 0,
+                    "segment_title": "芦苇荡遇敌",
+                    "panel_index": 0,
+                    "panel_title": "水港伏击",
+                    "selected_image_url": "https://cdn.test/panel-1.png",
+                    "generated_images": [
+                        {
+                            "image_url": "https://cdn.test/panel-1.png",
+                            "asset_id": "asset-panel-1",
+                            "prompt": "水港伏击分镜",
+                        }
+                    ],
+                },
+                {
+                    "card_id": "panel-2",
+                    "segment_index": 0,
+                    "segment_title": "芦苇荡遇敌",
+                    "panel_index": 1,
+                    "panel_title": "官兵退散",
+                    "selected_image_url": "",
+                    "generated_images": [],
+                },
+            ]
+        },
+    )
+
+    assert result.output["generation_summary"] == {
+        "total_panel_count": 2,
+        "completed_panel_count": 1,
+        "missing_panel_count": 1,
+    }
+    assert result.output["asset_images"] == [
+        {
+            "asset_type": "storyboard",
+            "asset_name": "芦苇荡遇敌_水港伏击",
+            "asset_tags": ["分镜", "第1段", "第1格"],
+            "image_url": "https://cdn.test/panel-1.png",
+            "asset_id": "asset-panel-1",
+            "source": "storyboard_generated",
+            "segment_index": 0,
+            "panel_index": 0,
+        }
     ]
 
 

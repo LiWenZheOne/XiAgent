@@ -6,18 +6,16 @@ workflow:
   description: 从集元数据资产读取集名称、资产目录和原剧本内容，确认后拆分剧本、为分段分配资产并生成分镜图像。
   output_schema:
     type: object
-    required: ["decision", "panel_results"]
+    required: ["asset_images", "generation_summary"]
     properties:
-      decision:
-        type: string
-        enum: ["finish"]
-      panel_results:
+      asset_images:
         type: array
         items:
           type: object
           additionalProperties: true
-      revision_notes:
-        type: string
+      generation_summary:
+        type: object
+        additionalProperties: true
     additionalProperties: false
   ui:
     layout:
@@ -50,6 +48,7 @@ workflow:
           - review_and_refine_image_prompt
           - merge_segment_descriptions
           - review_storyboard_image
+          - storyboard_summary
     defaults:
       ai:
         controls:
@@ -1698,7 +1697,7 @@ nodes:
           风格指令：请参考《罗小黑战记》的线条、色彩逻辑和视觉质感生成高质量，细节丰富，富有张力的漫画，线条是典型的矢量图风格，干净且流畅，使用纯赛璐璐风格，色块干净明确，轮廓线利落，阴影较浅，边缘锐利，阴影偏冷色调，注意，所有角色都是q版，下半身是个球，没有腿。strict perspective with foreshortening, near objects large far objects small, strong depth of field, layered foreground-midground-background composition. digital illustration, chibi style, children's book art style, manhwa style, clean lineart, soft cel shading, vibrant colors, dynamic action atmosphere, masterpiece, best quality, 8k
           角色一致性：保持人物武器和参考完全一致，人物比例不变，角色的脸为圆形，q版造型，忽略面部细节，下半身为圆润饱满的半球形底部，完全没有腿部、没有膝盖、没有脚踝、没有足部。
           时代背景：场景细节丰富，注意！时代背景在中国古代，以水浒传为背景，请根据时代背景和当前情景设计环境和物件，使装饰和场景内的物体丰富，并和角色风格一致。
-          透视与构图：严格遵守近大远小的透视关系，透视线在体现强烈的空间纵深感，注意，每个分格的消失点必须统一，如果有超过一个分格，分格应该采用不规则的梯形与矩形组合排版，打破平庸的视觉节奏。
+          透视与构图：严格遵守近大远小的透视关系，透视线在体现强烈的空间纵深感，分格的排列需符合漫画逻辑。
           场景建筑比例：场景建筑比例也要符合 chibi style。
           安全边界：画面不得出现血液、流血、伤口、断肢、内脏、尸体特写、喷溅、血迹或恐怖化细节；冲突和危险只能通过非血腥的姿态、遮挡、环境破坏、人物反应、烟尘或动作结果表达。
       negative_prompt:
@@ -1795,6 +1794,39 @@ nodes:
           variant: panel_review
           mode: interactive
 
+  - id: storyboard_summary
+    ref: tool.storyboard_task_summary.v1
+    name: 分镜概览
+    inputs:
+      panel_results:
+        from: "$nodes.review_storyboard_image.output.panel_results"
+    outputs:
+      type: object
+      required: ["asset_images", "generation_summary"]
+      properties:
+        asset_images:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        generation_summary:
+          type: object
+          additionalProperties: true
+      additionalProperties: false
+    ui:
+      sections:
+        input:
+          visible: false
+        output:
+          wrapped: false
+        events:
+          visible: false
+      controls:
+        output:
+          control_id: ui.display.asset_task_summary.v1
+          variant: storyboard_complete
+          mode: readonly
+
 edges:
   - from: START
     to: select_episode_metadata
@@ -1825,4 +1857,6 @@ edges:
   - from: prepare_storyboard_panel_cards
     to: review_storyboard_image
   - from: review_storyboard_image
+    to: storyboard_summary
+  - from: storyboard_summary
     to: END

@@ -152,6 +152,7 @@ def test_orchestration_workflow_node_list(test_settings) -> None:
         "merge_segment_descriptions",
         "prepare_storyboard_panel_cards",
         "review_storyboard_image",
+        "storyboard_summary",
     ]
     assert {node_id: node["ref"] for node_id, node in nodes_by_id.items()} == {
         "select_episode_metadata": "tool.episode_metadata_from_asset.v1",
@@ -168,6 +169,7 @@ def test_orchestration_workflow_node_list(test_settings) -> None:
         "merge_segment_descriptions": "tool.merge_segment_storyboard_descriptions.v1",
         "prepare_storyboard_panel_cards": "tool.prepare_storyboard_panel_cards.v1",
         "review_storyboard_image": "system.human_approval.v1",
+        "storyboard_summary": "tool.storyboard_task_summary.v1",
     }
 
     validate_workflow_contract(contract, build_node_registry(test_settings))
@@ -192,8 +194,28 @@ def test_orchestration_workflow_edges_are_linear_dag(test_settings) -> None:
         {"from": "review_and_refine_image_prompt", "to": "merge_segment_descriptions"},
         {"from": "merge_segment_descriptions", "to": "prepare_storyboard_panel_cards"},
         {"from": "prepare_storyboard_panel_cards", "to": "review_storyboard_image"},
-        {"from": "review_storyboard_image", "to": "END"},
+        {"from": "review_storyboard_image", "to": "storyboard_summary"},
+        {"from": "storyboard_summary", "to": "END"},
     ]
+
+    validate_workflow_contract(contract, build_node_registry(test_settings))
+
+
+def test_storyboard_summary_node_uses_asset_task_summary_control(test_settings) -> None:
+    contract = load_workflow_file(ORCHESTRATION_WORKFLOW_PATH)
+    nodes_by_id = _nodes_by_id(contract)
+
+    summary_node = nodes_by_id["storyboard_summary"]
+    assert summary_node["inputs"]["panel_results"] == {
+        "from": "$nodes.review_storyboard_image.output.panel_results"
+    }
+    assert "asset_images" in summary_node["outputs"]["properties"]
+    assert "generation_summary" in summary_node["outputs"]["properties"]
+    assert summary_node["ui"]["controls"]["output"] == {
+        "control_id": "ui.display.asset_task_summary.v1",
+        "variant": "storyboard_complete",
+        "mode": "readonly",
+    }
 
     validate_workflow_contract(contract, build_node_registry(test_settings))
 

@@ -21,6 +21,12 @@ def test_builtin_ui_controls_have_unique_ids() -> None:
     assert "ui.input.asset_image_picker.v1" in {control.control_id for control in controls}
     assert "ui.input.asset_picker.v1" in {control.control_id for control in controls}
 
+    asset_task_summary = catalog.get("ui.display.asset_task_summary.v1")
+    assert {variant.name for variant in asset_task_summary.variants} == {
+        "catalog_complete",
+        "storyboard_complete",
+    }
+
 
 def test_image_three_choice_control_declares_expected_variants() -> None:
     catalog = build_builtin_ui_control_catalog()

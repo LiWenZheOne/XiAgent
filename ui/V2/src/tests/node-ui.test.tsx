@@ -2585,6 +2585,68 @@ describe("node-ui controls", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/assets/asset-linchong/content", expect.any(Object));
   });
 
+  it("renders the storyboard task summary and exports storyboard images", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      if (String(input) === "https://cdn.example.com/panel-1.png") {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          blob: async () => ({
+            type: "image/png",
+            arrayBuffer: async () => new Uint8Array([4, 5, 6]).buffer,
+          }),
+        } as Response);
+      }
+      return Promise.resolve(new Response(null, { status: 404 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const clickMock = vi.fn();
+    vi.stubGlobal("URL", { createObjectURL: vi.fn(() => "blob:storyboard-zip"), revokeObjectURL: vi.fn() });
+    vi.spyOn(document, "createElement").mockImplementation((tagName: string) => {
+      const element = document.createElementNS("http://www.w3.org/1999/xhtml", tagName) as HTMLAnchorElement;
+      if (tagName === "a") element.click = clickMock;
+      return element;
+    });
+    const summaryNode: TaskNodeExecution = {
+      node_execution_id: "exec-storyboard-summary",
+      node_id: "storyboard_summary",
+      node_ref: "tool.storyboard_task_summary.v1",
+      status: "succeeded",
+      output_snapshot: {
+        generation_summary: {
+          total_panel_count: 2,
+          completed_panel_count: 1,
+          missing_panel_count: 1,
+        },
+        asset_images: [
+          {
+            asset_type: "storyboard",
+            asset_name: "芦苇荡遇敌_水港伏击",
+            asset_tags: ["分镜", "第1段", "第1格"],
+            image_url: "https://cdn.example.com/panel-1.png",
+            source: "storyboard_generated",
+          },
+        ],
+      },
+    };
+
+    render(
+      <AssetTaskSummaryControl
+        config={{ control_id: "ui.display.asset_task_summary.v1", variant: "storyboard_complete", mode: "readonly" }}
+        node={summaryNode}
+      />,
+    );
+
+    expect(screen.getByText("分镜生成已完成")).toBeInTheDocument();
+    expect(screen.getByText("总分镜").closest("div")).toHaveTextContent("2");
+    expect(screen.getByText("已完成").closest("div")).toHaveTextContent("1");
+    expect(screen.getByText("未完成").closest("div")).toHaveTextContent("1");
+    expect(screen.getByRole("img", { name: "芦苇荡遇敌_水港伏击 图像" })).toHaveAttribute("src", "https://cdn.example.com/panel-1.png");
+    await userEvent.click(screen.getByRole("button", { name: "导出分镜为压缩包" }));
+    await waitFor(() => expect(clickMock).toHaveBeenCalled());
+    expect(fetchMock).toHaveBeenCalledWith("https://cdn.example.com/panel-1.png");
+  });
+
   it("renders completed P3 asset summary rows from approved_assets output", async () => {
     const reviewNode: TaskNodeExecution = {
       node_execution_id: "exec-review-done",

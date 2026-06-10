@@ -288,8 +288,13 @@ def build_builtin_ui_control_catalog() -> UiControlCatalog:
                         label="资产编目完成概况",
                         modes=("readonly",),
                     ),
+                    UiControlVariant(
+                        name="storyboard_complete",
+                        label="分镜完成概况",
+                        modes=("readonly",),
+                    ),
                 ),
-                description="资产编目完成页只读概况控件，支持导出最终资产图像压缩包。",
+                description="资产编目或分镜完成页只读概况控件，支持导出最终图像压缩包。",
             ),
             UiControlDescriptor(
                 control_id="ui.display.episode_context.v1",

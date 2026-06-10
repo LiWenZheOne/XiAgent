@@ -27,12 +27,14 @@ interface ExportImage {
   assetId?: string;
 }
 
-export function AssetTaskSummaryControl({ node, projectId }: NodeUiControlProps) {
+export function AssetTaskSummaryControl({ config, node, projectId }: NodeUiControlProps) {
   const source = summarySource(node.output_snapshot) ?? summarySource(node.input_snapshot) ?? {};
+  const storyboardMode = config.variant === "storyboard_complete";
   const images = summaryImages(source);
   const assetIds = createdAssetIds(source);
   const catalogCounts = countCatalogAssets(source);
   const generationSummary = readGenerationSummary(source);
+  const storyboardSummary = readStoryboardSummary(source);
   const ingestedCount = assetIds.length || images.filter((image) => Boolean(image.assetId) || image.source === "library").length;
   const counts = catalogCounts.total ? catalogCounts : countByType(images);
   const [exporting, setExporting] = useState(false);
@@ -46,7 +48,7 @@ export function AssetTaskSummaryControl({ node, projectId }: NodeUiControlProps)
     try {
       const exportImages = await resolveExportImages({ images, assetIds, projectId });
       if (!exportImages.length) {
-        setExportError("暂无可导出的资产图像。");
+        setExportError(storyboardMode ? "暂无可导出的分镜图像。" : "暂无可导出的资产图像。");
         return;
       }
       const files = await Promise.all(exportImages.map(async (image) => {
@@ -65,7 +67,7 @@ export function AssetTaskSummaryControl({ node, projectId }: NodeUiControlProps)
       const url = URL.createObjectURL(zipBlob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = "资产图像.zip";
+      link.download = storyboardMode ? "分镜图像.zip" : "资产图像.zip";
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -82,24 +84,34 @@ export function AssetTaskSummaryControl({ node, projectId }: NodeUiControlProps)
       <header className="asset-task-summary-header">
         <div>
           <p className="eyebrow">任务完成</p>
-          <h3>资产编目已完成</h3>
+          <h3>{storyboardMode ? "分镜生成已完成" : "资产编目已完成"}</h3>
         </div>
         <button className="secondary-button" disabled={exporting || (!images.length && !assetIds.length)} type="button" onClick={() => void exportZip()}>
-          {exporting ? "导出中..." : "导出资产为压缩包"}
+          {exporting ? "导出中..." : storyboardMode ? "导出分镜为压缩包" : "导出资产为压缩包"}
         </button>
       </header>
       {exportError ? <p className="form-error">{exportError}</p> : null}
       <div className="asset-task-summary-grid">
-        <SummaryMetric label="总资产" value={counts.total} />
-        <SummaryMetric label="新增" value={generationSummary?.newAssetCount ?? Math.max(counts.total - ingestedCount, 0)} />
-        <SummaryMetric label="已匹配" value={generationSummary?.matchedAssetCount ?? ingestedCount} />
-        <SummaryMetric label="已入库" value={ingestedCount} />
-        <SummaryMetric label="角色" value={counts.character} />
-        <SummaryMetric label="地点" value={counts.scene} />
-        <SummaryMetric label="道具" value={counts.prop} />
+        {storyboardMode ? (
+          <>
+            <SummaryMetric label="总分镜" value={storyboardSummary?.totalPanelCount ?? images.length} />
+            <SummaryMetric label="已完成" value={storyboardSummary?.completedPanelCount ?? images.length} />
+            <SummaryMetric label="未完成" value={storyboardSummary?.missingPanelCount ?? 0} />
+          </>
+        ) : (
+          <>
+            <SummaryMetric label="总资产" value={counts.total} />
+            <SummaryMetric label="新增" value={generationSummary?.newAssetCount ?? Math.max(counts.total - ingestedCount, 0)} />
+            <SummaryMetric label="已匹配" value={generationSummary?.matchedAssetCount ?? ingestedCount} />
+            <SummaryMetric label="已入库" value={ingestedCount} />
+            <SummaryMetric label="角色" value={counts.character} />
+            <SummaryMetric label="地点" value={counts.scene} />
+            <SummaryMetric label="道具" value={counts.prop} />
+          </>
+        )}
       </div>
       {images.length ? (
-        <div className="asset-task-summary-list" aria-label="最终资产图像">
+        <div className="asset-task-summary-list" aria-label={storyboardMode ? "最终分镜图像" : "最终资产图像"}>
           {images.map((image, index) => (
             <article key={`${image.assetId ?? image.imageUrl}-${index}`}>
               <div className="asset-task-summary-thumb">
@@ -396,7 +408,7 @@ function SummaryMetric({ label, value }: { label: string; value: number }) {
 }
 
 function summaryImageMeta(image: SummaryImage): string {
-  const typeLabel = image.assetType === "character" ? "角色" : image.assetType === "prop" ? "道具" : image.assetType === "scene" ? "地点" : "资产";
+  const typeLabel = image.assetType === "storyboard" ? "分镜" : image.assetType === "character" ? "角色" : image.assetType === "prop" ? "道具" : image.assetType === "scene" ? "地点" : "资产";
   const details = [image.variantName, image.accessories].filter(Boolean).join(" · ");
   return details ? `${typeLabel} · ${details}` : typeLabel;
 }
@@ -484,6 +496,16 @@ function readGenerationSummary(source: Record<string, unknown>): { newAssetCount
   return {
     newAssetCount: numberValue(summary.new_asset_count),
     matchedAssetCount: numberValue(summary.matched_asset_count),
+  };
+}
+
+function readStoryboardSummary(source: Record<string, unknown>): { totalPanelCount: number; completedPanelCount: number; missingPanelCount: number } | null {
+  const summary = recordValue(source.generation_summary);
+  if (!summary) return null;
+  return {
+    totalPanelCount: numberValue(summary.total_panel_count),
+    completedPanelCount: numberValue(summary.completed_panel_count),
+    missingPanelCount: numberValue(summary.missing_panel_count),
   };
 }
 
