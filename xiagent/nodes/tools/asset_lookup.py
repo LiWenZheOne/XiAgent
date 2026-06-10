@@ -20,7 +20,7 @@ class AssetLookupNode(BaseNode):
                 "properties": {
                     "scope": {
                         "type": "string",
-                        "enum": ["global", "project", "combined"],
+                        "enum": ["project", "combined"],
                     },
                     "keyword": {"type": "string"},
                     "names": {
@@ -91,10 +91,10 @@ class AssetLookupNode(BaseNode):
             return NodeResult(status="succeeded", output={"total": 0, "assets": []})
 
         scope = inputs.get("scope")
-        if not isinstance(scope, str) or scope not in {"global", "project", "combined"}:
+        if not isinstance(scope, str) or scope not in {"project", "combined"}:
             raise ValidationError(
                 code="asset_lookup_invalid_scope",
-                message="scope must be global, project or combined",
+                message="scope must be project or combined",
             )
 
         keyword = inputs.get("keyword")
@@ -132,7 +132,7 @@ class AssetLookupNode(BaseNode):
             tags = [t.strip() for t in tags]
             tags = [t for t in tags if t]
 
-        project_id = ctx.project_id if scope in {"project", "combined"} else None
+        project_id = ctx.project_id
 
         if names is not None or identity_filters:
             keyword = None

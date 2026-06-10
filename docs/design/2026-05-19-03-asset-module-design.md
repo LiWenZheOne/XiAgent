@@ -10,9 +10,9 @@
 
 - 导入本地文件资产。
 - 直接创建文字资产。
-- 支持全局资产和项目资产。
-- 支持全局和项目级目录树。
-- 支持全局和项目级标签。
+- 支持全局项目资产和普通项目资产。
+- 支持项目级目录树，其中 `project_id=global` 作为共享全局项目目录树。
+- 支持项目级标签，其中 `project_id=global` 作为共享全局项目标签。
 - 支持关键词搜索、标签筛选、目录筛选。
 - 支持资产元数据更新。
 - 支持软删除。
@@ -28,7 +28,7 @@
 
 ```text
 asset_id
-scope: global | project
+scope: project
 project_id
 asset_type: file | text
 name
@@ -46,8 +46,8 @@ deleted_at
 
 规则：
 
-- `scope = global` 时 `project_id` 必须为空。
 - `scope = project` 时 `project_id` 必须存在。
+- 全局资产统一使用 `scope = project` 且 `project_id = global`，不再使用 `scope = global` 作为资产作用域。
 - 文件资产内容保存在本地文件存储，数据库保存 `storage_uri`。
 - 文字资产第一版可以直接保存在 SQLite。
 
@@ -67,7 +67,7 @@ created_at
 updated_at
 ```
 
-全局资产被项目使用时，通过绑定记录保存项目内别名、用途说明和项目检索关系。
+全局项目资产被普通项目使用时，通过绑定记录保存项目内别名、用途说明和项目检索关系。
 
 ### AssetCollection
 
@@ -75,7 +75,7 @@ updated_at
 
 ```text
 collection_id
-scope: global | project
+scope: project
 project_id
 parent_id
 name
@@ -86,7 +86,7 @@ created_at
 updated_at
 ```
 
-项目目录树不会污染全局目录树。
+普通项目目录树不会污染全局项目目录树。
 
 ### AssetTag
 
@@ -94,7 +94,7 @@ updated_at
 
 ```text
 tag_id
-scope: global | project
+scope: project
 project_id
 name
 description
@@ -103,7 +103,7 @@ created_at
 updated_at
 ```
 
-项目标签不会污染全局标签。
+普通项目标签不会污染全局项目标签。
 
 ### AssetIndexEntry
 
@@ -111,7 +111,7 @@ updated_at
 
 ```text
 entry_id
-scope: global | project
+scope: project
 project_id
 asset_id
 collection_id
@@ -168,6 +168,30 @@ class AssetService(ABC):
         asset_id: str,
         project_id: str | None = None,
     ) -> AssetContent:
+        ...
+
+    async def copy_asset(
+        self,
+        *,
+        user_id: str,
+        asset_id: str,
+        target_scope: str,
+        target_project_id: str | None,
+        source_project_id: str | None = None,
+        copy_tags: bool = True,
+    ) -> AssetRecord:
+        ...
+
+    async def move_asset(
+        self,
+        *,
+        user_id: str,
+        asset_id: str,
+        target_scope: str,
+        target_project_id: str | None,
+        source_project_id: str | None = None,
+        copy_tags: bool = True,
+    ) -> AssetRecord:
         ...
 
     async def update_asset(
@@ -280,6 +304,8 @@ class AssetService(ABC):
         ...
 ```
 
+跨项目复制与转移必须通过 `AssetService.copy_asset` / `AssetService.move_asset` 完成。目标第一版限定为项目资产库；复制会保留资产内容和同名标签，剥离旧的公开 URL / 对象存储发布元数据，避免复制资产仍指向原资产公开地址。转移采用“复制到目标项目后软删除原资产”的语义，历史任务引用仍指向原资产记录。普通项目组合视图中的全局项目资产只能复制到项目，不能被项目组合视图转移或删除；需要管理共享资产时必须切换到全局项目。
+
 `update_asset` 只更新资产展示名称，不改动底层文件存储 URI、内容哈希、目录关系或标签关系。调用方必须传入非空 `name`；空名称返回 `asset_name_required`，资产不存在返回 `asset_not_found`，项目资产写入前必须通过 `UserService.ensure_project_access(..., action="asset:write")`。
 
 ## 作用域查询规则
@@ -287,16 +313,16 @@ class AssetService(ABC):
 `scope` 支持：
 
 ```text
-global
 project
 combined
 ```
 
 规则：
 
-- `global` 只查全局资产和全局检索结构。
 - `project` 只查项目资产和项目检索结构。
-- `combined` 查全局资产和当前项目资产，项目级分类和标签优先用于项目视图。
+- `project` + `project_id=global` 是唯一全局项目资产查询口径，用于共享模板和素材。
+- `combined` 查全局项目资产和当前项目资产，项目级分类和标签优先用于项目视图。
+- `scope=global` 不再是合法资产查询或写入口径；旧数据必须由迁移规范化到 `scope=project, project_id=global`。
 
 ## 文件存储规则
 

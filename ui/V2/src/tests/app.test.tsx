@@ -191,8 +191,8 @@ function mockFetch() {
       asset_id: "asset-global",
       asset_type: "file",
       name: "全局参考.png",
-      scope: "global",
-      project_id: null,
+      scope: "project",
+      project_id: "global",
       mime_type: "image/png",
       size_bytes: 2048,
       metadata: { public_url: "https://cdn.example.com/global.png" },
@@ -205,7 +205,7 @@ function mockFetch() {
     { tag_id: "tag-prop", name: "道具", scope: "project", project_id: "global", asset_count: 0 },
     { tag_id: "tag-episode-metadata", name: "集元数据", scope: "project", project_id: "global", asset_count: 0 },
     { tag_id: "tag-empty", name: "空标签", scope: "project", project_id: "global", asset_count: 0 },
-    { tag_id: "tag-global", name: "全局通用", scope: "global", project_id: null, asset_count: 0 },
+    { tag_id: "tag-global", name: "全局通用", scope: "project", project_id: "global", asset_count: 0 },
   ];
   let nextCreatedTagNumber = 2;
   const assetTagLinks = new Set(["asset-1:tag-character"]);
@@ -331,7 +331,14 @@ function mockFetch() {
       return jsonResponse(uiControlsResponse);
     }
     if (url.startsWith("/api/assets/search")) {
-      return jsonResponse({ items: assetRecords });
+      const params = new URLSearchParams(url.split("?")[1] ?? "");
+      const scope = params.get("scope") ?? "combined";
+      const projectId = params.get("project_id") ?? "";
+      const items = assetRecords.filter((asset) => {
+        if (scope === "project") return asset.scope === "project" && asset.project_id === projectId;
+        return asset.scope === "project" && (asset.project_id === "global" || asset.project_id === projectId);
+      });
+      return jsonResponse({ items });
     }
     if (url.startsWith("/api/assets/") && url.includes("/thumbnail")) {
       return Promise.resolve(new Response(new Uint8Array([137, 80, 78, 71]), {
@@ -363,12 +370,11 @@ function mockFetch() {
     if (url === "/api/assets/files/intelligent" && method === "POST") {
       uploadedAssetForms.push(init?.body as FormData);
       const form = init?.body as FormData;
-      const scope = form.get("scope") === "global" ? "global" : "project";
       const asset = {
         asset_id: `asset-smart-${uploadedAssetForms.length}`,
         asset_type: "file",
         name: String(form.get("name") ?? "智能资产"),
-        scope,
+        scope: "project",
         project_id: String(form.get("project_id") ?? "global"),
         mime_type: "image/png",
         size_bytes: 16,
@@ -390,6 +396,30 @@ function mockFetch() {
         asset.asset_id === assetId ? { ...asset, name: body.name, metadata: (body.metadata ?? asset.metadata) as AssetRecord["metadata"] } : asset,
       );
       return jsonResponse(assetRecords.find((asset) => asset.asset_id === assetId));
+    }
+    if (url === "/api/assets/transfer" && method === "POST") {
+      const body = JSON.parse(String(init?.body ?? "{}")) as {
+        asset_ids: string[];
+        operation: "copy" | "move";
+        target_project_id: string;
+      };
+      const sourceAssets = body.asset_ids
+        .map((assetId) => assetRecords.find((asset) => asset.asset_id === assetId))
+        .filter((asset): asset is AssetRecord => Boolean(asset));
+      const copiedAssets = sourceAssets.map((asset, index) => ({
+        ...asset,
+        asset_id: `asset-transfer-${index + 1}`,
+        scope: "project",
+        project_id: body.target_project_id,
+        metadata: { ...asset.metadata, copied_from_asset_id: asset.asset_id },
+      } satisfies AssetRecord));
+      if (body.operation === "move") {
+        const movedIds = new Set(sourceAssets.map((asset) => asset.asset_id));
+        assetRecords = [...copiedAssets, ...assetRecords.filter((asset) => !movedIds.has(asset.asset_id))];
+      } else {
+        assetRecords = [...copiedAssets, ...assetRecords];
+      }
+      return jsonResponse({ items: copiedAssets, failures: [] });
     }
     if (url === "/api/assets/collections" && method === "POST") {
       const body = JSON.parse(String(init?.body ?? "{}")) as { name: string; parent_id?: string | null };
@@ -1421,6 +1451,7 @@ describe("XiAgent V2 app", () => {
     const dialog = await screen.findByRole("dialog", { name: "批量软删除资产" });
     expect(within(dialog).getByText("参考图")).toBeInTheDocument();
     expect(within(dialog).getByText("全局参考.png")).toBeInTheDocument();
+    expect(within(dialog).queryByText(/只读全局资产/)).not.toBeInTheDocument();
     await userEvent.click(within(dialog).getByRole("button", { name: "确认软删除" }));
 
     await waitFor(() => {
@@ -1431,6 +1462,68 @@ describe("XiAgent V2 app", () => {
         fetchMock.mock.calls.some(([url, init]) => url === "/api/assets/asset-global" && init?.method === "DELETE"),
       ).toBe(true);
       expect(screen.getByText("已软删除 2 个资产。")).toBeInTheDocument();
+    });
+  });
+
+  it("copies a selected asset to another project from the detail panel", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    render(<App />);
+    await login();
+
+    await userEvent.click(screen.getByRole("button", { name: "资产库" }));
+    await userEvent.click(await screen.findByRole("button", { name: "参考图" }));
+    await userEvent.click(screen.getByRole("button", { name: "复制到项目" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "复制资产到项目" });
+    expect(within(dialog).getByText("参考图")).toBeInTheDocument();
+    await userEvent.selectOptions(within(dialog).getByLabelText("资产目标项目"), "project-2");
+    await userEvent.click(within(dialog).getByRole("button", { name: "确认复制" }));
+
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(([url, init]) => url === "/api/assets/transfer" && init?.method === "POST");
+      expect(post).toBeTruthy();
+      expect(JSON.parse(String(post?.[1]?.body))).toMatchObject({
+        asset_ids: ["asset-1"],
+        operation: "copy",
+        target_project_id: "project-2",
+        source_project_id: "global",
+        copy_tags: true,
+      });
+      expect(screen.getByText("已复制 1 个资产到客户项目。")).toBeInTheDocument();
+    });
+  });
+
+  it("batch transfers selected assets to another project", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    render(<App />);
+    await login();
+
+    await userEvent.click(screen.getByRole("button", { name: "资产库" }));
+    expect(await screen.findByRole("button", { name: "参考图" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /全局参考\.png/ })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "批量选择" }));
+    await userEvent.click(screen.getByLabelText("选择资产 参考图"));
+    await userEvent.click(screen.getByLabelText("选择资产 全局参考.png"));
+    await userEvent.click(screen.getByRole("button", { name: "批量转移 2" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "转移资产到项目" });
+    expect(within(dialog).getByText("参考图")).toBeInTheDocument();
+    expect(within(dialog).getByText("全局参考.png")).toBeInTheDocument();
+    await userEvent.selectOptions(within(dialog).getByLabelText("资产目标项目"), "project-2");
+    await userEvent.click(within(dialog).getByRole("button", { name: "确认转移" }));
+
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(([url, init]) => url === "/api/assets/transfer" && init?.method === "POST");
+      expect(post).toBeTruthy();
+      expect(JSON.parse(String(post?.[1]?.body))).toMatchObject({
+        asset_ids: ["asset-1", "asset-global"],
+        operation: "move",
+        target_project_id: "project-2",
+        source_project_id: "global",
+        copy_tags: true,
+      });
+      expect(screen.getByText("已转移 2 个资产到客户项目。")).toBeInTheDocument();
     });
   });
 
@@ -1502,6 +1595,18 @@ describe("XiAgent V2 app", () => {
         ),
       ).toBe(true);
     });
+  });
+
+  it("shows global project assets in another project's combined asset view", async () => {
+    render(<App />);
+    await login();
+
+    await userEvent.click(screen.getByRole("button", { name: "资产库" }));
+    await userEvent.selectOptions(await screen.findByLabelText("资产项目"), "project-2");
+
+    expect(await screen.findByRole("button", { name: "参考图" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /全局参考\.png/ })).toBeInTheDocument();
+    expect(screen.getByText(/已加载 2 个资产/)).toBeInTheDocument();
   });
 
   it("uploads files without requiring an asset directory", async () => {
@@ -1712,7 +1817,7 @@ describe("XiAgent V2 app", () => {
     });
   });
 
-  it("only offers scope-compatible tags when assigning a global asset", async () => {
+  it("offers global project tags when assigning a global project asset", async () => {
     render(<App />);
     await login();
 
@@ -1722,8 +1827,8 @@ describe("XiAgent V2 app", () => {
 
     const dialog = await screen.findByRole("dialog", { name: "管理资产标签" });
     expect(within(dialog).getByLabelText("给资产贴标签 全局通用")).toBeInTheDocument();
-    expect(within(dialog).queryByLabelText("给资产贴标签 角色")).not.toBeInTheDocument();
-    expect(within(dialog).queryByLabelText("给资产贴标签 空标签")).not.toBeInTheDocument();
+    expect(within(dialog).getByLabelText("给资产贴标签 角色")).toBeInTheDocument();
+    expect(within(dialog).getByLabelText("给资产贴标签 空标签")).toBeInTheDocument();
   });
 
   it("opens the control library tab and lists registered node controls", async () => {

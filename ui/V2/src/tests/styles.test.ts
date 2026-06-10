@@ -32,6 +32,8 @@ describe("V2 CSS safeguards", () => {
     expect(selectorRule(".image-viewer-thumb")).toContain("break-inside: avoid");
     expect(selectorRule(".asset-image-card-grid")).toContain("column-width");
     expect(selectorRule(".asset-image-card")).toContain("break-inside: avoid");
+    expect(selectorRule(".asset-image-pool")).toContain("max-height");
+    expect(selectorRule(".asset-image-pool")).toContain("overflow-y: auto");
   });
 
   it("uses masonry columns for variable-height control library cards", () => {

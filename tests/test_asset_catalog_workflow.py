@@ -843,9 +843,9 @@ def test_asset_catalog_extract_prompt_includes_key_instructions() -> None:
     assert "被禀报者、下令者、调度者、执行者" in system_prompt
     assert "每个角色的长相是什么样的" in system_prompt
     assert "角色脸部/头部轮廓必须保持圆形或圆鼓头" in system_prompt
-    assert "只在圆形脸的基础上设计夸张但简洁的眉眼、极简鼻、胡须和发型/头饰" in system_prompt
+    assert "只在圆形脸的基础上设计夸张但简洁的眉眼、胡须和发型/头饰" in system_prompt
     assert "眉形、眼型和胡须形状要用于表达身份、年龄和性格气质" in system_prompt
-    assert "五官应图案化、圆润、清晰" in system_prompt
+    assert "五官应圆润、清晰" in system_prompt
     assert "圆形脸/圆形头部轮廓" in prompt_template
     assert "在当前情景下应该是什么造型" in system_prompt
     assert "这个稳定造型应该叫什么标签" in system_prompt
@@ -870,6 +870,7 @@ def test_asset_catalog_extract_prompt_includes_key_instructions() -> None:
     assert "哪些地点需要固化为可复用地点资产" in scene_system
     assert "会多次出现、承载剧情行动、具备明确空间结构/功能" in scene_system
     assert "临时路过、泛泛提及、纯对话中一笔带过" in scene_system
+    assert "判定时间、天气、环境氛围和地点类型" in scene_system
     assert "场景物件、陈设、布局和装饰风格" in scene_system
     assert "穿戴类外观元素不作为道具提取" in prop_system
     assert "属于角色变体或角色配件" in prop_system
@@ -1546,7 +1547,7 @@ async def _seed_file_asset(
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                asset_id, "global", None, "file", name, "image/png", None,
+                asset_id, "project", "global", "file", name, "image/png", None,
                 0, storage_uri, None,
                 '{"appearance_description": "官服参考图，头戴幞头，身穿深色官袍。"}',
                 user_id,
@@ -1559,7 +1560,7 @@ async def _seed_file_asset(
               tag_id, scope, project_id, name, description, created_by, created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (tag_id, "global", None, "角色", None, user_id, now, now),
+            (tag_id, "project", "global", "角色", None, user_id, now, now),
         )
         await db.execute(
             """
@@ -1568,12 +1569,12 @@ async def _seed_file_asset(
               search_text, created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (new_id("asset_index"), "global", None, asset_id, None, tag_id, name, now, now),
+            (new_id("asset_index"), "project", "global", asset_id, None, tag_id, name, now, now),
         )
         await db.execute(
             """
             INSERT INTO asset_search_fts (asset_id, scope, project_id, search_text)
             VALUES (?, ?, ?, ?)
             """,
-            (asset_id, "global", "", name),
+            (asset_id, "project", "global", name),
         )

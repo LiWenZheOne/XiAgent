@@ -41,6 +41,7 @@ interface AssetMatch {
 interface ImageRef {
   kind: "asset" | "data_uri";
   asset_id?: string;
+  project_id?: string;
   data?: string;
   role?: string;
 }
@@ -127,6 +128,9 @@ export function AssetImageCardsControl({
   const readonly = config.mode === "readonly" || !onSubmit;
   const source = recordValue(readonly ? node.output_snapshot : node.input_snapshot);
   const cards = useMemo(() => buildAssetCards(source), [source]);
+  const [skippedAssetKeys, setSkippedAssetKeys] = useState<string[]>(() => initialSkippedAssetKeys(readonly ? node.output_snapshot : node.input_snapshot));
+  const skippedAssetKeySet = useMemo(() => new Set(skippedAssetKeys), [skippedAssetKeys]);
+  const activeCards = useMemo(() => cards.filter((card) => !skippedAssetKeySet.has(card.assetKey)), [cards, skippedAssetKeySet]);
   const [images, setImages] = useState<ImageState>(() => readonlyImages(readonly ? node.output_snapshot : node.input_snapshot));
   const [imageMeta, setImageMeta] = useState<ImageMetaState>({});
   const [imagePool, setImagePool] = useState<ImagePoolState>(() => readonlyImagePool(readonly ? node.output_snapshot : node.input_snapshot));
@@ -156,8 +160,9 @@ export function AssetImageCardsControl({
   const [missingImageDialogOpen, setMissingImageDialogOpen] = useState(false);
   const [assetNameConflictDialog, setAssetNameConflictDialog] = useState<AssetNameConflictDialog | null>(null);
   const [previewImage, setPreviewImage] = useState<AssetImagePreview | null>(null);
-  const tabs = useMemo(() => buildTabs(cards), [cards]);
+  const tabs = useMemo(() => buildTabs(activeCards), [activeCards]);
   const selectedTab = tabs.some((tab) => tab.key === activeTab) ? activeTab : tabs[0]?.key ?? "character";
+  const missingImageCards = activeCards.filter((card) => !images[card.assetKey]);
   const generatingCount = Object.values(generationStatuses).filter((status) => status === "waiting" || status === "generating").length;
   const generationProgressPercent = generationProgress?.total
     ? Math.round((generationProgress.completed / generationProgress.total) * 100)
@@ -222,8 +227,12 @@ export function AssetImageCardsControl({
   }, [cards, defaultReferenceTemplates, projectId, readonly]);
 
   useEffect(() => {
+    if (!projectId) {
+      setLibraryTags([]);
+      return;
+    }
     let active = true;
-    listAssetTags("combined", projectId && projectId !== "global" ? projectId : undefined)
+    listAssetTags("combined", projectId)
       .then((items) => {
         if (active) setLibraryTags(items);
       })
@@ -241,9 +250,10 @@ export function AssetImageCardsControl({
     nextImagePool: ImagePoolState = imagePool,
     nextMatches: MatchState = matches,
     nextEdits: CardEditsState = edits,
+    nextSkippedAssetKeys: string[] = skippedAssetKeys,
   ) {
     if (readonly || !onDraft) return;
-    const payload = interactionPayload("generate_missing", "", nextImages, nextImageMeta, nextImagePool, nextMatches, nextEdits);
+    const payload = interactionPayload("generate_missing", "", nextImages, nextImageMeta, nextImagePool, nextMatches, nextEdits, nextSkippedAssetKeys);
     const persist = () => onDraft(payload);
     const nextPersist = draftPersistQueueRef.current.then(persist, persist);
     draftPersistQueueRef.current = nextPersist.catch(() => undefined);
@@ -258,10 +268,13 @@ export function AssetImageCardsControl({
     imagePoolState: ImagePoolState,
     matchState: MatchState,
     editState: CardEditsState,
+    skippedKeys: string[] = skippedAssetKeys,
   ): Record<string, unknown> {
+    const nextSkippedAssetKeySet = new Set(skippedKeys);
+    const payloadCards = cards.filter((card) => !nextSkippedAssetKeySet.has(card.assetKey));
     const payload: Record<string, unknown> = {
       decision,
-      asset_images: cards
+      asset_images: payloadCards
         .map((card) => {
           const match = activeMatchForCard(matchState, card);
           const edit = editState[card.assetKey] ?? cardEditFromCard(card);
@@ -280,15 +293,19 @@ export function AssetImageCardsControl({
           return payload;
         })
         .filter(Boolean),
-      generated_images: generatedImagesPayload(cards, imagePoolState),
-      prompt_results: editedPromptResults(cards, editState, matchState),
+      generated_images: generatedImagesPayload(payloadCards, imagePoolState),
+      prompt_results: editedPromptResults(payloadCards, editState, matchState),
     };
+    if (skippedKeys.length) {
+      payload.skipped_asset_keys = skippedKeys;
+      payload.skipped_asset_count = skippedKeys.length;
+    }
     if (targetAssetName) payload.target_asset_name = targetAssetName;
     return payload;
   }
 
   function finishPayload(createdAssetIds: string[] = []): Record<string, unknown> {
-    const payload = interactionPayload("finish", "", images, imageMeta, imagePool, matches, edits);
+    const payload = interactionPayload("finish", "", images, imageMeta, imagePool, matches, edits, skippedAssetKeys);
     payload.created_asset_ids = createdAssetIds;
     const assetImages = Array.isArray(payload.asset_images) ? payload.asset_images : [];
     assetImages.forEach((item, index) => {
@@ -300,10 +317,15 @@ export function AssetImageCardsControl({
     return payload;
   }
 
-  async function saveCardsToLibrary() {
+  async function saveCardsToLibrary(options: { skipMissing?: boolean } = {}) {
     if (readonly || busy || libraryBusy) return;
-    const readyCards = cards.filter((card) => Boolean(images[card.assetKey]));
-    if (readyCards.length !== cards.length) {
+    if (!projectId) {
+      setError("缺少任务项目上下文，不能写入资产库。");
+      return;
+    }
+    const readyCards = activeCards.filter((card) => Boolean(images[card.assetKey]));
+    const missingCards = activeCards.filter((card) => !images[card.assetKey]);
+    if (missingCards.length && !options.skipMissing) {
       setMissingImageDialogOpen(true);
       return;
     }
@@ -311,6 +333,10 @@ export function AssetImageCardsControl({
     setError("");
     setAssetNameConflictDialog(null);
     try {
+      if (!readyCards.length) {
+        onSubmit?.(finishPayload([]));
+        return;
+      }
       const uploadPlans = readyCards.map((card): AssetUploadPlan => {
         const edit = edits[card.assetKey] ?? cardEditFromCard(card);
         const group = tabKeyForAssetType(card.assetType);
@@ -334,8 +360,8 @@ export function AssetImageCardsControl({
         try {
           return await uploadAsset({
             file: imageFile,
-            scope: uploadScope(projectId),
-            project_id: projectId && projectId !== "global" ? projectId : undefined,
+            scope: uploadScope(),
+            project_id: projectId,
             name: fullName,
             publish: true,
             metadata: {
@@ -388,7 +414,7 @@ export function AssetImageCardsControl({
   }
 
   async function exportCardsZip() {
-    const readyCards = cards.filter((card) => Boolean(images[card.assetKey]));
+    const readyCards = activeCards.filter((card) => Boolean(images[card.assetKey]));
     if (!readyCards.length) {
       setError("暂无可导出的图像。");
       return;
@@ -424,7 +450,7 @@ export function AssetImageCardsControl({
 
   async function generateCards(target?: AssetImageCard) {
     if (readonly || busy) return;
-    const targetCards = target ? [target] : cards.filter((card) => !imagesRef.current[card.assetKey]);
+    const targetCards = target ? [target] : activeCards.filter((card) => !imagesRef.current[card.assetKey]);
     const queuedCards = targetCards.filter((card) => {
       const status = generationStatusesRef.current[card.assetKey];
       return status !== "waiting" && status !== "generating";
@@ -498,6 +524,22 @@ export function AssetImageCardsControl({
   }
 
   async function runGenerationJob({ card, prompt, promptIndex }: GenerationJob) {
+    if (!projectId) {
+      setGenerationErrors((current) => ({
+        ...current,
+        [card.assetKey]: "缺少任务项目上下文，不能生成资产图像。",
+      }));
+      setGenerationStatuses((current) => {
+        const next = { ...current, [card.assetKey]: "failed" as GenerationStatus };
+        generationStatusesRef.current = next;
+        return next;
+      });
+      generationSummaryRef.current = {
+        ...generationSummaryRef.current,
+        failed: generationSummaryRef.current.failed + 1,
+      };
+      return;
+    }
     setGenerationStatuses((current) => {
       const next = { ...current, [card.assetKey]: "generating" as GenerationStatus };
       generationStatusesRef.current = next;
@@ -509,7 +551,7 @@ export function AssetImageCardsControl({
       const promptResult = editedPromptResult(card, { ...edit, prompt }, activeMatch);
       const promptText = assetPromptText(card, config.options, activeMatch);
       const generationInput = {
-        project_id: projectId || "global",
+        project_id: projectId,
         node_id: node.node_id,
         prompt_result: promptResult,
         prompt_prefix: promptText.prefix,
@@ -589,14 +631,17 @@ export function AssetImageCardsControl({
 
   async function uploadFileForCard(card: AssetImageCard, file: File | undefined) {
     if (!file) return;
+    if (!projectId) {
+      setError("缺少任务项目上下文，不能上传资产图像。");
+      return;
+    }
     setUploading((current) => ({ ...current, [card.assetKey]: "上传中" }));
     setError("");
     try {
-      const scope = uploadScope(projectId);
       const uploaded = await uploadAsset({
         file,
-        scope,
-        project_id: scope === "project" ? projectId : undefined,
+        scope: uploadScope(),
+        project_id: projectId,
         name: `${card.title}_图像`,
         publish: true,
       });
@@ -694,7 +739,7 @@ export function AssetImageCardsControl({
             <button className="secondary-button" disabled={busy} type="button" onClick={() => void generateCards()}>
               {generatingCount ? `生成队列 ${generationProgress?.completed ?? 0}/${generationProgress?.total ?? generatingCount}` : "资产生成"}
             </button>
-            <button className="primary-button" disabled={busy || libraryBusy} type="button" onClick={saveCardsToLibrary}>
+            <button className="primary-button" disabled={busy || libraryBusy} type="button" onClick={() => void saveCardsToLibrary()}>
               一键入库
             </button>
           </div>
@@ -736,7 +781,7 @@ export function AssetImageCardsControl({
 
       <AssetCardGroup
         busy={Boolean(busy)}
-        cards={cards.filter((card) => tabKeyForAssetType(card.assetType) === selectedTab)}
+        cards={activeCards.filter((card) => tabKeyForAssetType(card.assetType) === selectedTab)}
         draggingKey={draggingKey}
         group={selectedTab}
         images={images}
@@ -783,6 +828,31 @@ export function AssetImageCardsControl({
           });
         }}
         onGenerate={(card) => void generateCards(card)}
+        onRemove={(card) => {
+          const nextSkippedAssetKeys = Array.from(new Set([...skippedAssetKeys, card.assetKey]));
+          const nextImages = { ...imagesRef.current };
+          const nextImageMeta = { ...imageMetaRef.current };
+          const nextImagePool = { ...imagePoolRef.current };
+          const nextMatches = { ...matchesRef.current };
+          const nextEdits = { ...editsRef.current };
+          delete nextImages[card.assetKey];
+          delete nextImageMeta[card.assetKey];
+          delete nextImagePool[card.assetKey];
+          delete nextMatches[card.assetKey];
+          delete nextEdits[card.assetKey];
+          setSkippedAssetKeys(nextSkippedAssetKeys);
+          setImages(nextImages);
+          setImageMeta(nextImageMeta);
+          setImagePool(nextImagePool);
+          setMatches(nextMatches);
+          setEdits(nextEdits);
+          imagesRef.current = nextImages;
+          imageMetaRef.current = nextImageMeta;
+          imagePoolRef.current = nextImagePool;
+          matchesRef.current = nextMatches;
+          editsRef.current = nextEdits;
+          void persistDraft(nextImages, nextImageMeta, nextImagePool, nextMatches, nextEdits, nextSkippedAssetKeys);
+        }}
         onBrokenImage={(card, url) => {
           setBrokenImageUrls((current) => ({ ...current, [card.assetKey]: url }));
         }}
@@ -800,10 +870,27 @@ export function AssetImageCardsControl({
               <p className="eyebrow">无法一键入库</p>
               <h2>还有资产没有图像</h2>
             </div>
-            <p>请先为所有资产上传图像，或点击资产生成补齐缺失图像后再一键入库。</p>
+            <p>以下资产还没有生成或上传图像。可以先补齐图像，也可以跳过这些资产，只入库已有图像的资产。</p>
+            <ul className="asset-missing-image-list">
+              {missingImageCards.map((card) => {
+                const edit = edits[card.assetKey] ?? cardEditFromCard(card);
+                return <li key={card.assetKey}>{cardDisplayName(edit, tabKeyForAssetType(card.assetType))}</li>;
+              })}
+            </ul>
             <div className="button-row end">
               <button className="secondary-button" type="button" onClick={() => setMissingImageDialogOpen(false)}>
-                知道了
+                返回
+              </button>
+              <button
+                className="secondary-button"
+                disabled={busy || libraryBusy}
+                type="button"
+                onClick={() => {
+                  setMissingImageDialogOpen(false);
+                  void saveCardsToLibrary({ skipMissing: true });
+                }}
+              >
+                跳过未补图并入库
               </button>
               <button
                 className="primary-button"
@@ -887,6 +974,7 @@ function AssetCardGroup({
   onEdit,
   onSelectPoolImage,
   onGenerate,
+  onRemove,
   onBrokenImage,
   onOpenAssetPicker,
   onDragState,
@@ -910,6 +998,7 @@ function AssetCardGroup({
   onEdit: (card: AssetImageCard, patch: Partial<CardEditState>) => void;
   onSelectPoolImage: (card: AssetImageCard, image: GeneratedPoolImage) => void;
   onGenerate: (card: AssetImageCard) => void;
+  onRemove: (card: AssetImageCard) => void;
   onBrokenImage: (card: AssetImageCard, url: string) => void;
   onOpenAssetPicker: (card: AssetImageCard) => void;
   onDragState: (assetKey: string) => void;
@@ -972,9 +1061,21 @@ function AssetCardGroup({
                   <small>{match ? `关联：${matchDisplayName}` : "无资产关联"}</small>
                 </div>
                 {!readonly ? (
-                  <button className="secondary-button" disabled={busy || generationStatus === "waiting" || generationStatus === "generating"} type="button" onClick={() => onGenerate(card)}>
-                    {generationStatus === "waiting" ? "等待中" : generationStatus === "generating" ? "生成中" : finalImageUrl ? "重新生成" : "生成"}
-                  </button>
+                  <div className="asset-image-card-title-actions">
+                    <button className="secondary-button" disabled={busy || generationStatus === "waiting" || generationStatus === "generating"} type="button" onClick={() => onGenerate(card)}>
+                      {generationStatus === "waiting" ? "等待中" : generationStatus === "generating" ? "生成中" : finalImageUrl ? "重新生成" : "生成"}
+                    </button>
+                    <button
+                      aria-label={`移出${displayName}本次生成`}
+                      className="secondary-button danger"
+                      disabled={busy || generationStatus === "waiting" || generationStatus === "generating"}
+                      title="移出本次生成"
+                      type="button"
+                      onClick={() => onRemove(card)}
+                    >
+                      移出
+                    </button>
+                  </div>
                 ) : <span>{previewImageUrl ? "已上传" : "未上传"}</span>}
               </header>
               <label className="asset-image-preview" htmlFor={inputId} aria-label={`${card.title} 选择图像`}>
@@ -1392,6 +1493,10 @@ function readonlyImagePool(value: unknown): ImagePoolState {
   return pool;
 }
 
+function initialSkippedAssetKeys(value: unknown): string[] {
+  return stringList(recordValue(value)?.skipped_asset_keys);
+}
+
 function assetLibraryTags(card: AssetImageCard, edit: CardEditState, group: TabKey): string[] {
   const name = edit.name.trim() || card.title;
   const tags = assetTagsForEdit(edit);
@@ -1405,13 +1510,13 @@ function assetLibraryTags(card: AssetImageCard, edit: CardEditState, group: TabK
 }
 
 async function ensureAssetTagIds(options: {
-  projectId?: string;
+  projectId: string;
   tags: string[];
   currentTags: AssetTag[];
   onTagsChanged: (tags: AssetTag[]) => void;
 }): Promise<string[]> {
-  const scope = uploadScope(options.projectId);
-  const project_id = options.projectId && options.projectId !== "global" ? options.projectId : undefined;
+  const scope = uploadScope();
+  const project_id = options.projectId;
   let knownTags = options.currentTags;
   const tagIds: string[] = [];
   for (const tagName of options.tags) {
@@ -1619,9 +1724,9 @@ function activeMatchForCard(matchState: MatchState, card: AssetImageCard): Asset
   return card.matchedAsset ?? null;
 }
 
-async function findAssetNameConflicts(plans: AssetUploadPlan[], projectId?: string): Promise<AssetNameConflictDialog | null> {
-  const scope = uploadScope(projectId);
-  const project_id = projectId && projectId !== "global" ? projectId : undefined;
+async function findAssetNameConflicts(plans: AssetUploadPlan[], projectId: string): Promise<AssetNameConflictDialog | null> {
+  const scope = uploadScope();
+  const project_id = projectId;
   const duplicatedNames = identitiesDuplicatedInBatch(plans);
   const existingPlans = await existingAssetIdentityPlans(plans, scope, project_id);
   const existingNames = existingPlans.map((plan) => plan.fullName);
@@ -1797,7 +1902,6 @@ function apiErrorDetails(error: ApiError): Record<string, unknown> {
 }
 
 function assetScopeLabel(scope: string): string {
-  if (scope === "global") return "全局资产库";
   if (scope === "project") return "项目资产库";
   return "当前资产库";
 }
@@ -1911,16 +2015,23 @@ function displayValue(value: unknown): string {
 }
 
 function imageRefFromAsset(asset: AssetRecord): ImageRef {
-  return { kind: "asset", asset_id: asset.asset_id, role: "reference" };
+  const projectId = asset.scope === "project" ? asset.project_id : undefined;
+  return {
+    kind: "asset",
+    asset_id: asset.asset_id,
+    ...(projectId ? { project_id: projectId } : {}),
+    role: "reference",
+  };
 }
 
 function imageRefFromRecord(record: Record<string, unknown>): ImageRef | undefined {
   const explicit = imageRefFromValue(record.reference_image_ref) || imageRefFromValue(record.matched_asset_ref);
   if (explicit) return explicit;
+  const projectId = textValue(record.project_id);
   const matchedAssetId = textValue(record.matched_asset_id);
-  if (matchedAssetId) return { kind: "asset", asset_id: matchedAssetId, role: "reference" };
+  if (matchedAssetId) return { kind: "asset", asset_id: matchedAssetId, ...(projectId ? { project_id: projectId } : {}), role: "reference" };
   const assetId = textValue(record.asset_id);
-  if (assetId) return { kind: "asset", asset_id: assetId, role: "reference" };
+  if (assetId) return { kind: "asset", asset_id: assetId, ...(projectId ? { project_id: projectId } : {}), role: "reference" };
   return undefined;
 }
 
@@ -1929,7 +2040,8 @@ function imageRefFromValue(value: unknown): ImageRef | undefined {
   const record = value as Record<string, unknown>;
   if (record.kind === "asset") {
     const assetId = textValue(record.asset_id);
-    return assetId ? { kind: "asset", asset_id: assetId, role: textValue(record.role) || "reference" } : undefined;
+    const projectId = textValue(record.project_id);
+    return assetId ? { kind: "asset", asset_id: assetId, ...(projectId ? { project_id: projectId } : {}), role: textValue(record.role) || "reference" } : undefined;
   }
   if (record.kind === "data_uri") {
     const data = textValue(record.data);
@@ -1982,6 +2094,6 @@ function assetAppearanceDescription(asset: unknown): string | undefined {
     || textValue(metadata?.prompt);
 }
 
-function uploadScope(projectId: string | undefined): Exclude<AssetScope, "combined"> {
-  return projectId && projectId !== "global" ? "project" : "global";
+function uploadScope(): Exclude<AssetScope, "combined"> {
+  return "project";
 }

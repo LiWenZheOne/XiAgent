@@ -135,7 +135,7 @@ def _system_prompt(asset_type: str) -> str:
 地点资产规则：
 - description 说明地点是什么、在哪里、在原作/世界背景中用来做什么。
 - location_type 写简短地点类别，例如山寨、酒楼、江河、官府、民居、战场。
-- time_of_day 只有资产名或世界背景明确暗示时填写，否则留空。
+- time_of_day 写可从资产名或世界背景可靠推断的时间、天气和环境氛围；不能确认时留空。
 
 道具资产规则：
 - description 说明道具是什么、用途和世界背景中的意义。

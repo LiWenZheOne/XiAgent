@@ -31,6 +31,7 @@ interface AssetMatch {
 interface ImageRef {
   kind: "asset" | "data_uri";
   asset_id?: string;
+  project_id?: string;
   data?: string;
   role?: string;
 }
@@ -134,14 +135,17 @@ export function AssetSummaryTableControl({
 
   async function uploadImageFile(row: AssetSummaryRow, file: File | undefined) {
     if (!file) return;
+    if (!projectId) {
+      setError("缺少任务项目上下文，不能上传资产图像。");
+      return;
+    }
     setUploading((current) => ({ ...current, [row.key]: "上传中" }));
     setError("");
     try {
-      const scope = uploadScope(projectId);
       const uploaded = await uploadAsset({
         file,
-        scope,
-        project_id: scope === "project" ? projectId : undefined,
+        scope: uploadScope(),
+        project_id: projectId,
         name: `${row.name}_图像`,
         publish: true,
       });
@@ -216,12 +220,16 @@ export function AssetSummaryTableControl({
       setDraftError("请先描述需要新增的资产特征。");
       return;
     }
+    if (!projectId) {
+      setDraftError("缺少任务项目上下文，不能生成待补资产。");
+      return;
+    }
     setDraftLoading(true);
     setDraftError("");
     setDraftResult(null);
     try {
       const input = {
-        project_id: projectId || "global",
+        project_id: projectId,
         node_id: node.node_id,
         asset_type: "auto",
         description,
@@ -521,7 +529,13 @@ export function AssetSummaryTableControl({
           }}
           onClose={() => setPickerRow(null)}
           onSelect={(asset) => {
-            const imageRef: ImageRef = { kind: "asset", asset_id: asset.asset_id, role: "reference" };
+            const projectId = asset.scope === "project" ? asset.project_id : undefined;
+            const imageRef: ImageRef = {
+              kind: "asset",
+              asset_id: asset.asset_id,
+              ...(projectId ? { project_id: projectId } : {}),
+              role: "reference",
+            };
             const nextMatches = {
               ...matches,
               [pickerRow.key]: {
@@ -831,7 +845,8 @@ function imageRefFromRecord(record: Record<string, unknown> | undefined): ImageR
   const explicit = imageRefFromValue(record.reference_image_ref) || imageRefFromValue(record.matched_asset_ref);
   if (explicit) return explicit;
   const assetId = textValue(record.asset_id) || textValue(record.matched_asset_id);
-  return assetId ? { kind: "asset", asset_id: assetId, role: "reference" } : undefined;
+  const projectId = textValue(record.project_id);
+  return assetId ? { kind: "asset", asset_id: assetId, ...(projectId ? { project_id: projectId } : {}), role: "reference" } : undefined;
 }
 
 function imageRefFromValue(value: unknown): ImageRef | undefined {
@@ -839,7 +854,8 @@ function imageRefFromValue(value: unknown): ImageRef | undefined {
   const record = value as Record<string, unknown>;
   if (record.kind === "asset") {
     const assetId = textValue(record.asset_id);
-    return assetId ? { kind: "asset", asset_id: assetId, role: textValue(record.role) || "reference" } : undefined;
+    const projectId = textValue(record.project_id);
+    return assetId ? { kind: "asset", asset_id: assetId, ...(projectId ? { project_id: projectId } : {}), role: textValue(record.role) || "reference" } : undefined;
   }
   if (record.kind === "data_uri") {
     const data = textValue(record.data);
@@ -909,7 +925,7 @@ function fieldLabel(key: string): string {
     name: "名称",
     reason: "原因",
     related_character: "关联角色",
-    time_of_day: "时间特征",
+    time_of_day: "时间/环境/氛围",
     location_type: "地点类型",
     summary: "摘要",
     variant_description: "变体描述",
@@ -918,13 +934,13 @@ function fieldLabel(key: string): string {
 }
 
 function assetSummaryColumnClass(key: string): string {
-  const twoCharacterColumns = new Set(["location_type", "time_of_day", "category", "related_character"]);
+  const twoCharacterColumns = new Set(["location_type", "category", "related_character"]);
   const fourCharacterColumns = new Set(["aliases", "asset_tags"]);
   if (twoCharacterColumns.has(key)) return "asset-summary-col-field-two-char";
   if (fourCharacterColumns.has(key)) return "asset-summary-col-field-four-char";
   return "asset-summary-col-field";
 }
 
-function uploadScope(projectId: string | undefined): Exclude<AssetScope, "combined"> {
-  return projectId && projectId !== "global" ? "project" : "global";
+function uploadScope(): Exclude<AssetScope, "combined"> {
+  return "project";
 }

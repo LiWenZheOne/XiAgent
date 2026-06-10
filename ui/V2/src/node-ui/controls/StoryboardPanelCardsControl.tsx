@@ -19,6 +19,7 @@ import { assetSearchScopeForProject } from "./assetPicker";
 interface ImageRef {
   kind: "asset" | "data_uri";
   asset_id?: string;
+  project_id?: string;
   data?: string;
   role?: string;
 }
@@ -32,6 +33,11 @@ interface ReferenceImage {
   reference_index?: number;
   source?: "asset" | "upload";
   preview_url?: string;
+}
+
+interface AssetPreviewRef {
+  assetId: string;
+  projectId?: string;
 }
 
 interface PanelCard {
@@ -154,26 +160,34 @@ export function StoryboardPanelCardsControl({
   useEffect(() => {
     let active = true;
     const objectUrls: string[] = [];
-    const assetIds = Array.from(new Set(cards.flatMap((card) => {
+    const assetRefs = uniqueAssetPreviewRefs(cards.flatMap((card) => {
       const draft = drafts[card.card_id];
       const refs = draft?.reference_images ?? card.reference_images;
       const generated = draft?.generated_images ?? card.generated_images;
-      return [
-        ...refs.map((ref) => ref.image_ref.asset_id),
-        ...generated.map((image) => image.asset_id),
-      ].filter((id): id is string => Boolean(id));
-    })));
-    if (!assetIds.length) {
+      const cardRefs: AssetPreviewRef[] = [];
+      refs.forEach((ref) => {
+        if (ref.image_ref.asset_id) {
+          cardRefs.push({ assetId: ref.image_ref.asset_id, projectId: ref.image_ref.project_id || projectId });
+        }
+      });
+      generated.forEach((image) => {
+        if (image.asset_id) {
+          cardRefs.push({ assetId: image.asset_id, projectId });
+        }
+      });
+      return cardRefs;
+    }));
+    if (!assetRefs.length) {
       setPreviewUrls({});
       return () => undefined;
     }
-    Promise.all(assetIds.map(async (assetId) => {
+    Promise.all(assetRefs.map(async ({ assetId, projectId: refProjectId }) => {
       try {
-        const blob = await downloadAssetThumbnail(assetId, projectId, 256);
+        const blob = await downloadAssetThumbnail(assetId, refProjectId, 256);
         if (!blob.type.startsWith("image/")) return null;
         const url = URL.createObjectURL(blob);
         objectUrls.push(url);
-        return [assetId, url] as const;
+        return [assetPreviewKey(assetId, refProjectId), url] as const;
       } catch {
         return null;
       }
@@ -275,6 +289,11 @@ export function StoryboardPanelCardsControl({
   }
 
   async function runGenerationJob({ card, prompt, promptIndex }: GenerationJob) {
+    if (!projectId) {
+      updateCard(card.card_id, (current) => ({ ...current, status: "failed", error: "缺少任务项目上下文，不能生成分镜图像。" }));
+      generationSummaryRef.current.failed += 1;
+      return;
+    }
     const draft = draftsRef.current[card.card_id] ?? draftFromCard(card);
     const imageRefs = imageRefsFromReferenceImages(draft.reference_images);
     if (!imageRefs.length) {
@@ -285,7 +304,7 @@ export function StoryboardPanelCardsControl({
     updateCard(card.card_id, (current) => ({ ...current, status: "generating", error: "" }));
     try {
       const generationInput = {
-        project_id: projectId || "global",
+        project_id: projectId,
         node_id: node.node_id,
         card_id: card.card_id,
         prompt,
@@ -339,6 +358,10 @@ export function StoryboardPanelCardsControl({
   }
 
   async function regeneratePrompt(card: PanelCard) {
+    if (!projectId) {
+      updateCard(card.card_id, (current) => ({ ...current, error: "缺少任务项目上下文，不能重新生成提示词。" }));
+      return;
+    }
     const draft = draftsRef.current[card.card_id] ?? draftFromCard(card);
     const panelCount = normalizedPanelCount(draft.panel_count);
     if (!panelCount) {
@@ -354,7 +377,7 @@ export function StoryboardPanelCardsControl({
     setPrompting((current) => ({ ...current, [card.card_id]: true }));
     try {
       const promptInput = {
-        project_id: projectId || "global",
+        project_id: projectId,
         node_id: node.node_id,
         card: { ...card, ...draft },
         item,
@@ -410,10 +433,11 @@ export function StoryboardPanelCardsControl({
   }
 
   function addAssetReference(cardId: string, asset: AssetRecord, source: ReferenceImage["source"] = "asset") {
+    const refProjectId = asset.scope === "project" ? asset.project_id : undefined;
     const ref: ReferenceImage = {
       label: asset.name,
       asset_name: asset.name,
-      image_ref: { kind: "asset", asset_id: asset.asset_id, role: "reference" },
+      image_ref: { kind: "asset", asset_id: asset.asset_id, ...(refProjectId ? { project_id: refProjectId } : {}), role: "reference" },
       preview_url: asset.metadata?.public_url,
       source,
     };
@@ -423,13 +447,17 @@ export function StoryboardPanelCardsControl({
 
   async function uploadReferenceFile(card: PanelCard, file: File) {
     if (!file) return;
+    if (!projectId) {
+      updateCard(card.card_id, (current) => ({ ...current, status: "failed", error: "缺少任务项目上下文，不能上传参考图。" }));
+      return;
+    }
     setUploading((current) => ({ ...current, [card.card_id]: "上传中" }));
     updateCard(card.card_id, (current) => ({ ...current, status: "uploading", error: "" }));
     try {
       const asset = await uploadAsset({
         file,
-        scope: projectId && projectId !== "global" ? "project" : "global",
-        project_id: projectId && projectId !== "global" ? projectId : undefined,
+        scope: "project",
+        project_id: projectId,
         name: file.name,
         publish: true,
         metadata: { source: "storyboard_panel_reference" },
@@ -556,7 +584,7 @@ export function StoryboardPanelCardsControl({
                       <div className="storyboard-generated-grid">
                         {draft.generated_images.map((image, index) => {
                           const active = selectedImage === image.image_url;
-                          const thumbnailUrl = generatedImageThumbnailUrl(image, previewUrls);
+                          const thumbnailUrl = generatedImageThumbnailUrl(image, previewUrls, projectId);
                           return (
                             <div
                               className={active ? "storyboard-generated-item active" : "storyboard-generated-item"}
@@ -658,7 +686,7 @@ export function StoryboardPanelCardsControl({
                     {draft.reference_images.length ? (
                       <div className="storyboard-image-pool-grid">
                         {draft.reference_images.map((ref, index) => {
-                          const imageUrl = referenceImageUrl(ref, previewUrls);
+                          const imageUrl = referenceImageUrl(ref, previewUrls, projectId);
                           const isUpload = ref.source === "upload";
                           return (
                             <div
@@ -937,8 +965,8 @@ function removeReference(draft: PanelDraft, index: number): PanelDraft {
   };
 }
 
-function referenceImageUrl(ref: ReferenceImage, previewUrls: Record<string, string>): string {
-  if (ref.image_ref.asset_id && previewUrls[ref.image_ref.asset_id]) return previewUrls[ref.image_ref.asset_id];
+function referenceImageUrl(ref: ReferenceImage, previewUrls: Record<string, string>, fallbackProjectId?: string): string {
+  if (ref.image_ref.asset_id && previewUrls[assetPreviewKey(ref.image_ref.asset_id, ref.image_ref.project_id || fallbackProjectId)]) return previewUrls[assetPreviewKey(ref.image_ref.asset_id, ref.image_ref.project_id || fallbackProjectId)];
   if (ref.preview_url) return ref.preview_url;
   if (ref.image_ref.kind === "data_uri") return ref.image_ref.data ?? "";
   return "";
@@ -1008,8 +1036,24 @@ function generatedImages(value: unknown): GeneratedImage[] {
     .filter((item) => item.image_url);
 }
 
-function generatedImageThumbnailUrl(image: GeneratedImage, previewUrls: Record<string, string>): string {
-  return image.asset_id ? previewUrls[image.asset_id] || image.image_url : image.image_url;
+function generatedImageThumbnailUrl(image: GeneratedImage, previewUrls: Record<string, string>, fallbackProjectId?: string): string {
+  return image.asset_id ? previewUrls[assetPreviewKey(image.asset_id, fallbackProjectId)] || image.image_url : image.image_url;
+}
+
+function assetPreviewKey(assetId: string, projectId?: string): string {
+  return `${projectId ?? ""}:${assetId}`;
+}
+
+function uniqueAssetPreviewRefs(refs: AssetPreviewRef[]): AssetPreviewRef[] {
+  const seen = new Set<string>();
+  const result: AssetPreviewRef[] = [];
+  for (const ref of refs) {
+    const key = assetPreviewKey(ref.assetId, ref.projectId);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(ref);
+  }
+  return result;
 }
 
 function imageRefsFromReferenceImages(referenceImages: ReferenceImage[]): ImageRef[] {
@@ -1024,6 +1068,7 @@ function imageRefs(value: unknown): ImageRef[] {
     return {
       kind,
       asset_id: text(record.asset_id) || undefined,
+      project_id: text(record.project_id) || undefined,
       data: text(record.data) || undefined,
       role: text(record.role) || "reference",
     };

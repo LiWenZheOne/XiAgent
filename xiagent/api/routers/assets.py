@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from xiagent.api.asset_responses import asset_list_response, asset_response
 from xiagent.api.dependencies import ApiServices, get_current_user, get_services
-from xiagent.core.errors import ValidationError
+from xiagent.core.errors import ValidationError, XiAgentError
 from xiagent.users.models import UserRecord
 
 router = APIRouter(prefix="/api/assets", tags=["assets"])
@@ -121,6 +121,16 @@ class RegenerateStoryboardPanelPromptRequest(BaseModel):
     negative_prompt: str | None = None
     aspect_ratio: str = "16:9"
     resolution: str = "2K"
+
+
+class TransferAssetsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    asset_ids: list[str] = Field(default_factory=list)
+    operation: str = "copy"
+    target_project_id: str
+    source_project_id: str | None = None
+    copy_tags: bool = True
 
 
 @router.post("/text")
@@ -497,6 +507,61 @@ async def search_assets(
     return {"items": asset_list_response(result.items), "total": result.total}
 
 
+@router.post("/transfer")
+async def transfer_assets(
+    request: TransferAssetsRequest,
+    services: Annotated[ApiServices, Depends(get_services)],
+    current_user: Annotated[UserRecord, Depends(get_current_user)],
+) -> dict:
+    clean_asset_ids = _unique_ids(request.asset_ids)
+    if not clean_asset_ids:
+        raise ValidationError(
+            code="asset_transfer_assets_required",
+            message="请选择需要复制或转移的资产。",
+        )
+    target_project_id = request.target_project_id.strip()
+    if not target_project_id:
+        raise ValidationError(
+            code="asset_transfer_target_project_required",
+            message="请选择目标项目。",
+        )
+    operation = request.operation.strip().lower()
+    if operation not in {"copy", "move"}:
+        raise ValidationError(
+            code="asset_transfer_operation_invalid",
+            message="资产操作只能是复制或转移。",
+            details={"operation": request.operation},
+        )
+
+    items = []
+    failures = []
+    for asset_id in clean_asset_ids:
+        try:
+            if operation == "move":
+                asset = await services.assets.move_asset(
+                    user_id=current_user.user_id,
+                    asset_id=asset_id,
+                    target_scope="project",
+                    target_project_id=target_project_id,
+                    source_project_id=request.source_project_id,
+                    copy_tags=request.copy_tags,
+                )
+            else:
+                asset = await services.assets.copy_asset(
+                    user_id=current_user.user_id,
+                    asset_id=asset_id,
+                    target_scope="project",
+                    target_project_id=target_project_id,
+                    source_project_id=request.source_project_id,
+                    copy_tags=request.copy_tags,
+                )
+            items.append(asset_response(asset))
+        except XiAgentError as exc:
+            failures.append({"asset_id": asset_id, "code": exc.code, "message": exc.message, "details": exc.details})
+
+    return {"items": items, "failures": failures}
+
+
 @router.get("/{asset_id}/tags")
 async def list_asset_tags(
     asset_id: str,
@@ -716,3 +781,14 @@ def _split_ids(value: str | None) -> list[str]:
     if value is None:
         return []
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _unique_ids(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    clean_values: list[str] = []
+    for value in values:
+        clean_value = value.strip()
+        if clean_value and clean_value not in seen:
+            clean_values.append(clean_value)
+            seen.add(clean_value)
+    return clean_values

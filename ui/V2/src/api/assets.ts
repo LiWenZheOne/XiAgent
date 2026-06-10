@@ -372,6 +372,30 @@ export async function deleteAsset(assetId: string): Promise<void> {
   await apiRequest<void>(`/api/assets/${encodeURIComponent(assetId)}`, { method: "DELETE" });
 }
 
+export interface TransferAssetsResult {
+  items: AssetRecord[];
+  failures: Array<{
+    asset_id: string;
+    code?: string;
+    message: string;
+    details?: Record<string, unknown>;
+  }>;
+}
+
+export async function transferAssets(input: {
+  asset_ids: string[];
+  operation: "copy" | "move";
+  target_project_id: string;
+  source_project_id?: string;
+  copy_tags?: boolean;
+}): Promise<TransferAssetsResult> {
+  return apiRequest<TransferAssetsResult>("/api/assets/transfer", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...input, copy_tags: input.copy_tags ?? true }),
+  });
+}
+
 export async function downloadAssetContent(assetId: string, projectId?: string): Promise<Blob> {
   const params = new URLSearchParams();
   if (projectId) params.set("project_id", projectId);

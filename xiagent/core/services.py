@@ -98,6 +98,32 @@ class AssetService(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def copy_asset(
+        self,
+        *,
+        user_id: str,
+        asset_id: str,
+        target_scope: str,
+        target_project_id: str | None,
+        source_project_id: str | None = None,
+        copy_tags: bool = True,
+    ) -> Any:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def move_asset(
+        self,
+        *,
+        user_id: str,
+        asset_id: str,
+        target_scope: str,
+        target_project_id: str | None,
+        source_project_id: str | None = None,
+        copy_tags: bool = True,
+    ) -> Any:
+        raise NotImplementedError
+
+    @abstractmethod
     async def update_asset(
         self,
         *,

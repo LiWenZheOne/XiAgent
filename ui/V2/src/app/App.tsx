@@ -12,6 +12,7 @@ import {
   listAssetTagsForAsset,
   replaceAssetFile,
   searchAssets,
+  transferAssets,
   updateAsset,
   updateTextAsset,
   uploadAsset,
@@ -1961,6 +1962,7 @@ function ProjectsPage({
 
 type TagAction = "create" | "delete" | null;
 type AssetLibraryScope = "combined" | "project" | "global";
+type AssetTransferMode = "copy" | "move";
 const ASSET_LIBRARY_PAGE_SIZE = 72;
 
 function isEpisodeMetadataAsset(asset: AssetRecord | null, tags: AssetTag[] = []): asset is AssetRecord {
@@ -2021,18 +2023,24 @@ function AssetLibraryPage({
   const [batchSelectedIds, setBatchSelectedIds] = useState<string[]>([]);
   const [batchDeleteConfirmOpen, setBatchDeleteConfirmOpen] = useState(false);
   const [batchDeleting, setBatchDeleting] = useState(false);
+  const [assetTransferOpen, setAssetTransferOpen] = useState(false);
+  const [assetTransferMode, setAssetTransferMode] = useState<AssetTransferMode>("copy");
+  const [assetTransferItems, setAssetTransferItems] = useState<AssetRecord[]>([]);
+  const [assetTransferTargetProjectId, setAssetTransferTargetProjectId] = useState("");
+  const [assetTransferring, setAssetTransferring] = useState(false);
   const selectedAsset = assets.find((asset) => asset.asset_id === selectedAssetId) ?? null;
+  const assetRequestScope: "combined" | "project" = scope === "combined" ? "combined" : "project";
+  const assetRequestProjectId = scope === "global" ? "global" : project?.project_id;
 
   useEffect(() => {
-    if (scope !== "global" && !project) return;
+    if (!assetRequestProjectId) return;
     let active = true;
-    const projectId = scope === "global" ? undefined : project?.project_id;
     setLoading(true);
     setHasMoreAssets(false);
     setMessage((current) => (current.startsWith("已") ? current : ""));
     searchAssets({
-      scope,
-      project_id: projectId,
+      scope: assetRequestScope,
+      project_id: assetRequestProjectId,
       keyword: keyword.trim() || undefined,
       tag_ids: selectedTagIds,
       limit: ASSET_LIBRARY_PAGE_SIZE,
@@ -2053,13 +2061,12 @@ function AssetLibraryPage({
     return () => {
       active = false;
     };
-  }, [keyword, project, reloadKey, scope, selectedTagIds]);
+  }, [assetRequestProjectId, assetRequestScope, keyword, reloadKey, selectedTagIds]);
 
   useEffect(() => {
-    if (scope !== "global" && !project) return;
+    if (!assetRequestProjectId) return;
     let active = true;
-    const projectId = scope === "global" ? undefined : project?.project_id;
-    listAssetTags(scope, projectId)
+    listAssetTags(assetRequestScope, assetRequestProjectId)
       .then((nextTags) => {
         if (!active) return;
         setTags(nextTags);
@@ -2071,7 +2078,7 @@ function AssetLibraryPage({
     return () => {
       active = false;
     };
-  }, [project, reloadKey, scope]);
+  }, [assetRequestProjectId, assetRequestScope, reloadKey]);
 
   useEffect(() => {
     setTagAction(null);
@@ -2085,8 +2092,8 @@ function AssetLibraryPage({
 
   const selectedEditableTag = selectedTagIds.length === 1 ? tags.find((tag) => tag.tag_id === selectedTagIds[0]) ?? null : null;
   const selectedEditableTagIsEmpty = selectedEditableTag ? (selectedEditableTag.asset_count ?? 0) === 0 : false;
-  const tagWriteScope = scope === "global" ? "global" : "project";
-  const tagProjectId = tagWriteScope === "project" ? project?.project_id : undefined;
+  const tagWriteScope = "project";
+  const tagProjectId = assetRequestProjectId;
   const projectDisplayName = project?.name?.trim() || "项目";
   const combinedScopeLabel = `${projectDisplayName} + 全局`;
   const projectScopeLabel = `${projectDisplayName}资产`;
@@ -2096,7 +2103,22 @@ function AssetLibraryPage({
     () => assets.filter((asset) => batchSelectedSet.has(asset.asset_id)),
     [assets, batchSelectedSet],
   );
+  const canDeleteAssetInCurrentView = (asset: AssetRecord) => (
+    asset.scope === "project" && asset.project_id === selectedProjectId
+  );
+  const canMoveAssetInCurrentView = (asset: AssetRecord) => asset.scope === "project" && asset.project_id === selectedProjectId;
+  const selectedAssetCanDelete = selectedAsset ? canDeleteAssetInCurrentView(selectedAsset) : false;
+  const selectedAssetCanMove = selectedAsset ? canMoveAssetInCurrentView(selectedAsset) : false;
+  const batchDeletableAssets = batchSelectedAssets.filter(canDeleteAssetInCurrentView);
+  const batchReadonlyAssets = batchSelectedAssets.filter((asset) => !canDeleteAssetInCurrentView(asset));
+  const batchMovableAssets = batchSelectedAssets.filter(canMoveAssetInCurrentView);
   const allLoadedAssetsSelected = Boolean(assets.length) && assets.every((asset) => batchSelectedSet.has(asset.asset_id));
+  const assetTransferTargetProjects = useMemo(
+    () => projects.filter((item) => item.project_id !== selectedProjectId),
+    [projects, selectedProjectId],
+  );
+  const assetTransferTitle = assetTransferMode === "copy" ? "复制资产到项目" : "转移资产到项目";
+  const assetTransferActionText = assetTransferMode === "copy" ? "复制" : "转移";
   const filteredAssetTagOptions = useMemo(() => {
     const keyword = assetTagFilter.trim().toLowerCase();
     const compatibleTags = selectedAsset ? tags.filter((tag) => tagMatchesAssetScope(tag, selectedAsset)) : [];
@@ -2113,6 +2135,14 @@ function AssetLibraryPage({
     selectedTagNames.length ? `标签：${selectedTagNames.join("、")}` : "",
     keyword.trim() ? `搜索：${keyword.trim()}` : "",
   ].filter(Boolean).join(" / ");
+
+  useEffect(() => {
+    if (!assetTransferOpen) return;
+    setAssetTransferTargetProjectId((current) => {
+      if (current && assetTransferTargetProjects.some((item) => item.project_id === current)) return current;
+      return assetTransferTargetProjects[0]?.project_id ?? "";
+    });
+  }, [assetTransferOpen, assetTransferTargetProjects]);
 
   useEffect(() => {
     setAssetRenameOpen(false);
@@ -2178,14 +2208,14 @@ function AssetLibraryPage({
   async function handleUpload() {
     const cleanName = uploadName.trim();
     if (!file || !cleanName) return;
-    if (scope !== "global" && !project) {
+    if (!assetRequestProjectId) {
       onProjectRequired();
       return;
     }
     await uploadAsset({
       file,
-      scope: scope === "global" ? "global" : "project",
-      project_id: scope === "global" ? undefined : project?.project_id,
+      scope: "project",
+      project_id: assetRequestProjectId,
       name: cleanName,
       publish: true,
     });
@@ -2196,17 +2226,16 @@ function AssetLibraryPage({
 
   async function handleLoadMoreAssets() {
     if (loading || loadingMoreAssets) return;
-    if (scope !== "global" && !project) {
+    if (!assetRequestProjectId) {
       onProjectRequired();
       return;
     }
     setLoadingMoreAssets(true);
     setMessage("");
     try {
-      const projectId = scope === "global" ? undefined : project?.project_id;
       const nextItems = await searchAssets({
-        scope,
-        project_id: projectId,
+        scope: assetRequestScope,
+        project_id: assetRequestProjectId,
         keyword: keyword.trim() || undefined,
         tag_ids: selectedTagIds,
         limit: ASSET_LIBRARY_PAGE_SIZE,
@@ -2229,7 +2258,7 @@ function AssetLibraryPage({
     const cleanName = uploadName.trim();
     const cleanBackground = uploadWorldBackground.trim();
     if (!file || !cleanName || !cleanBackground) return;
-    if (scope !== "global" && !project) {
+    if (!assetRequestProjectId) {
       onProjectRequired();
       return;
     }
@@ -2238,8 +2267,8 @@ function AssetLibraryPage({
     try {
       const result = await uploadAssetWithMetadataCompletion({
         file,
-        scope: scope === "global" ? "global" : "project",
-        project_id: scope === "global" ? undefined : project?.project_id,
+        scope: "project",
+        project_id: assetRequestProjectId,
         name: cleanName,
         asset_type: uploadAssetType,
         world_background: cleanBackground,
@@ -2269,6 +2298,10 @@ function AssetLibraryPage({
   }
 
   async function handleDelete(asset: AssetRecord) {
+    if (!canDeleteAssetInCurrentView(asset)) {
+      setMessage("当前项目视图中的全局资产是只读参考，请切换到“全局资产”范围后再执行全局资产删除。");
+      return;
+    }
     await deleteAsset(asset.asset_id);
     setReloadKey((current) => current + 1);
   }
@@ -2299,7 +2332,7 @@ function AssetLibraryPage({
   }
 
   async function handleConfirmBatchDelete() {
-    const assetsToDelete = batchSelectedAssets;
+    const assetsToDelete = batchDeletableAssets;
     if (!assetsToDelete.length || batchDeleting) return;
     setBatchDeleting(true);
     setMessage("");
@@ -2312,7 +2345,11 @@ function AssetLibraryPage({
       if (selectedAssetId && deletedIds.has(selectedAssetId)) {
         setSelectedAssetId("");
       }
-      setMessage(`已软删除 ${assetsToDelete.length} 个资产。`);
+      setMessage(
+        batchReadonlyAssets.length
+          ? `已软删除 ${assetsToDelete.length} 个资产，跳过 ${batchReadonlyAssets.length} 个只读全局资产。`
+          : `已软删除 ${assetsToDelete.length} 个资产。`,
+      );
       setBatchSelectedIds([]);
       setBatchMode(false);
       setBatchDeleteConfirmOpen(false);
@@ -2321,6 +2358,64 @@ function AssetLibraryPage({
       setMessage(readableError(error, "批量软删除失败，请稍后重试。"));
     } finally {
       setBatchDeleting(false);
+    }
+  }
+
+  function handleOpenAssetTransfer(mode: AssetTransferMode, items: AssetRecord[]) {
+    const transferItems = mode === "move" ? items.filter(canMoveAssetInCurrentView) : items;
+    if (!transferItems.length) {
+      setMessage(mode === "move" ? "当前选择中没有可转移的项目资产；全局资产只能复制到项目。" : "请选择需要复制的资产。");
+      return;
+    }
+    setAssetTransferMode(mode);
+    setAssetTransferItems(transferItems);
+    setAssetTransferTargetProjectId(assetTransferTargetProjects[0]?.project_id ?? "");
+    setAssetTransferOpen(true);
+  }
+
+  function handleCloseAssetTransfer() {
+    if (assetTransferring) return;
+    setAssetTransferOpen(false);
+    setAssetTransferItems([]);
+    setAssetTransferTargetProjectId("");
+  }
+
+  async function handleConfirmAssetTransfer() {
+    if (!assetTransferItems.length || !assetTransferTargetProjectId || assetTransferring) return;
+    setAssetTransferring(true);
+    setMessage("");
+    try {
+      const result = await transferAssets({
+        asset_ids: assetTransferItems.map((asset) => asset.asset_id),
+        operation: assetTransferMode,
+        target_project_id: assetTransferTargetProjectId,
+        source_project_id: selectedProjectId,
+        copy_tags: true,
+      });
+      const successCount = result.items.length;
+      const failureCount = result.failures.length;
+      if (assetTransferMode === "move" && successCount) {
+        const failedIds = new Set(result.failures.map((failure) => failure.asset_id));
+        const movedIds = new Set(assetTransferItems.filter((asset) => !failedIds.has(asset.asset_id)).map((asset) => asset.asset_id));
+        setAssets((current) => current.filter((asset) => !movedIds.has(asset.asset_id)));
+        setBatchSelectedIds((current) => current.filter((assetId) => !movedIds.has(assetId)));
+        if (selectedAssetId && movedIds.has(selectedAssetId)) setSelectedAssetId("");
+      }
+      const targetProjectName = assetTransferTargetProjects.find((item) => item.project_id === assetTransferTargetProjectId)?.name ?? "目标项目";
+      setMessage(
+        failureCount
+          ? `已${assetTransferActionText} ${successCount} 个资产到${targetProjectName}，${failureCount} 个失败。`
+          : `已${assetTransferActionText} ${successCount} 个资产到${targetProjectName}。`,
+      );
+      setAssetTransferOpen(false);
+      setAssetTransferItems([]);
+      setAssetTransferTargetProjectId("");
+      setBatchMode(false);
+      if (successCount) setReloadKey((current) => current + 1);
+    } catch (error) {
+      setMessage(readableError(error, `资产${assetTransferActionText}失败，请稍后重试。`));
+    } finally {
+      setAssetTransferring(false);
     }
   }
 
@@ -2518,8 +2613,8 @@ function AssetLibraryPage({
   async function syncAssetTagsFromName(asset: AssetRecord, name: string): Promise<AssetTag[]> {
     const tagNames = assetTagNamesFromName(name);
     if (!tagNames.length) return currentAssetTags;
-    const scope = asset.scope === "global" ? "global" : "project";
-    const projectId = scope === "project" ? asset.project_id ?? project?.project_id : undefined;
+    const scope = "project";
+    const projectId = asset.project_id ?? project?.project_id ?? "global";
     let knownTags = tags;
     let nextTags = currentAssetTags;
     const targetTagIds: string[] = [];
@@ -2766,12 +2861,28 @@ function AssetLibraryPage({
                         清空选择
                       </button>
                       <button
+                        className="secondary-button"
+                        disabled={!batchSelectedAssets.length || !assetTransferTargetProjects.length || assetTransferring}
+                        type="button"
+                        onClick={() => handleOpenAssetTransfer("copy", batchSelectedAssets)}
+                      >
+                        批量复制{batchSelectedAssets.length ? ` ${batchSelectedAssets.length}` : ""}
+                      </button>
+                      <button
+                        className="secondary-button"
+                        disabled={!batchMovableAssets.length || !assetTransferTargetProjects.length || assetTransferring}
+                        type="button"
+                        onClick={() => handleOpenAssetTransfer("move", batchMovableAssets)}
+                      >
+                        批量转移{batchMovableAssets.length ? ` ${batchMovableAssets.length}` : ""}
+                      </button>
+                      <button
                         className="secondary-button danger"
-                        disabled={!batchSelectedAssets.length || batchDeleting}
+                        disabled={!batchDeletableAssets.length || batchDeleting}
                         type="button"
                         onClick={() => setBatchDeleteConfirmOpen(true)}
                       >
-                        批量软删除{batchSelectedAssets.length ? ` ${batchSelectedAssets.length}` : ""}
+                        批量软删除{batchDeletableAssets.length ? ` ${batchDeletableAssets.length}` : ""}
                       </button>
                       <button className="secondary-button" disabled={batchDeleting} type="button" onClick={handleToggleBatchMode}>
                         退出批量
@@ -2868,7 +2979,7 @@ function AssetLibraryPage({
                       ) : null}
                     </span>
                     <strong>{asset.name}</strong>
-                    <small>{asset.scope === "global" ? "全局资产" : "项目资产"} · {formatBytes(asset.size_bytes)}</small>
+                    <small>{asset.project_id === "global" ? "全局资产" : "项目资产"} · {formatBytes(asset.size_bytes)}</small>
                   </article>
                 );
               })}
@@ -2912,7 +3023,7 @@ function AssetLibraryPage({
                   <p className="eyebrow">资产详情</p>
                   <h2>{selectedAsset.name}</h2>
                   <div className="asset-detail-badges">
-                    <span>{selectedAsset.scope === "global" ? "全局资产" : "项目资产"}</span>
+                    <span>{selectedAsset.project_id === "global" ? "全局资产" : "项目资产"}</span>
                     <span>{selectedAsset.mime_type || selectedAsset.asset_type}</span>
                     <span>{formatBytes(selectedAsset.size_bytes)}</span>
                   </div>
@@ -2935,7 +3046,29 @@ function AssetLibraryPage({
                 <button className="secondary-button asset-action-button" type="button" onClick={() => handleStartAssetRename(selectedAsset)}>
                   重命名资产
                 </button>
-                <button className="secondary-button danger asset-action-button" type="button" onClick={() => void handleDelete(selectedAsset)}>
+                <button
+                  className="secondary-button asset-action-button"
+                  disabled={!assetTransferTargetProjects.length || assetTransferring}
+                  type="button"
+                  onClick={() => handleOpenAssetTransfer("copy", [selectedAsset])}
+                >
+                  复制到项目
+                </button>
+                <button
+                  className="secondary-button asset-action-button"
+                  disabled={!assetTransferTargetProjects.length || assetTransferring || !selectedAssetCanMove}
+                  type="button"
+                  onClick={() => handleOpenAssetTransfer("move", [selectedAsset])}
+                >
+                  转移到项目
+                </button>
+                <button
+                  className="secondary-button danger asset-action-button"
+                  disabled={!selectedAssetCanDelete}
+                  title={selectedAssetCanDelete ? "软删除资产" : "组合视图中的全局资产为只读参考"}
+                  type="button"
+                  onClick={() => void handleDelete(selectedAsset)}
+                >
                   软删除
                 </button>
               </div>
@@ -3079,19 +3212,82 @@ function AssetLibraryPage({
             <div>
               <p className="eyebrow">批量操作</p>
               <h2>批量软删除资产</h2>
-              <p>确认软删除当前选中的 {batchSelectedAssets.length} 个资产？历史任务引用会保留，但资产不会再出现在资产库列表中。</p>
+              <p>确认软删除当前可写的 {batchDeletableAssets.length} 个资产？历史任务引用会保留，但资产不会再出现在资产库列表中。</p>
             </div>
             <div className="asset-batch-confirm-list" aria-label="待软删除资产">
-              {batchSelectedAssets.map((asset) => (
+              {batchDeletableAssets.map((asset) => (
                 <span key={asset.asset_id}>{asset.name}</span>
               ))}
             </div>
+            {batchReadonlyAssets.length ? (
+              <>
+                <p className="error-text">已跳过 {batchReadonlyAssets.length} 个只读全局资产；项目组合视图不能删除全局资产。</p>
+                <div className="asset-batch-confirm-list" aria-label="跳过的只读全局资产">
+                  {batchReadonlyAssets.map((asset) => (
+                    <span key={asset.asset_id}>{asset.name}</span>
+                  ))}
+                </div>
+              </>
+            ) : null}
             <div className="button-row">
               <button className="secondary-button" disabled={batchDeleting} type="button" onClick={() => setBatchDeleteConfirmOpen(false)}>
                 取消
               </button>
-              <button className="primary-button danger" disabled={!batchSelectedAssets.length || batchDeleting} type="button" onClick={() => void handleConfirmBatchDelete()}>
+              <button className="primary-button danger" disabled={!batchDeletableAssets.length || batchDeleting} type="button" onClick={() => void handleConfirmBatchDelete()}>
                 {batchDeleting ? "正在软删除..." : "确认软删除"}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+      {assetTransferOpen ? (
+        <div className="asset-picker-modal">
+          <button
+            aria-label="关闭资产复制转移弹窗"
+            className="modal-scrim"
+            disabled={assetTransferring}
+            type="button"
+            onClick={handleCloseAssetTransfer}
+          />
+          <section className="asset-batch-confirm-dialog asset-transfer-dialog" role="dialog" aria-modal="true" aria-label={assetTransferTitle}>
+            <div>
+              <p className="eyebrow">项目资产</p>
+              <h2>{assetTransferTitle}</h2>
+              <p>
+                将当前选中的 {assetTransferItems.length} 个资产{assetTransferActionText}到目标项目。
+                {assetTransferMode === "move" ? " 原资产会软删除，历史任务引用仍会保留。" : ""}
+              </p>
+            </div>
+            <label className="compact-field">
+              <span>目标项目</span>
+              <select
+                aria-label="资产目标项目"
+                disabled={assetTransferring || !assetTransferTargetProjects.length}
+                value={assetTransferTargetProjectId}
+                onChange={(event) => setAssetTransferTargetProjectId(event.target.value)}
+              >
+                {assetTransferTargetProjects.map((item) => (
+                  <option key={item.project_id} value={item.project_id}>{item.name}</option>
+                ))}
+              </select>
+            </label>
+            <div className="asset-batch-confirm-list" aria-label="待复制或转移资产">
+              {assetTransferItems.map((asset) => (
+                <span key={asset.asset_id}>{asset.name}</span>
+              ))}
+            </div>
+            {!assetTransferTargetProjects.length ? <p className="error-text">暂无可选的其他项目。</p> : null}
+            <div className="button-row">
+              <button className="secondary-button" disabled={assetTransferring} type="button" onClick={handleCloseAssetTransfer}>
+                取消
+              </button>
+              <button
+                className={assetTransferMode === "move" ? "primary-button danger" : "primary-button"}
+                disabled={!assetTransferItems.length || !assetTransferTargetProjectId || assetTransferring}
+                type="button"
+                onClick={() => void handleConfirmAssetTransfer()}
+              >
+                {assetTransferring ? `正在${assetTransferActionText}...` : `确认${assetTransferActionText}`}
               </button>
             </div>
           </section>

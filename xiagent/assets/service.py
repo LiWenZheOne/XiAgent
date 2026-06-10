@@ -23,6 +23,7 @@ from xiagent.core.errors import ConflictError, NotFoundError, ValidationError
 from xiagent.core.ids import new_id
 from xiagent.core.services import AssetService, UserService
 from xiagent.infrastructure.database import connect_db
+from xiagent.users.global_project import GLOBAL_PROJECT_ID
 
 
 class SqliteAssetService(AssetService):
@@ -290,6 +291,133 @@ class SqliteAssetService(AssetService):
             updated_at=now,
             deleted_at=None,
         )
+
+    async def copy_asset(
+        self,
+        *,
+        user_id: str,
+        asset_id: str,
+        target_scope: str,
+        target_project_id: str | None,
+        source_project_id: str | None = None,
+        copy_tags: bool = True,
+    ) -> AssetRecord:
+        if target_scope != "project":
+            raise ValidationError(
+                "asset_transfer_target_project_required",
+                "资产复制目标必须是项目资产库。",
+                {"target_scope": target_scope, "target_project_id": target_project_id},
+            )
+        if not target_project_id:
+            raise ValidationError(
+                "asset_transfer_target_project_required",
+                "资产复制需要选择目标项目。",
+            )
+
+        source = await self.get_asset(user_id=user_id, asset_id=asset_id, project_id=source_project_id)
+        await self._validate_write_scope(user_id=user_id, scope=target_scope, project_id=target_project_id)
+        content = await self.get_asset_content(
+            user_id=user_id,
+            asset_id=source.asset_id,
+            project_id=source_project_id,
+        )
+        metadata = _metadata_without_publish_fields(source.metadata)
+        metadata["copied_from_asset_id"] = source.asset_id
+        metadata["copied_from_scope"] = source.scope
+        if source.project_id:
+            metadata["copied_from_project_id"] = source.project_id
+
+        if source.asset_type == "text":
+            copied = await self.create_text_asset(
+                user_id=user_id,
+                scope=target_scope,
+                project_id=target_project_id,
+                name=source.name,
+                text=content.text_content or source.text_content or "",
+                metadata=metadata,
+            )
+        else:
+            if content.bytes_content is None:
+                raise NotFoundError(
+                    "asset_content_not_found",
+                    "Asset content was not found",
+                    {"asset_id": source.asset_id},
+                )
+            copied = await self.import_file_asset(
+                user_id=user_id,
+                scope=target_scope,
+                project_id=target_project_id,
+                file_name=source.name,
+                content_type=content.content_type or source.mime_type,
+                content=content.bytes_content,
+                metadata=metadata,
+                publish=False,
+            )
+
+        if copy_tags:
+            await self._copy_asset_tags(
+                user_id=user_id,
+                source_asset_id=source.asset_id,
+                target_asset_id=copied.asset_id,
+                target_scope=target_scope,
+                target_project_id=target_project_id,
+            )
+        return copied
+
+    async def move_asset(
+        self,
+        *,
+        user_id: str,
+        asset_id: str,
+        target_scope: str,
+        target_project_id: str | None,
+        source_project_id: str | None = None,
+        copy_tags: bool = True,
+    ) -> AssetRecord:
+        source = await self.get_asset(user_id=user_id, asset_id=asset_id, project_id=source_project_id)
+        if source.scope != "project":
+            raise ValidationError(
+                "asset_global_move_not_supported",
+                "全局资产不能转移到项目；如需在项目中使用，请复制全局资产。",
+                {"asset_id": source.asset_id, "scope": source.scope},
+            )
+        copied = await self.copy_asset(
+            user_id=user_id,
+            asset_id=source.asset_id,
+            target_scope=target_scope,
+            target_project_id=target_project_id,
+            source_project_id=source_project_id,
+            copy_tags=copy_tags,
+        )
+        await self.delete_asset(user_id=user_id, asset_id=source.asset_id)
+        return copied
+
+    async def _copy_asset_tags(
+        self,
+        *,
+        user_id: str,
+        source_asset_id: str,
+        target_asset_id: str,
+        target_scope: str,
+        target_project_id: str | None,
+    ) -> None:
+        source_tags = await self.list_asset_tags(user_id=user_id, asset_id=source_asset_id)
+        if not source_tags:
+            return
+        target_tags = await self.list_tags(user_id=user_id, scope=target_scope, project_id=target_project_id)
+        target_by_name = {tag.name: tag for tag in target_tags}
+        for source_tag in source_tags:
+            target_tag = target_by_name.get(source_tag.name)
+            if target_tag is None:
+                target_tag = await self.create_tag(
+                    user_id=user_id,
+                    scope=target_scope,
+                    project_id=target_project_id,
+                    name=source_tag.name,
+                    description=source_tag.description,
+                )
+                target_by_name[target_tag.name] = target_tag
+            await self.attach_asset_tag(user_id=user_id, asset_id=target_asset_id, tag_id=target_tag.tag_id)
 
     async def create_collection_node(
         self,
@@ -1180,10 +1308,6 @@ class SqliteAssetService(AssetService):
         scope: str,
         project_id: str | None,
     ) -> None:
-        if scope == "global":
-            if project_id is not None:
-                raise _invalid_scope()
-            return
         if scope == "project":
             if project_id is None:
                 raise _invalid_scope()
@@ -1202,10 +1326,6 @@ class SqliteAssetService(AssetService):
         scope: str,
         project_id: str | None,
     ) -> None:
-        if scope == "global":
-            if project_id is not None:
-                raise _invalid_scope()
-            return
         if scope in {"project", "combined"}:
             if project_id is None:
                 raise _invalid_scope()
@@ -1224,6 +1344,13 @@ def _utc_now() -> str:
 
 def _metadata_json(metadata: dict[str, Any]) -> str:
     return json.dumps(metadata, ensure_ascii=False, sort_keys=True)
+
+
+def _metadata_without_publish_fields(metadata: dict[str, Any]) -> dict[str, Any]:
+    copied = dict(metadata)
+    copied.pop("public_url", None)
+    copied.pop("object_storage", None)
+    return copied
 
 
 def _invalid_scope() -> ValidationError:
@@ -1358,15 +1485,9 @@ def _search_filter(
 
 
 def _scope_filter(*, scope: str, project_id: str | None) -> tuple[list[str], list[str]]:
-    if scope == "global":
-        return ["scope = ?"], ["global"]
     if scope == "project":
         return ["scope = ?", "project_id = ?"], ["project", project_id or ""]
-    return ["(scope = ? or (scope = ? and project_id = ?))"], [
-        "global",
-        "project",
-        project_id or "",
-    ]
+    return ["scope = ?", "project_id in (?, ?)"], ["project", GLOBAL_PROJECT_ID, project_id or ""]
 
 
 def _qualified_scope_filter(
@@ -1375,15 +1496,9 @@ def _qualified_scope_filter(
     scope: str,
     project_id: str | None,
 ) -> tuple[list[str], list[str]]:
-    if scope == "global":
-        return [f"{alias}.scope = ?"], ["global"]
     if scope == "project":
         return [f"{alias}.scope = ?", f"{alias}.project_id = ?"], ["project", project_id or ""]
-    return [f"({alias}.scope = ? or ({alias}.scope = ? and {alias}.project_id = ?))"], [
-        "global",
-        "project",
-        project_id or "",
-    ]
+    return [f"{alias}.scope = ?", f"{alias}.project_id in (?, ?)"], ["project", GLOBAL_PROJECT_ID, project_id or ""]
 
 
 async def _validate_index_targets(

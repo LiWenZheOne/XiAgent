@@ -19,7 +19,7 @@ class CreateTextAssetNode(BaseNode):
                 "properties": {
                     "scope": {
                         "type": "string",
-                        "enum": ["global", "project"],
+                        "enum": ["project"],
                     },
                     "name": {"type": "string", "minLength": 1},
                     "text": {"type": "string", "minLength": 1},
@@ -49,10 +49,10 @@ class CreateTextAssetNode(BaseNode):
             )
 
         scope = inputs.get("scope")
-        if not isinstance(scope, str) or scope not in {"global", "project"}:
+        if not isinstance(scope, str) or scope != "project":
             raise ValidationError(
                 code="create_text_asset_invalid_scope",
-                message="scope must be global or project",
+                message="scope must be project",
             )
 
         name = inputs.get("name")
@@ -73,7 +73,6 @@ class CreateTextAssetNode(BaseNode):
         if input_project_id is not None and (
             not isinstance(input_project_id, str)
             or input_project_id != ctx.project_id
-            or scope != "project"
         ):
             raise ValidationError(
                 code="create_text_asset_project_mismatch",
@@ -87,7 +86,7 @@ class CreateTextAssetNode(BaseNode):
         record = await ctx.asset_service.create_text_asset(
             user_id=ctx.user_id,
             scope=scope,
-            project_id=ctx.project_id if scope == "project" else None,
+            project_id=ctx.project_id,
             name=name.strip(),
             text=text,
             metadata=metadata,

@@ -379,7 +379,7 @@ describe("node-ui controls", () => {
             asset_id: "asset-luzhishen",
             asset_type: "file",
             name: "角色_鲁智深_僧衣_禅杖",
-            scope: "global",
+            scope: "project",
             mime_type: "image/png",
             size_bytes: 128,
             metadata: { public_url: "https://assets.local.invalid/assets/luzhishen.png" },
@@ -390,7 +390,7 @@ describe("node-ui controls", () => {
       if (url === "/api/assets/asset-luzhishen/tags") {
         return jsonResponse({ items: [] });
       }
-      if (url === "/api/assets/asset-luzhishen/content") {
+      if (url === "/api/assets/asset-luzhishen/content" || url.startsWith("/api/assets/asset-luzhishen/content?") || url.startsWith("/api/assets/asset-luzhishen/thumbnail?")) {
         return Promise.resolve(new Response(new Blob(["fake"], { type: "image/png" }), {
           status: 200,
           headers: { "Content-Type": "image/png" },
@@ -427,7 +427,7 @@ describe("node-ui controls", () => {
             asset_id: "asset-chaogai",
             asset_type: "file",
             name: "角色_晁盖_庄主服",
-            scope: "global",
+            scope: "project",
             mime_type: "image/png",
             size_bytes: 128,
             metadata: { public_url: "https://cdn.example.com/chaogai.png" },
@@ -459,6 +459,7 @@ describe("node-ui controls", () => {
   it("shows the upload placeholder when an asset image preview cannot load", async () => {
     render(
       <AssetImageCardsControl
+        projectId="project-1"
         config={{ control_id: "ui.interaction.asset_image_cards.v1", variant: "grouped_cards", mode: "interactive" }}
         node={{
           node_execution_id: "exec-broken-preview",
@@ -493,6 +494,7 @@ describe("node-ui controls", () => {
   it("does not treat reference image asset ids as linked assets", () => {
     render(
       <AssetImageCardsControl
+        projectId="project-1"
         config={{ control_id: "ui.interaction.asset_image_cards.v1", variant: "grouped_cards", mode: "interactive" }}
         node={{
           node_execution_id: "exec-internal-id-link",
@@ -532,6 +534,7 @@ describe("node-ui controls", () => {
 
     render(
       <AssetImageCardsControl
+        projectId="project-1"
         config={{ control_id: "ui.interaction.asset_image_cards.v1", variant: "grouped_cards", mode: "interactive" }}
         node={{
           node_execution_id: "exec-asset-pool-prompt",
@@ -597,6 +600,7 @@ describe("node-ui controls", () => {
 
     render(
       <AssetImageCardsControl
+        projectId="project-1"
         config={{ control_id: "ui.interaction.asset_image_cards.v1", variant: "grouped_cards", mode: "interactive" }}
         node={{
           node_execution_id: "exec-asset-single-regenerate",
@@ -634,7 +638,7 @@ describe("node-ui controls", () => {
             asset_id: "asset-default-character",
             asset_type: "file",
             name: "塞雷2d角色模板",
-            scope: "global",
+            scope: "project",
             mime_type: "image/png",
             size_bytes: 128,
             metadata: { public_url: "https://cdn.example.com/default-character.png" },
@@ -651,6 +655,7 @@ describe("node-ui controls", () => {
 
     render(
       <AssetImageCardsControl
+        projectId="project-1"
         config={{
           control_id: "ui.interaction.asset_image_cards.v1",
           variant: "grouped_cards",
@@ -703,22 +708,22 @@ describe("node-ui controls", () => {
           includeExistingNameTag = true;
           return jsonResponse({ error: { code: "asset_tag_name_conflict", message: "同一资产库中已存在同名标签。" } }, 409);
         }
-        return jsonResponse({ tag_id: `tag-${body.name}`, name: body.name, scope: "global", project_id: null, asset_count: 0 });
+        return jsonResponse({ tag_id: `tag-${body.name}`, name: body.name, scope: "project", project_id: "project-1", asset_count: 0 });
       }
       if (url.startsWith("/api/assets/tags")) {
         return jsonResponse({
           items: [
-            { tag_id: "tag-character", name: "角色", scope: "global", project_id: null, asset_count: 1 },
-            includeExistingNameTag ? { tag_id: "tag-linchong", name: "林冲", scope: "global", project_id: null, asset_count: 1 } : null,
-            { tag_id: "tag-location", name: "地点", scope: "global", project_id: null, asset_count: 1 },
-            { tag_id: "tag-prop", name: "道具", scope: "global", project_id: null, asset_count: 0 },
+            { tag_id: "tag-character", name: "角色", scope: "project", project_id: "project-1", asset_count: 1 },
+            includeExistingNameTag ? { tag_id: "tag-linchong", name: "林冲", scope: "project", project_id: "project-1", asset_count: 1 } : null,
+            { tag_id: "tag-location", name: "地点", scope: "project", project_id: "project-1", asset_count: 1 },
+            { tag_id: "tag-prop", name: "道具", scope: "project", project_id: "project-1", asset_count: 0 },
           ].filter(Boolean),
         });
       }
       if (url.startsWith("/api/assets/search")) {
         const called = new URL(url, "http://localhost");
-        expect(called.searchParams.get("scope")).toBe("global");
-        expect(called.searchParams.has("project_id")).toBe(false);
+        expect(["combined", "project"]).toContain(called.searchParams.get("scope"));
+        expect(called.searchParams.get("project_id")).toBe("project-1");
         const tagNames = called.searchParams.get("tag_names") ?? "";
         const includeCharacters = tagNames.includes("角色");
         const includeLocations = tagNames.includes("地点");
@@ -728,7 +733,8 @@ describe("node-ui controls", () => {
               asset_id: "asset-luzhishen",
               asset_type: "file",
               name: "角色_鲁智深_僧衣",
-              scope: "global",
+              scope: "project",
+              project_id: "project-1",
               mime_type: "image/png",
               size_bytes: 128,
               storage_uri: "assets/luzhishen.png",
@@ -739,7 +745,8 @@ describe("node-ui controls", () => {
               asset_id: "asset-yazhulin",
               asset_type: "text",
               name: "野猪林",
-              scope: "global",
+              scope: "project",
+              project_id: "project-1",
               mime_type: null,
               size_bytes: null,
               metadata: {},
@@ -751,14 +758,14 @@ describe("node-ui controls", () => {
       if (url === "/api/assets/asset-luzhishen/tags") {
         return jsonResponse({
           items: [
-            { tag_id: "tag-character", name: "角色", scope: "global", project_id: null, asset_count: 1 },
-            { tag_id: "tag-luzhishen", name: "鲁智深", scope: "global", project_id: null, asset_count: 1 },
-            { tag_id: "tag-monk-robe", name: "僧衣", scope: "global", project_id: null, asset_count: 1 },
-            { tag_id: "tag-staff", name: "禅杖", scope: "global", project_id: null, asset_count: 1 },
+            { tag_id: "tag-character", name: "角色", scope: "project", project_id: "global", asset_count: 1 },
+            { tag_id: "tag-luzhishen", name: "鲁智深", scope: "project", project_id: "global", asset_count: 1 },
+            { tag_id: "tag-monk-robe", name: "僧衣", scope: "project", project_id: "global", asset_count: 1 },
+            { tag_id: "tag-staff", name: "禅杖", scope: "project", project_id: "global", asset_count: 1 },
           ],
         });
       }
-      if (url === "/api/assets/asset-luzhishen/content") {
+      if (url === "/api/assets/asset-luzhishen/content" || url.startsWith("/api/assets/asset-luzhishen/content?") || url.startsWith("/api/assets/asset-luzhishen/thumbnail?")) {
         return Promise.resolve(new Response(new Blob(["fake"], { type: "image/png" }), {
           status: 200,
           headers: { "Content-Type": "image/png" },
@@ -787,7 +794,7 @@ describe("node-ui controls", () => {
         asset_id: "asset-upload-linchong",
         name: "林冲_图像",
         asset_type: "file",
-        scope: "global",
+        scope: "project",
         metadata: { public_url: "https://cdn.example.com/linchong.png" },
       });
     });
@@ -848,6 +855,7 @@ describe("node-ui controls", () => {
 
     render(
       <AssetImageCardsControl
+        projectId="project-1"
         config={{ control_id: "ui.interaction.asset_image_cards.v1", variant: "grouped_cards", mode: "interactive" }}
         node={cardNode}
         onDraft={onDraft}
@@ -935,7 +943,9 @@ describe("node-ui controls", () => {
     await userEvent.click(screen.getByRole("button", { name: "一键入库" }));
     expect(await screen.findByRole("dialog", { name: "缺少资产图像" })).toBeInTheDocument();
     expect(screen.getByText("还有资产没有图像")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "知道了" }));
+    expect(screen.getAllByText("角色_鲁智深_僧衣_禅杖").length).toBeGreaterThan(1);
+    expect(screen.getByRole("button", { name: "跳过未补图并入库" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "返回" }));
     expect(screen.queryByRole("dialog", { name: "缺少资产图像" })).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "资产生成" }));
@@ -981,6 +991,94 @@ describe("node-ui controls", () => {
     expect(fetchMock.mock.calls.some(([url]) => url === "/api/assets/text")).toBe(false);
   });
 
+  it("can remove an asset image card from the current generation and submit scope", async () => {
+    const onDraft = vi.fn();
+    vi.stubGlobal("fetch", vi.fn(() => jsonResponse({ items: [] })));
+
+    render(
+      <AssetImageCardsControl
+        projectId="project-1"
+        config={{ control_id: "ui.interaction.asset_image_cards.v1", variant: "grouped_cards", mode: "interactive" }}
+        node={{
+          node_execution_id: "exec-remove-asset-card",
+          node_id: "upload_images",
+          node_ref: "system.human_approval.v1",
+          status: "waiting",
+          input_snapshot: {
+            characters: [
+              { asset_type: "character", asset_name: "甲", asset_tags: ["默认"] },
+              { asset_type: "character", asset_name: "乙", asset_tags: ["默认"] },
+            ],
+            prompt_results: [
+              { asset_type: "character", asset_name: "甲", asset_tags: ["默认"], prompt: "甲提示词" },
+              { asset_type: "character", asset_name: "乙", asset_tags: ["默认"], prompt: "乙提示词" },
+            ],
+          },
+        }}
+        onDraft={onDraft}
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "移出角色_甲_默认本次生成" }));
+
+    expect(screen.queryByDisplayValue("甲")).not.toBeInTheDocument();
+    expect(screen.getByDisplayValue("乙")).toBeInTheDocument();
+    await waitFor(() => expect(onDraft).toHaveBeenCalledWith(expect.objectContaining({
+      skipped_asset_keys: ["character:甲:默认"],
+      skipped_asset_count: 1,
+      prompt_results: [
+        expect.objectContaining({ asset_name: "乙", prompt: "乙提示词" }),
+      ],
+    })));
+    const latestDraftPayload = onDraft.mock.calls[onDraft.mock.calls.length - 1]?.[0] as Record<string, unknown>;
+    expect(JSON.stringify(latestDraftPayload.prompt_results)).not.toContain("甲提示词");
+  });
+
+  it("can continue without saving images when missing asset images are skipped at import time", async () => {
+    const onSubmit = vi.fn();
+    vi.stubGlobal("fetch", vi.fn(() => jsonResponse({ items: [] })));
+
+    render(
+      <AssetImageCardsControl
+        projectId="project-1"
+        config={{ control_id: "ui.interaction.asset_image_cards.v1", variant: "grouped_cards", mode: "interactive" }}
+        node={{
+          node_execution_id: "exec-skip-missing-images",
+          node_id: "upload_images",
+          node_ref: "system.human_approval.v1",
+          status: "waiting",
+          input_snapshot: {
+            characters: [
+              { asset_type: "character", asset_name: "甲", asset_tags: ["默认"] },
+              { asset_type: "character", asset_name: "乙", asset_tags: ["默认"] },
+            ],
+            prompt_results: [
+              { asset_type: "character", asset_name: "甲", asset_tags: ["默认"], prompt: "甲提示词" },
+              { asset_type: "character", asset_name: "乙", asset_tags: ["默认"], prompt: "乙提示词" },
+            ],
+          },
+        }}
+        onSubmit={onSubmit}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "一键入库" }));
+    expect(await screen.findByRole("dialog", { name: "缺少资产图像" })).toBeInTheDocument();
+    expect(screen.getAllByText("角色_甲_默认").length).toBeGreaterThan(1);
+    expect(screen.getAllByText("角色_乙_默认").length).toBeGreaterThan(1);
+    await userEvent.click(screen.getByRole("button", { name: "跳过未补图并入库" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+      decision: "finish",
+      asset_images: [],
+      prompt_results: expect.arrayContaining([
+        expect.objectContaining({ asset_name: "甲", prompt: "甲提示词" }),
+        expect.objectContaining({ asset_name: "乙", prompt: "乙提示词" }),
+      ]),
+    })));
+  });
+
   it("renders storyboard panel cards and submits edited panel results", async () => {
     const onSubmit = vi.fn();
     let thumbnailIndex = 0;
@@ -996,6 +1094,7 @@ describe("node-ui controls", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(
       <StoryboardPanelCardsControl
+        projectId="project-1"
         config={{ control_id: "ui.interaction.storyboard_panel_cards.v1", variant: "panel_review", mode: "interactive" }}
         node={{
           node_execution_id: "exec-storyboard-panel",
@@ -1040,8 +1139,8 @@ describe("node-ui controls", () => {
     expect(screen.getByRole("button", { name: "一键生成分镜" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "重新生成提示词" })).toBeInTheDocument();
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/assets/asset-linchong-ref/thumbnail?size=256", expect.any(Object));
-      expect(fetchMock).toHaveBeenCalledWith("/api/assets/asset-storyboard-0/thumbnail?size=256", expect.any(Object));
+      expect(fetchMock).toHaveBeenCalledWith("/api/assets/asset-linchong-ref/thumbnail?size=256&project_id=project-1", expect.any(Object));
+      expect(fetchMock).toHaveBeenCalledWith("/api/assets/asset-storyboard-0/thumbnail?size=256&project_id=project-1", expect.any(Object));
     });
     expect(screen.getByRole("img", { name: "生成图 1" })).toHaveAttribute("src", expect.stringMatching(/^(blob:storyboard-thumb-|https:\/\/cdn\.example\.com\/storyboard-0\.png)/));
     await userEvent.click(screen.getByRole("button", { name: "全屏查看生成图 1" }));
@@ -1083,6 +1182,7 @@ describe("node-ui controls", () => {
     const onSubmit = vi.fn();
     render(
       <StoryboardPanelCardsControl
+        projectId="project-1"
         config={{ control_id: "ui.interaction.storyboard_panel_cards.v1", variant: "panel_review", mode: "interactive" }}
         node={{
           node_execution_id: "exec-storyboard-panel-missing",
@@ -1152,6 +1252,7 @@ describe("node-ui controls", () => {
 
     render(
       <StoryboardPanelCardsControl
+        projectId="project-1"
         config={{ control_id: "ui.interaction.storyboard_panel_cards.v1", variant: "panel_review", mode: "interactive" }}
         node={{
           node_execution_id: "exec-storyboard-panel-prompt-count",
@@ -1218,6 +1319,7 @@ describe("node-ui controls", () => {
   it("marks storyboard cards that failed during prompt generation", async () => {
     render(
       <StoryboardPanelCardsControl
+        projectId="project-1"
         config={{ control_id: "ui.interaction.storyboard_panel_cards.v1", variant: "panel_review", mode: "interactive" }}
         node={{
           node_execution_id: "exec-storyboard-panel-failed",
@@ -1254,6 +1356,7 @@ describe("node-ui controls", () => {
   it("restores storyboard generated images from saved interaction drafts after refresh", async () => {
     render(
       <StoryboardPanelCardsControl
+        projectId="project-1"
         config={{ control_id: "ui.interaction.storyboard_panel_cards.v1", variant: "panel_review", mode: "interactive" }}
         node={{
           node_execution_id: "exec-storyboard-panel-draft",
@@ -1300,6 +1403,7 @@ describe("node-ui controls", () => {
   it("fills the storyboard prompt when selecting a generated image", async () => {
     render(
       <StoryboardPanelCardsControl
+        projectId="project-1"
         config={{ control_id: "ui.interaction.storyboard_panel_cards.v1", variant: "panel_review", mode: "interactive" }}
         node={{
           node_execution_id: "exec-storyboard-panel-select-prompt",
@@ -1341,6 +1445,7 @@ describe("node-ui controls", () => {
   it("fills the storyboard prompt from prompt index when generated image prompt is missing", async () => {
     render(
       <StoryboardPanelCardsControl
+        projectId="project-1"
         config={{ control_id: "ui.interaction.storyboard_panel_cards.v1", variant: "panel_review", mode: "interactive" }}
         node={{
           node_execution_id: "exec-storyboard-panel-select-indexed-prompt",
@@ -1407,6 +1512,7 @@ describe("node-ui controls", () => {
 
     render(
       <StoryboardPanelCardsControl
+        projectId="project-1"
         config={{ control_id: "ui.interaction.storyboard_panel_cards.v1", variant: "panel_review", mode: "interactive" }}
         node={{
           node_execution_id: "exec-storyboard-panel-batch-prompts",
@@ -1486,6 +1592,7 @@ describe("node-ui controls", () => {
 
     render(
       <StoryboardPanelCardsControl
+        projectId="project-1"
         config={{ control_id: "ui.interaction.storyboard_panel_cards.v1", variant: "panel_review", mode: "interactive" }}
         node={{
           node_execution_id: "exec-storyboard-panel-regenerate",
@@ -1549,7 +1656,7 @@ describe("node-ui controls", () => {
               asset_id: "asset-default-character",
               asset_type: "file",
               name: "塞雷2d角色模板",
-              scope: "global",
+              scope: "project",
               mime_type: "image/png",
               size_bytes: 128,
               storage_uri: "assets/default-character.png",
@@ -1600,7 +1707,7 @@ describe("node-ui controls", () => {
         enriched_characters: [{ full_name: "鲁智深", matched: false }],
         variant_results: [{ full_name: "鲁智深", new_variant_name: "鲁智深_僧衣" }],
         accessory_results: [{ full_name: "鲁智深", new_accessories: [] }],
-        prompt_results: [{ full_name: "鲁智深_僧衣", prompt: "生成僧衣角色" }],
+        prompt_results: [{ asset_type: "character", asset_name: "鲁智深", asset_tags: ["僧衣"], prompt: "生成僧衣角色" }],
         approved_assets: {
           characters: [{ type: "character", name: "鲁智深", matched: false, variant_name: "僧衣" }],
           assets: [],
@@ -1612,6 +1719,7 @@ describe("node-ui controls", () => {
 
     render(
       <AssetImageCardsControl
+        projectId="project-1"
         config={{
           control_id: "ui.interaction.asset_image_cards.v1",
           variant: "grouped_cards",
@@ -1643,10 +1751,10 @@ describe("node-ui controls", () => {
       if (url.startsWith("/api/assets/tags")) {
         return jsonResponse({
           items: [
-            { tag_id: "tag-character", name: "角色", scope: "global", project_id: null, asset_count: 1 },
-            { tag_id: "tag-linchong", name: "林冲", scope: "global", project_id: null, asset_count: 1 },
-            { tag_id: "tag-luzhishen", name: "鲁智深", scope: "global", project_id: null, asset_count: 1 },
-            { tag_id: "tag-default", name: "默认", scope: "global", project_id: null, asset_count: 1 },
+            { tag_id: "tag-character", name: "角色", scope: "project", project_id: "global", asset_count: 1 },
+            { tag_id: "tag-linchong", name: "林冲", scope: "project", project_id: "global", asset_count: 1 },
+            { tag_id: "tag-luzhishen", name: "鲁智深", scope: "project", project_id: "global", asset_count: 1 },
+            { tag_id: "tag-default", name: "默认", scope: "project", project_id: "global", asset_count: 1 },
           ],
         });
       }
@@ -1657,14 +1765,14 @@ describe("node-ui controls", () => {
         if (tagNames === "角色,林冲,默认") {
           return jsonResponse({
             items: [
-              { asset_id: "asset-linchong", name: "角色_林冲_默认", asset_type: "file", scope: "global", metadata: {}, created_at: "2026-05-31T00:00:00Z" },
+              { asset_id: "asset-linchong", name: "角色_林冲_默认", asset_type: "file", scope: "project", metadata: {}, created_at: "2026-05-31T00:00:00Z" },
             ],
           });
         }
         if (tagNames === "角色,鲁智深,默认") {
           return jsonResponse({
             items: [
-              { asset_id: "asset-luzhishen", name: "角色_鲁智深_默认", asset_type: "file", scope: "global", metadata: {}, created_at: "2026-05-31T00:00:00Z" },
+              { asset_id: "asset-luzhishen", name: "角色_鲁智深_默认", asset_type: "file", scope: "project", metadata: {}, created_at: "2026-05-31T00:00:00Z" },
             ],
           });
         }
@@ -1673,18 +1781,18 @@ describe("node-ui controls", () => {
       if (url === "/api/assets/asset-linchong/tags") {
         return jsonResponse({
           items: [
-            { tag_id: "tag-character", name: "角色", scope: "global", project_id: null, asset_count: 1 },
-            { tag_id: "tag-linchong", name: "林冲", scope: "global", project_id: null, asset_count: 1 },
-            { tag_id: "tag-default", name: "默认", scope: "global", project_id: null, asset_count: 1 },
+            { tag_id: "tag-character", name: "角色", scope: "project", project_id: "global", asset_count: 1 },
+            { tag_id: "tag-linchong", name: "林冲", scope: "project", project_id: "global", asset_count: 1 },
+            { tag_id: "tag-default", name: "默认", scope: "project", project_id: "global", asset_count: 1 },
           ],
         });
       }
       if (url === "/api/assets/asset-luzhishen/tags") {
         return jsonResponse({
           items: [
-            { tag_id: "tag-character", name: "角色", scope: "global", project_id: null, asset_count: 1 },
-            { tag_id: "tag-luzhishen", name: "鲁智深", scope: "global", project_id: null, asset_count: 1 },
-            { tag_id: "tag-default", name: "默认", scope: "global", project_id: null, asset_count: 1 },
+            { tag_id: "tag-character", name: "角色", scope: "project", project_id: "global", asset_count: 1 },
+            { tag_id: "tag-luzhishen", name: "鲁智深", scope: "project", project_id: "global", asset_count: 1 },
+            { tag_id: "tag-default", name: "默认", scope: "project", project_id: "global", asset_count: 1 },
           ],
         });
       }
@@ -1699,7 +1807,7 @@ describe("node-ui controls", () => {
           asset_id: url.includes("asset-linchong") ? "asset-linchong" : "asset-luzhishen",
           name: url.includes("asset-linchong") ? "角色_林冲_默认" : "角色_鲁智深_默认",
           asset_type: "file",
-          scope: "global",
+          scope: "project",
           metadata: {},
           created_at: "2026-05-31T00:00:00Z",
         });
@@ -1710,6 +1818,7 @@ describe("node-ui controls", () => {
 
     render(
       <AssetImageCardsControl
+        projectId="project-1"
         config={{ control_id: "ui.interaction.asset_image_cards.v1", variant: "grouped_cards", mode: "interactive" }}
         node={{
           node_execution_id: "exec-conflict",
@@ -1755,7 +1864,7 @@ describe("node-ui controls", () => {
     expect(within(dialog).getByText("资产名称重复")).toBeInTheDocument();
     expect(within(dialog).getByText("角色_林冲_默认")).toBeInTheDocument();
     expect(within(dialog).getByText("角色_鲁智深_默认")).toBeInTheDocument();
-    expect(within(dialog).getByText(/以下资产名称已在全局资产库或本次入库列表中重复/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/以下资产名称已在项目资产库或本次入库列表中重复/)).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "覆盖" })).toBeInTheDocument();
     await userEvent.click(within(dialog).getByRole("button", { name: "返回" }));
     expect(screen.queryByRole("dialog", { name: "资产名称重复" })).not.toBeInTheDocument();
@@ -1801,6 +1910,7 @@ describe("node-ui controls", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(
       <AssetImageCardsControl
+        projectId="project-1"
         config={{
           control_id: "ui.interaction.asset_image_cards.v1",
           variant: "grouped_cards",
@@ -1838,9 +1948,9 @@ describe("node-ui controls", () => {
               props: [{ name: "花枪", prompt: "木杆长枪" }],
             },
             prompt_results: [
-              { full_name: "鲁智深", prompt: "粗眉僧衣", reference_source: "default_template", reference_image_ref: { kind: "asset", asset_id: "asset-character", role: "reference" } },
-              { full_name: "山神庙", prompt: "雪夜破庙", reference_image_ref: { kind: "asset", asset_id: "asset-scene", role: "reference" } },
-              { full_name: "花枪", prompt: "木杆长枪", reference_image_ref: { kind: "asset", asset_id: "asset-prop", role: "reference" } },
+              { asset_type: "character", asset_name: "鲁智深", prompt: "粗眉僧衣", reference_source: "default_template", reference_image_ref: { kind: "asset", asset_id: "asset-character", role: "reference" } },
+              { asset_type: "scene", asset_name: "山神庙", prompt: "雪夜破庙", reference_image_ref: { kind: "asset", asset_id: "asset-scene", role: "reference" } },
+              { asset_type: "prop", asset_name: "花枪", prompt: "木杆长枪", reference_image_ref: { kind: "asset", asset_id: "asset-prop", role: "reference" } },
             ],
           },
         }}
@@ -1906,6 +2016,7 @@ describe("node-ui controls", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(
       <AssetImageCardsControl
+        projectId="project-1"
         config={{ control_id: "ui.interaction.asset_image_cards.v1", variant: "grouped_cards", mode: "interactive" }}
         node={{
           node_execution_id: "exec-card-queue",
@@ -1994,6 +2105,7 @@ describe("node-ui controls", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(
       <AssetImageCardsControl
+        projectId="project-1"
         config={{ control_id: "ui.interaction.asset_image_cards.v1", variant: "grouped_cards", mode: "interactive" }}
         node={{
           node_execution_id: "exec-card-partial-failure",
@@ -2075,6 +2187,7 @@ describe("node-ui controls", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(
       <AssetImageCardsControl
+        projectId="project-1"
         config={{ control_id: "ui.interaction.asset_image_cards.v1", variant: "grouped_cards", mode: "interactive" }}
         node={{
           node_execution_id: "exec-card-concurrent-single",
@@ -2143,9 +2256,9 @@ describe("node-ui controls", () => {
       if (url.startsWith("/api/assets/tags")) {
         return jsonResponse({
           items: [
-            { tag_id: "tag-character", name: "角色", scope: "global", project_id: null, asset_count: 1 },
-            { tag_id: "tag-location", name: "地点", scope: "global", project_id: null, asset_count: 1 },
-            { tag_id: "tag-prop", name: "道具", scope: "global", project_id: null, asset_count: 0 },
+            { tag_id: "tag-character", name: "角色", scope: "project", project_id: "global", asset_count: 1 },
+            { tag_id: "tag-location", name: "地点", scope: "project", project_id: "global", asset_count: 1 },
+            { tag_id: "tag-prop", name: "道具", scope: "project", project_id: "global", asset_count: 0 },
           ],
         });
       }
@@ -2160,7 +2273,7 @@ describe("node-ui controls", () => {
               asset_id: "asset-luzhishen",
               asset_type: "text",
               name: "鲁智深",
-              scope: "global",
+              scope: "project",
               mime_type: null,
               size_bytes: null,
               metadata: { public_url: "https://cdn.example.com/luzhishen-ref.png" },
@@ -2170,7 +2283,7 @@ describe("node-ui controls", () => {
               asset_id: "asset-yazhulin",
               asset_type: "text",
               name: "野猪林资产",
-              scope: "global",
+              scope: "project",
               mime_type: null,
               size_bytes: null,
               metadata: {},
@@ -2253,6 +2366,7 @@ describe("node-ui controls", () => {
 
     render(
       <AssetSummaryTableControl
+        projectId="project-1"
         config={{ control_id: "ui.interaction.asset_summary_table.v1", variant: "tabbed_table", mode: "interactive" }}
         node={reviewNode}
         onDraft={onDraft}
@@ -2272,6 +2386,7 @@ describe("node-ui controls", () => {
     expect(screen.getByRole("textbox", { name: "水火棍 关联角色" })).toBeInTheDocument();
     expect(screen.queryByRole("columnheader", { name: /asset type/i })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("tab", { name: /地点/ }));
+    expect(screen.getByRole("columnheader", { name: "时间/环境/氛围" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "未匹配到对应资产" })).toBeInTheDocument();
     expect(screen.queryByRole("columnheader", { name: /asset type/i })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("tab", { name: /角色/ }));
@@ -2303,6 +2418,7 @@ describe("node-ui controls", () => {
     cleanup();
     render(
       <AssetSummaryTableControl
+        projectId="project-1"
         config={{ control_id: "ui.interaction.asset_summary_table.v1", variant: "tabbed_table", mode: "interactive" }}
         node={{ ...reviewNode, input_snapshot: { ...(reviewNode.input_snapshot as Record<string, unknown>), ...savedDraft } }}
         onDraft={onDraft}
@@ -2531,6 +2647,7 @@ describe("node-ui controls", () => {
 
     render(
       <AssetSummaryTableControl
+        projectId="project-1"
         config={{ control_id: "ui.interaction.asset_summary_table.v1", variant: "tabbed_table", mode: "readonly" }}
         node={reviewNode}
       />,
@@ -2944,7 +3061,7 @@ describe("node-ui controls", () => {
 
     expect(onSubmit).toHaveBeenCalledWith({
       prompt: "蓝色机器人",
-      image_refs: [{ kind: "asset", asset_id: "asset-1", role: "reference" }],
+      image_refs: [{ kind: "asset", asset_id: "asset-1", project_id: "project-1", role: "reference" }],
     });
   });
 
@@ -2991,6 +3108,7 @@ describe("node-ui controls", () => {
 
     render(
       <SchemaFormControl
+        projectId="project-1"
         config={{
           control_id: "ui.input.schema_form.v1",
           variant: "default",
@@ -3007,7 +3125,6 @@ describe("node-ui controls", () => {
           },
         }}
         node={readonlyNode}
-        projectId="project-1"
         slot="input"
       />,
     );
@@ -3035,6 +3152,7 @@ describe("node-ui controls", () => {
 
     render(
       <SchemaFormControl
+        projectId="project-1"
         config={{ control_id: "ui.input.schema_form.v1", variant: "default", mode: "input" }}
         node={{
           node_execution_id: "exec-prompt-count-row",
@@ -3122,6 +3240,7 @@ describe("node-ui controls", () => {
 
     render(
       <SchemaFormControl
+        projectId="project-1"
         config={{
           control_id: "ui.input.schema_form.v1",
           variant: "default",
@@ -3140,7 +3259,6 @@ describe("node-ui controls", () => {
         }}
         node={inputNode}
         onSubmit={vi.fn()}
-        projectId="project-1"
       />,
     );
 
@@ -3275,6 +3393,7 @@ describe("node-ui controls", () => {
             variant: "dropdown",
             mode: "input",
             asset_type: "text",
+            search_scope: "project",
             filter_tag_names: ["集元数据"],
             placeholder: "请选择集信息资产",
             preview_control_id: "ui.display.episode_context.v1",
@@ -3312,7 +3431,7 @@ describe("node-ui controls", () => {
         const called = new URL(String(calledUrl), "http://localhost");
         return called.pathname === "/api/assets/search"
           && called.searchParams.get("asset_type") === "text"
-          && called.searchParams.get("scope") === "combined"
+          && called.searchParams.get("scope") === "project"
           && called.searchParams.get("project_id") === "global"
           && called.searchParams.get("tag_names") === "集元数据";
       })).toBe(true);
@@ -3358,7 +3477,7 @@ describe("node-ui controls", () => {
         source_script: "何涛领兵来到石碣村。阮小七唱歌诱敌。",
         asset_catalog: {
           approved_assets: {
-            characters: [{ name: "何涛" }, { full_name: "阮小七" }],
+            characters: [{ name: "何涛" }, { name: "阮小七" }],
             assets: [{ name: "芦苇荡" }],
             props: [{ name: "官船" }],
           },
@@ -3413,6 +3532,7 @@ describe("node-ui controls", () => {
 
     render(
       <SchemaFormControl
+        projectId="project-1"
         config={{
           control_id: "ui.input.schema_form.v1",
           variant: "default",
@@ -3512,6 +3632,7 @@ describe("node-ui controls", () => {
 
     render(
       <SchemaFormControl
+        projectId="project-1"
         config={{ control_id: "ui.input.schema_form.v1", variant: "default", mode: "input" }}
         node={inputNode}
         onSubmit={onSubmit}
@@ -3533,3 +3654,4 @@ describe("node-ui controls", () => {
     });
   });
 });
+

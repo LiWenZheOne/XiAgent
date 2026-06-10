@@ -571,6 +571,7 @@ def _asset_draft_system_prompt(asset_type: str) -> str:
 - 这里的地点不是戏剧场次，而是可复用视觉资产地点。
 - 地点统一输出 asset_type="scene"。
 - description 必须说明地点是什么、在哪里、在原作/世界背景中用来做什么，并根据时代背景描述空间结构、场景物件、陈设、布局和装饰风格。
+- time_of_day 根据用户描述、原始剧本和世界背景填写时间、天气与环境氛围；原文未明说时，可结合当前情节推断最合理的可见时间和氛围，不要只写空泛“白天/夜晚”。
 - 船、舟、渔船、官船、楼船、马车、轿子、房屋、店铺、桥、码头、城门、牢房等大型载具、建筑、场所或可供角色进入/停留的空间，应归入 scene，不得归入 prop。
 
 道具规则：
@@ -617,7 +618,7 @@ def _asset_draft_user_prompt(
 character 字段：asset_type, asset_name, asset_tags, matched, matched_asset_id, matched_asset_name, aliases, summary, character_status, appearance_description。
 角色 asset_tags 必须先根据当前情景和身份/职业推断服装/稳定造型/稳定配件，再直接写标签；禁止写“默认”“基础”“普通”“无特殊造型”等空泛标签；appearance_description 写至少 40 字的详细稳定视觉设定，禁止“默认装束，无特殊造型描述”。
 scene 字段：asset_type, asset_name, asset_tags, matched, matched_asset_id, matched_asset_name, description, location_type, time_of_day。
-scene 的 description 写地点本体、原作/世界背景用途、空间结构、场景物件、陈设、布局和装饰风格；船、马车、建筑、可进入空间归 scene。
+scene 的 description 写地点本体、原作/世界背景用途、空间结构、场景物件、陈设、布局和装饰风格；time_of_day 写时间、天气和环境氛围；船、马车、建筑、可进入空间归 scene。
 prop 字段：asset_type, asset_name, asset_tags, matched, matched_asset_id, matched_asset_name, description, category, related_character。
 prop 只能是可独立拿取、使用、赠予、争夺或流转的小型/中型物件；description 必须同时写来历/来源和外观/造型，包含整体形制、尺寸比例、材质、颜色、装饰、磨损痕迹、用途和可见特征。
 新增资产默认 matched=false、matched_asset_id=null、matched_asset_name=""。
@@ -651,7 +652,7 @@ def _asset_upload_system_prompt(asset_type: str) -> str:
 地点资产规则：
 - description 说明地点是什么、在哪里、在原作/世界背景中用来做什么。
 - location_type 写简短地点类别，例如山寨、酒楼、江河、官府、民居、战场。
-- time_of_day 只有资产名或世界背景明确暗示时填写，否则留空。
+- time_of_day 写可从资产名或世界背景可靠推断的时间、天气和环境氛围；不能确认时留空。
 
 道具资产规则：
 - description 说明道具是什么、用途和世界背景中的意义。
@@ -793,6 +794,9 @@ def _public_image_ref_metadata(value: Any) -> dict[str, Any]:
     asset_id = value.get("asset_id")
     if isinstance(asset_id, str) and asset_id.strip():
         result["asset_id"] = asset_id.strip()
+    project_id = value.get("project_id")
+    if isinstance(project_id, str) and project_id.strip():
+        result["project_id"] = project_id.strip()
     role = value.get("role")
     if isinstance(role, str) and role.strip():
         result["role"] = role.strip()

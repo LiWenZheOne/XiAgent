@@ -214,6 +214,7 @@ def test_select_episode_node_loads_and_displays_episode_context(test_settings) -
         "variant": "dropdown",
         "mode": "input",
         "asset_type": "text",
+        "search_scope": "project",
         "filter_tag_names": ["集元数据"],
         "placeholder": "请选择集信息资产",
         "preview_control_id": "ui.display.episode_context.v1",
@@ -675,6 +676,9 @@ def test_review_convert_and_prompt_review_nodes(test_settings) -> None:
     assert "panel_plan.panels 数量是否与 panel_plan.panel_count 一致" in plan_review_prompt
     assert "每格是否只用 description 描述当前分镜发生什么" in plan_review_prompt
     assert "分格之间的动作是否连续、清楚、不跳步" in plan_review_prompt
+    assert "是否出现血液、流血、伤口、断肢、内脏、尸体特写、喷溅或血迹" in plan_review_prompt
+    assert "不得保留血液、流血、伤口、断肢、内脏、尸体特写、喷溅或血迹" in review_node["inputs"]["revision_system"]["value"]
+    assert "删除血液、流血、伤口、断肢、内脏、尸体特写、喷溅或血迹" in plan_revision_prompt
     assert "不得生成拆分角色、道具、行动节点、衔接方式、镜头、景别、机位、角度、构图、光影、氛围、材质、画面提示词" in review_node["inputs"]["revision_system"]["value"]
     assert "输出中的 think 写完整推理过程" in plan_review_prompt
     assert "必须返回 think" in plan_revision_prompt
@@ -738,6 +742,8 @@ def test_review_convert_and_prompt_review_nodes(test_settings) -> None:
     assert "避免平视和平均" in prompt
     assert "前景、中景、背景" in prompt
     assert "重力或惯性" in prompt
+    assert "禁止血腥画面描述" in prompt
+    assert "不得使用血液、伤口、尸体特写或喷溅" in prompt
     assert "## 输出 JSON" in prompt
     assert convert_node["inputs"]["required_input_fields"]["value"] == ["scene_layout", "panel_plan"]
     convert_success_schema = _success_item_schema(convert_node)
@@ -747,6 +753,7 @@ def test_review_convert_and_prompt_review_nodes(test_settings) -> None:
     assert "不得生成画风" in system
     assert "质量词" in system
     assert "参考图规则" in system
+    assert "不得生成血腥画面描述" in system
     assert convert_node["inputs"]["passthrough_fields"]["value"] == [
         "index",
         "segment_title",
@@ -813,9 +820,13 @@ def test_review_convert_and_prompt_review_nodes(test_settings) -> None:
     assert "光源属性、明暗对比、投影和视觉落点" in prompt_review_prompt
     assert "扰动、重力、惯性、残影" in prompt_review_prompt
     assert "色调、透视、疏密关系、留白方向" in prompt_review_prompt
+    assert "必须把血腥内容视为不合格" in prompt_review_node["inputs"]["review_system"]["value"]
+    assert "是否出现血液、流血、伤口、断肢、内脏、尸体特写、喷溅、血迹或恐怖化细节" in prompt_review_prompt
+    assert "不得保留血液、流血、伤口、断肢、内脏、尸体特写、喷溅、血迹或恐怖化细节" in prompt_review_node["inputs"]["revision_system"]["value"]
     assert "不能压缩成短摘要" in prompt_revision_prompt
     assert "必须重新覆盖 panel_plan.panels 的全部分格" in prompt_revision_prompt
     assert "镜头语言、构图冲击力、三层空间、叙事物件、光影、动态和情绪氛围" in prompt_revision_prompt
+    assert "修订时删除血液、流血、伤口、断肢、内脏、尸体特写、喷溅、血迹或恐怖化细节" in prompt_revision_prompt
     assert "输出中的 think 写完整推理过程" in prompt_review_prompt
     assert "只返回 think 和 image_prompt" in prompt_revision_prompt
     assert "目标 JSON 示例" in prompt_review_prompt
@@ -870,6 +881,9 @@ def test_prepare_storyboard_panel_cards_output_schema(test_settings) -> None:
     assert node["inputs"]["images_per_prompt"] == {
         "from": "$nodes.select_episode_metadata.output.storyboard_options.images_per_prompt",
     }
+    assert "安全边界" in node["inputs"]["generation_rules"]["value"]
+    assert "画面不得出现血液、流血、伤口、断肢、内脏、尸体特写、喷溅、血迹或恐怖化细节" in node["inputs"]["generation_rules"]["value"]
+    assert "blood, bleeding, bloody, gore" in node["inputs"]["negative_prompt"]["value"]
 
     validate_json_value(
         schema,
@@ -925,6 +939,7 @@ def test_review_storyboard_image_output_schema(test_settings) -> None:
     assert schema["required"] == ["decision", "panel_results"]
     assert node["name"] == "分镜汇总"
     assert node["ui"]["controls"]["interaction"]["control_id"] == "ui.interaction.storyboard_panel_cards.v1"
+    assert "审核时必须确认提示词和目标图像不包含血液、流血、伤口、断肢、内脏、尸体特写、喷溅、血迹或恐怖化细节" in node["inputs"]["question"]["template"]
     validate_json_value(
         schema,
         {

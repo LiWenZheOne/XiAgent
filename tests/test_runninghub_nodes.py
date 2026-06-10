@@ -329,6 +329,68 @@ async def test_image_to_image_v2_converts_asset_reference_to_base64_image() -> N
     assert request_metadata["reference_image_ref"] == {"kind": "asset", "asset_id": "asset-ref"}
 
 
+async def test_image_to_image_v2_reads_reference_from_declared_project() -> None:
+    from xiagent.nodes.ai.runninghub_image import RunningHubImageToImageNodeV2
+    from xiagent.nodes.base import NodeContext
+
+    calls: list[tuple[str, str | None]] = []
+
+    class FakeAssetService:
+        async def get_asset(self, **kwargs: Any) -> Any:
+            calls.append(("get_asset", kwargs.get("project_id")))
+            return SimpleNamespace(
+                asset_id="asset-ref",
+                scope="project",
+                project_id="global",
+                storage_uri="aa/bb/reference.png",
+                metadata={"public_url": "https://assets.local.invalid/aa/bb/reference.png"},
+            )
+
+        async def get_asset_content(self, **kwargs: Any) -> Any:
+            calls.append(("get_asset_content", kwargs.get("project_id")))
+            return SimpleNamespace(
+                bytes_content=b"image-bytes",
+                content_type="image/png",
+            )
+
+    router = FakeRouter()
+    node = RunningHubImageToImageNodeV2(
+        model_router=router,
+        provider="runninghub_image",
+        model="runninghub-image-model",
+    )
+
+    await node.run(
+        ctx=NodeContext(
+            user_id="user-1",
+            project_id="111",
+            task_id="task-1",
+            node_id="generate_images",
+            node_execution_id="exec-1",
+            config={},
+            output_schema=node.describe().output_schema,
+            asset_service=FakeAssetService(),  # type: ignore[arg-type]
+            event_sink=None,
+            logger=None,
+        ),
+        inputs={
+            "prompt_results": [
+                {
+                    "asset_type": "scene",
+                    "asset_name": "机密房",
+                    "prompt": "古代机密房室内。",
+                    "reference_image_ref": {"kind": "asset", "asset_id": "asset-ref", "project_id": "global"},
+                }
+            ],
+        },
+    )
+
+    assert calls == [("get_asset", "global"), ("get_asset_content", "global")]
+    request_metadata = router.requests[0].metadata
+    assert request_metadata["images"] == ["data:image/png;base64,aW1hZ2UtYnl0ZXM="]
+    assert request_metadata["reference_image_ref"] == {"kind": "asset", "asset_id": "asset-ref", "project_id": "global"}
+
+
 async def test_image_to_image_v2_rejects_unresolved_reference_url() -> None:
     from xiagent.nodes.ai.runninghub_image import RunningHubImageToImageNodeV2
 

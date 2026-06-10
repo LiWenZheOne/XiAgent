@@ -2972,7 +2972,7 @@ dd {
 }
 
 .asset-image-card-grid.scene-grid {
-  column-width: 420px;
+  column-width: 300px;
 }
 
 .asset-image-card {
@@ -2993,8 +2993,7 @@ dd {
 }
 
 .asset-image-card.scene-card {
-  grid-template-columns: minmax(240px, 0.9fr) minmax(0, 1fr);
-  align-items: start;
+  grid-template-rows: auto auto minmax(0, 1fr);
 }
 
 .asset-image-card.scene-card .asset-image-card-title {
@@ -3094,6 +3093,20 @@ dd {
   gap: 10px;
 }
 
+.asset-image-card-title-actions {
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.asset-image-card-title-actions .danger {
+  border-color: #fecaca;
+  background: #fff7f7;
+  color: #b42318;
+}
+
 .asset-image-card-title div {
   display: grid;
   gap: 2px;
@@ -3175,10 +3188,14 @@ dd {
 .asset-image-pool {
   display: grid;
   gap: 8px;
+  max-height: 260px;
+  overflow-y: auto;
   padding: 8px;
   border: 1px solid #e2e8f0;
   border-radius: 6px;
   background: #f8fafc;
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
 }
 
 .asset-image-pool-head {
@@ -3344,6 +3361,20 @@ dd {
   justify-content: flex-start;
   color: var(--muted);
   font-size: 12px;
+}
+
+.asset-missing-image-list {
+  display: grid;
+  max-height: 180px;
+  gap: 6px;
+  overflow: auto;
+  margin: 0;
+  padding: 8px 10px 8px 24px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-soft);
+  color: var(--text);
+  font-size: 13px;
 }
 
 .asset-summary-table-control {
@@ -4633,6 +4664,14 @@ textarea.asset-summary-cell-input {
   border-radius: 6px;
   background: var(--surface-soft);
   overflow-wrap: anywhere;
+}
+
+.asset-transfer-dialog .compact-field {
+  margin: 0;
+}
+
+.asset-transfer-dialog select {
+  width: 100%;
 }
 
 .asset-fullscreen-viewer {

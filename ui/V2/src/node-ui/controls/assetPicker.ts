@@ -9,5 +9,5 @@ export function assetSearchScopeForProject(projectId?: string): AssetSearchScope
   if (projectId) {
     return { scope: "combined", project_id: projectId };
   }
-  return { scope: "global" };
+  return { scope: "project", project_id: "global" };
 }

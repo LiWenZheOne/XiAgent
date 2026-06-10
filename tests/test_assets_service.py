@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import base64
 import sqlite3
@@ -13,6 +13,7 @@ from xiagent.infrastructure.database import connect_db
 from xiagent.infrastructure.migrations import migrate
 from xiagent.infrastructure.object_storage.base import ObjectStorageService
 from xiagent.infrastructure.object_storage.models import StoredObject
+from xiagent.users.global_project import GLOBAL_PROJECT_ID
 from xiagent.users.service import SqliteUserService
 
 
@@ -99,8 +100,8 @@ async def test_import_file_asset_deduplicates_by_hash(test_settings) -> None:
 
     first = await assets.import_file_asset(
         user_id=user.user_id,
-        scope="global",
-        project_id=None,
+        scope="project",
+        project_id=GLOBAL_PROJECT_ID,
         file_name="role.txt",
         content_type="text/plain",
         content=b"shared asset",
@@ -108,8 +109,8 @@ async def test_import_file_asset_deduplicates_by_hash(test_settings) -> None:
     )
     second = await assets.import_file_asset(
         user_id=user.user_id,
-        scope="global",
-        project_id=None,
+        scope="project",
+        project_id=GLOBAL_PROJECT_ID,
         file_name="role-copy.txt",
         content_type="text/plain",
         content=b"shared asset",
@@ -118,6 +119,100 @@ async def test_import_file_asset_deduplicates_by_hash(test_settings) -> None:
 
     assert first.content_hash == second.content_hash
     assert first.storage_uri == second.storage_uri
+
+
+async def test_copy_asset_to_project_preserves_content_and_tags(test_settings) -> None:
+    await migrate(test_settings.database_path)
+    users = SqliteUserService(test_settings.database_path)
+    user = await users.create_user(username="alice", password="secret-123")
+    source_project = await users.create_project(owner_user_id=user.user_id, name="source")
+    target_project = await users.create_project(owner_user_id=user.user_id, name="target")
+    assets = SqliteAssetService(
+        database_path=test_settings.database_path,
+        storage_dir=test_settings.asset_storage_dir,
+        user_service=users,
+    )
+    source = await assets.import_file_asset(
+        user_id=user.user_id,
+        scope="project",
+        project_id=source_project.project_id,
+        file_name="角色_林冲.png",
+        content_type="image/png",
+        content=PNG_1X1,
+        metadata={"public_url": "https://cdn.example.test/source.png", "object_storage": {"key": "source.png"}},
+    )
+    tag = await assets.create_tag(
+        user_id=user.user_id,
+        scope="project",
+        project_id=source_project.project_id,
+        name="角色",
+    )
+    await assets.attach_asset_tag(user_id=user.user_id, asset_id=source.asset_id, tag_id=tag.tag_id)
+
+    copied = await assets.copy_asset(
+        user_id=user.user_id,
+        asset_id=source.asset_id,
+        source_project_id=source_project.project_id,
+        target_scope="project",
+        target_project_id=target_project.project_id,
+    )
+    copied_content = await assets.get_asset_content(
+        user_id=user.user_id,
+        asset_id=copied.asset_id,
+        project_id=target_project.project_id,
+    )
+    copied_tags = await assets.list_asset_tags(user_id=user.user_id, asset_id=copied.asset_id)
+
+    assert copied.project_id == target_project.project_id
+    assert copied_content.bytes_content == PNG_1X1
+    assert copied.metadata["copied_from_asset_id"] == source.asset_id
+    assert "public_url" not in copied.metadata
+    assert "object_storage" not in copied.metadata
+    assert [item.name for item in copied_tags] == ["角色"]
+
+
+async def test_move_asset_to_project_copies_then_soft_deletes_source(test_settings) -> None:
+    await migrate(test_settings.database_path)
+    users = SqliteUserService(test_settings.database_path)
+    user = await users.create_user(username="alice", password="secret-123")
+    source_project = await users.create_project(owner_user_id=user.user_id, name="source")
+    target_project = await users.create_project(owner_user_id=user.user_id, name="target")
+    assets = SqliteAssetService(
+        database_path=test_settings.database_path,
+        storage_dir=test_settings.asset_storage_dir,
+        user_service=users,
+    )
+    source = await assets.create_text_asset(
+        user_id=user.user_id,
+        scope="project",
+        project_id=source_project.project_id,
+        name="角色小传",
+        text="林冲，东京八十万禁军教头。",
+        metadata={"type": "character"},
+    )
+
+    moved = await assets.move_asset(
+        user_id=user.user_id,
+        asset_id=source.asset_id,
+        source_project_id=source_project.project_id,
+        target_scope="project",
+        target_project_id=target_project.project_id,
+    )
+    moved_content = await assets.get_asset_content(
+        user_id=user.user_id,
+        asset_id=moved.asset_id,
+        project_id=target_project.project_id,
+    )
+
+    assert moved.project_id == target_project.project_id
+    assert moved.text_content == "林冲，东京八十万禁军教头。"
+    assert moved_content.text_content == "林冲，东京八十万禁军教头。"
+    with pytest.raises(NotFoundError):
+        await assets.get_asset(
+            user_id=user.user_id,
+            asset_id=source.asset_id,
+            project_id=source_project.project_id,
+        )
 
 
 async def test_asset_names_are_unique_within_scope(test_settings) -> None:
@@ -302,6 +397,7 @@ async def test_migration_renames_existing_duplicate_live_asset_names(test_settin
 @pytest.mark.parametrize(
     ("scope", "project_id"),
     [
+        ("global", None),
         ("global", "project-123"),
         ("project", None),
     ],
@@ -370,16 +466,16 @@ async def test_get_asset_content_returns_text_and_file_content(test_settings) ->
 
     text_asset = await assets.create_text_asset(
         user_id=user.user_id,
-        scope="global",
-        project_id=None,
+        scope="project",
+        project_id=GLOBAL_PROJECT_ID,
         name="设定",
         text="文字内容",
         metadata={},
     )
     file_asset = await assets.import_file_asset(
         user_id=user.user_id,
-        scope="global",
-        project_id=None,
+        scope="project",
+        project_id=GLOBAL_PROJECT_ID,
         file_name="role.txt",
         content_type="text/plain",
         content=b"file content",
@@ -412,8 +508,8 @@ async def test_update_asset_renames_asset_and_searches_by_new_name(test_settings
     )
     asset = await assets.import_file_asset(
         user_id=user.user_id,
-        scope="global",
-        project_id=None,
+        scope="project",
+        project_id=GLOBAL_PROJECT_ID,
         file_name="source-file.png",
         content_type="image/png",
         content=b"fake image",
@@ -428,8 +524,8 @@ async def test_update_asset_renames_asset_and_searches_by_new_name(test_settings
     )
     search_result = await assets.search_assets(
         user_id=user.user_id,
-        scope="global",
-        project_id=None,
+        scope="project",
+        project_id=GLOBAL_PROJECT_ID,
         keyword="主角",
     )
 
@@ -440,8 +536,8 @@ async def test_update_asset_renames_asset_and_searches_by_new_name(test_settings
 
     metadata_search_result = await assets.search_assets(
         user_id=user.user_id,
-        scope="global",
-        project_id=None,
+        scope="project",
+        project_id=GLOBAL_PROJECT_ID,
         keyword="梁山",
     )
 
@@ -468,8 +564,8 @@ async def test_file_asset_content_can_be_replaced_without_changing_identity(test
     )
     asset = await assets.import_file_asset(
         user_id=user.user_id,
-        scope="global",
-        project_id=None,
+        scope="project",
+        project_id=GLOBAL_PROJECT_ID,
         file_name="source-file.png",
         content_type="image/png",
         content=b"old image",
@@ -505,8 +601,8 @@ async def test_image_thumbnail_is_generated_cached_and_invalidated(test_settings
     )
     asset = await assets.import_file_asset(
         user_id=user.user_id,
-        scope="global",
-        project_id=None,
+        scope="project",
+        project_id=GLOBAL_PROJECT_ID,
         file_name="source.png",
         content_type="image/png",
         content=PNG_1X1,
@@ -966,8 +1062,8 @@ async def test_search_assets_by_tag_names_matches_same_name_tags_across_scopes(t
         storage_dir=test_settings.asset_storage_dir,
         user_service=users,
     )
-    global_type = await assets.create_tag(user_id=user.user_id, scope="global", project_id=None, name="角色")
-    global_name = await assets.create_tag(user_id=user.user_id, scope="global", project_id=None, name="林冲")
+    global_type = await assets.create_tag(user_id=user.user_id, scope="project", project_id=GLOBAL_PROJECT_ID, name="角色")
+    global_name = await assets.create_tag(user_id=user.user_id, scope="project", project_id=GLOBAL_PROJECT_ID, name="林冲")
     project_type = await assets.create_tag(
         user_id=user.user_id,
         scope="project",
@@ -982,8 +1078,8 @@ async def test_search_assets_by_tag_names_matches_same_name_tags_across_scopes(t
     )
     global_asset = await assets.create_text_asset(
         user_id=user.user_id,
-        scope="global",
-        project_id=None,
+        scope="project",
+        project_id=GLOBAL_PROJECT_ID,
         name="角色_林冲_全局",
         text="全局林冲",
         metadata={},
@@ -1156,8 +1252,8 @@ async def test_create_text_asset_preserves_original_text_and_size(test_settings)
 
     asset = await assets.create_text_asset(
         user_id=user.user_id,
-        scope="global",
-        project_id=None,
+        scope="project",
+        project_id=GLOBAL_PROJECT_ID,
         name="notes",
         text=original_text,
         metadata={},
@@ -1188,11 +1284,11 @@ async def test_import_file_asset_cleans_up_storage_when_db_insert_fails(test_set
         user_service=users,
     )
 
-    with pytest.raises((aiosqlite.IntegrityError, sqlite3.IntegrityError)):
+    with pytest.raises(NotFoundError):
         await assets.import_file_asset(
             user_id="user_missing",
-            scope="global",
-            project_id=None,
+            scope="project",
+            project_id=GLOBAL_PROJECT_ID,
             file_name="orphan.txt",
             content_type="text/plain",
             content=b"orphan content",
@@ -1218,19 +1314,19 @@ async def test_import_file_asset_failure_keeps_existing_deduplicated_file(test_s
     )
     existing = await assets.import_file_asset(
         user_id=user.user_id,
-        scope="global",
-        project_id=None,
+        scope="project",
+        project_id=GLOBAL_PROJECT_ID,
         file_name="existing.txt",
         content_type="text/plain",
         content=b"shared content",
         metadata={},
     )
 
-    with pytest.raises((aiosqlite.IntegrityError, sqlite3.IntegrityError)):
+    with pytest.raises(NotFoundError):
         await assets.import_file_asset(
             user_id="user_missing",
-            scope="global",
-            project_id=None,
+            scope="project",
+            project_id=GLOBAL_PROJECT_ID,
             file_name="failed.txt",
             content_type="text/plain",
             content=b"shared content",
@@ -1252,8 +1348,8 @@ async def test_delete_asset_soft_deletes_and_search_excludes_it(test_settings) -
     )
     asset = await assets.create_text_asset(
         user_id=user.user_id,
-        scope="global",
-        project_id=None,
+        scope="project",
+        project_id=GLOBAL_PROJECT_ID,
         name="可删除素材",
         text="会被软删除的内容",
         metadata={},
@@ -1262,8 +1358,8 @@ async def test_delete_asset_soft_deletes_and_search_excludes_it(test_settings) -
     await assets.delete_asset(user_id=user.user_id, asset_id=asset.asset_id)
     result = await assets.search_assets(
         user_id=user.user_id,
-        scope="global",
-        project_id=None,
+        scope="project",
+        project_id=GLOBAL_PROJECT_ID,
         keyword="软删除",
     )
 
@@ -1271,7 +1367,7 @@ async def test_delete_asset_soft_deletes_and_search_excludes_it(test_settings) -
     assert result.total == 0
 
 
-async def test_combined_search_returns_global_and_current_project_only(test_settings) -> None:
+async def test_combined_search_returns_global_project_and_current_project(test_settings) -> None:
     await migrate(test_settings.database_path)
     users = SqliteUserService(test_settings.database_path)
     user = await users.create_user(username="alice", password="secret-123")
@@ -1284,10 +1380,18 @@ async def test_combined_search_returns_global_and_current_project_only(test_sett
     )
     global_asset = await assets.create_text_asset(
         user_id=user.user_id,
-        scope="global",
-        project_id=None,
+        scope="project",
+        project_id=GLOBAL_PROJECT_ID,
         name="通用调查记者素材",
         text="调查记者通用模板",
+        metadata={},
+    )
+    global_project_asset = await assets.create_text_asset(
+        user_id=user.user_id,
+        scope="project",
+        project_id=GLOBAL_PROJECT_ID,
+        name="全局项目调查记者素材",
+        text="调查记者属于全局项目",
         metadata={},
     )
     project_asset = await assets.create_text_asset(
@@ -1316,9 +1420,10 @@ async def test_combined_search_returns_global_and_current_project_only(test_sett
 
     assert {item.asset_id for item in result.items} == {
         global_asset.asset_id,
+        global_project_asset.asset_id,
         project_asset.asset_id,
     }
-    assert result.total == 2
+    assert result.total == 3
 
 
 async def test_import_image_asset_publishes_public_url_and_indexes_tags(test_settings) -> None:
@@ -1487,8 +1592,8 @@ async def test_import_file_asset_cleans_local_file_when_publish_fails(test_setti
     with pytest.raises(RuntimeError, match="upload failed"):
         await assets.import_file_asset(
             user_id=user.user_id,
-            scope="global",
-            project_id=None,
+            scope="project",
+        project_id=GLOBAL_PROJECT_ID,
             file_name="hero.png",
             content_type="image/png",
             content=b"fake image",
@@ -1498,3 +1603,5 @@ async def test_import_file_asset_cleans_local_file_when_publish_fails(test_setti
 
     stored_files = [item for item in test_settings.asset_storage_dir.rglob("*") if item.is_file()]
     assert stored_files == []
+
+

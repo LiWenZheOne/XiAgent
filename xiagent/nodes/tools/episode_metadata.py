@@ -29,7 +29,7 @@ class EpisodeMetadataFinalizeNode(BaseNode):
                     "prompt_results": {"type": "array", "items": {"type": "object"}},
                     "generation_summary": {"type": "object"},
                     "decision": {"type": "string"},
-                    "scope": {"type": "string", "enum": ["global", "project"]},
+                    "scope": {"type": "string", "enum": ["project"]},
                 },
                 "additionalProperties": True,
             },
@@ -107,7 +107,7 @@ async def _save_episode_metadata_asset(
     text: str,
     metadata: dict[str, Any],
 ) -> Any:
-    project_id = ctx.project_id if scope == "project" else None
+    project_id = ctx.project_id
     existing = await _find_episode_metadata_asset(ctx, scope=scope, project_id=project_id, episode_name=episode_name)
     if existing is not None:
         return await ctx.asset_service.update_text_asset(
@@ -326,10 +326,10 @@ def _object_list(value: Any) -> list[dict[str, Any]]:
 def _scope(value: Any) -> str:
     if value is None:
         return "project"
-    if value in {"global", "project"}:
+    if value == "project":
         return str(value)
     raise ValidationError(
         code="episode_metadata_scope_invalid",
-        message="scope must be global or project",
+        message="scope must be project",
         details={"scope": value},
     )

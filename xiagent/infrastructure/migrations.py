@@ -175,11 +175,12 @@ async def migrate(path: Path) -> None:
             column_name="asset_refs_json",
             definition="asset_refs_json text not null default '[]'",
         )
+        await _ensure_global_project(db)
+        await _normalize_global_asset_scope(db)
         await _ensure_unique_live_asset_names(db)
         await _ensure_live_asset_name_unique_index(db)
         await _ensure_unique_asset_tag_names(db)
         await _ensure_asset_tag_name_unique_index(db)
-        await _ensure_global_project(db)
 
 
 async def _ensure_column(
@@ -301,6 +302,131 @@ async def _ensure_live_asset_name_unique_index(db) -> None:
     )
 
 
+async def _normalize_global_asset_scope(db) -> None:
+    now = datetime.now(UTC).isoformat()
+    await _deduplicate_global_assets_for_project_scope(db, now=now)
+    await _merge_global_tags_into_global_project(db)
+    await db.execute(
+        """
+        update asset_collections
+        set scope = 'project', project_id = ?, updated_at = ?
+        where scope = 'global'
+        """,
+        (GLOBAL_PROJECT_ID, now),
+    )
+    await db.execute(
+        """
+        update assets
+        set scope = 'project', project_id = ?, updated_at = ?
+        where scope = 'global'
+        """,
+        (GLOBAL_PROJECT_ID, now),
+    )
+    await db.execute(
+        """
+        update asset_index_entries
+        set scope = 'project', project_id = ?, updated_at = ?
+        where scope = 'global'
+        """,
+        (GLOBAL_PROJECT_ID, now),
+    )
+    await db.execute(
+        """
+        update asset_search_fts
+        set scope = 'project', project_id = ?
+        where scope = 'global'
+        """,
+        (GLOBAL_PROJECT_ID,),
+    )
+
+
+async def _deduplicate_global_assets_for_project_scope(db, *, now: str) -> None:
+    cursor = await db.execute(
+        """
+        select asset_id, name, text_content, metadata_json
+        from assets
+        where scope = 'global' and deleted_at is null
+        order by created_at asc, asset_id asc
+        """
+    )
+    try:
+        rows = await cursor.fetchall()
+    finally:
+        await cursor.close()
+
+    reserved_names: set[str] = set()
+    for row in rows:
+        name = str(row["name"])
+        if name in reserved_names or await _asset_name_exists(
+            db,
+            scope="project",
+            project_id=GLOBAL_PROJECT_ID,
+            name=name,
+        ):
+            new_name = await _deduplicated_asset_name(
+                db,
+                scope="project",
+                project_id=GLOBAL_PROJECT_ID,
+                base_name=name,
+                asset_id=str(row["asset_id"]),
+            )
+            search_text = f"{new_name}\n{row['text_content'] or ''}\n{row['metadata_json']}"
+            await db.execute(
+                "update assets set name = ?, updated_at = ? where asset_id = ?",
+                (new_name, now, row["asset_id"]),
+            )
+            await db.execute(
+                "update asset_search_fts set search_text = ? where asset_id = ?",
+                (search_text, row["asset_id"]),
+            )
+            await db.execute(
+                "update asset_index_entries set search_text = ?, updated_at = ? where asset_id = ?",
+                (new_name, now, row["asset_id"]),
+            )
+            reserved_names.add(new_name)
+        else:
+            reserved_names.add(name)
+
+
+async def _merge_global_tags_into_global_project(db) -> None:
+    cursor = await db.execute(
+        """
+        select tag_id, name
+        from asset_tags
+        where scope = 'global'
+        order by created_at asc, tag_id asc
+        """
+    )
+    try:
+        rows = await cursor.fetchall()
+    finally:
+        await cursor.close()
+
+    now = datetime.now(UTC).isoformat()
+    for row in rows:
+        target_id = await _asset_tag_id_by_name(
+            db,
+            scope="project",
+            project_id=GLOBAL_PROJECT_ID,
+            name=str(row["name"]),
+        )
+        if target_id is not None:
+            await db.execute(
+                "update asset_index_entries set tag_id = ?, updated_at = ? where tag_id = ?",
+                (target_id, now, row["tag_id"]),
+            )
+            await db.execute("delete from asset_tags where tag_id = ?", (row["tag_id"],))
+            continue
+        await db.execute(
+            """
+            update asset_tags
+            set scope = 'project', project_id = ?, updated_at = ?
+            where tag_id = ?
+            """,
+            (GLOBAL_PROJECT_ID, now, row["tag_id"]),
+        )
+
+
 async def _ensure_unique_asset_tag_names(db) -> None:
     duplicate_cursor = await db.execute(
         """
@@ -382,6 +508,29 @@ async def _asset_tag_name_exists(
         return await cursor.fetchone() is not None
     finally:
         await cursor.close()
+
+
+async def _asset_tag_id_by_name(
+    db,
+    *,
+    scope: str,
+    project_id: str | None,
+    name: str,
+) -> str | None:
+    cursor = await db.execute(
+        """
+        select tag_id
+        from asset_tags
+        where scope = ? and project_id is ? and name = ?
+        limit 1
+        """,
+        (scope, project_id, name),
+    )
+    try:
+        row = await cursor.fetchone()
+    finally:
+        await cursor.close()
+    return str(row["tag_id"]) if row is not None else None
 
 
 async def _ensure_asset_tag_name_unique_index(db) -> None:

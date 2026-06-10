@@ -1,4 +1,4 @@
-export type AssetScope = "global" | "project" | "combined";
+export type AssetScope = "project" | "combined";
 
 export interface UserRecord {
   user_id: string;

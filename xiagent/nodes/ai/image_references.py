@@ -15,6 +15,7 @@ def image_ref_schema() -> dict[str, Any]:
         "properties": {
             "kind": {"type": "string", "enum": ["asset", "data_uri"]},
             "asset_id": {"type": "string", "minLength": 1},
+            "project_id": {"type": "string", "minLength": 1},
             "data": {"type": "string", "minLength": 1},
             "role": {"type": "string", "minLength": 1},
         },
@@ -105,9 +106,11 @@ async def _resolve_asset_ref(
             code="image_ref_invalid",
             message="Asset image reference requires asset_id",
         )
+    reference_project_id = image_ref.get("project_id")
+    project_id_for_read = reference_project_id.strip() if isinstance(reference_project_id, str) and reference_project_id.strip() else project_id
     return await _asset_id_to_data_uri(
         user_id=user_id,
-        project_id=project_id,
+        project_id=project_id_for_read,
         asset_service=asset_service,
         asset_id=asset_id.strip(),
     )

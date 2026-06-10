@@ -1076,7 +1076,7 @@ scope="global": project_id must be None
 scope="project": project_id must be provided and UserService.ensure_project_access is called
 create_text_asset: insert asset and FTS row
 import_file_asset: write content through LocalAssetStorage, insert asset and FTS row
-search_assets: support keyword, scope=global/project/combined, project_id, asset_type
+search_assets: support keyword, scope=project/combined, project_id, asset_type；共享资产统一使用 project_id=global 的项目资产，不再使用 asset scope=global
 delete_asset: soft delete by setting deleted_at
 ```
 

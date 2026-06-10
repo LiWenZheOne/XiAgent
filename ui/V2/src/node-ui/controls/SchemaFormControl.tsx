@@ -11,6 +11,7 @@ import { EpisodeContextControl } from "./EpisodeContextControl";
 interface ImageRef {
   kind: "asset" | "data_uri";
   asset_id?: string;
+  project_id?: string;
   data?: string;
   role?: string;
 }
@@ -261,7 +262,7 @@ function AssetImagePickerField({
   const [open, setOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [previewUrl, setPreviewUrl] = useState("");
-  const selectedAssetIdsKey = selected.filter((ref) => ref.kind === "asset" && ref.asset_id).map((ref) => ref.asset_id).join("|");
+  const selectedAssetIdsKey = selected.filter((ref) => ref.kind === "asset" && ref.asset_id).map(imageRefKey).join("|");
 
   useEffect(() => {
     let active = true;
@@ -276,7 +277,7 @@ function AssetImagePickerField({
     Promise.all(missingAssetRefs.map(async (ref) => {
       const key = imageRefKey(ref);
       try {
-        const blob = await downloadAssetThumbnail(ref.asset_id as string, projectId, 256);
+        const blob = await downloadAssetThumbnail(ref.asset_id as string, ref.project_id || projectId, 256);
         if (!blob.type.startsWith("image/")) return null;
         const url = URL.createObjectURL(blob);
         objectUrls.push(url);
@@ -386,8 +387,9 @@ function AssetImagePickerDialog({
   const projectOptions = useMemo(() => assetProjectOptions(projects), [projects]);
   const selectedProject = projectOptions.find((item) => item.project_id === selectedProjectId);
   const selectedProjectName = selectedProject?.name?.trim() || (selectedProjectId === "global" ? "全局项目" : "项目资产");
-  const libraryScope = assetLibraryScope(selectedProjectId);
-  const libraryProjectId = libraryScope === "combined" ? selectedProjectId : undefined;
+  const librarySearchScope = assetSearchScopeForProject(selectedProjectId);
+  const libraryScope = librarySearchScope.scope;
+  const libraryProjectId = librarySearchScope.project_id;
   const uploadAssetScope = assetScope(selectedProjectId, uploadScope);
 
   useEffect(() => {
@@ -486,15 +488,19 @@ function AssetImagePickerDialog({
 
   async function uploadSelectedFile() {
     if (!file) return;
+    if (!selectedProjectId) {
+      setMessage("缺少任务项目上下文，不能上传资产。");
+      return;
+    }
     const uploaded = await uploadAsset({
       file,
       scope: uploadAssetScope,
-      project_id: uploadAssetScope === "project" ? selectedProjectId : undefined,
+      project_id: selectedProjectId,
       publish: true,
       collection_ids: collectionId ? [collectionId] : undefined,
       tag_ids: tagIds,
     });
-    const ref: ImageRef = { kind: "asset", asset_id: uploaded.asset_id, role: "reference" };
+    const ref: ImageRef = { kind: "asset", asset_id: uploaded.asset_id, project_id: selectedProjectId, role: "reference" };
     const key = imageRefKey(ref);
     setDraftPreviews((current) => ({ ...current, [key]: { label: uploaded.name, url: uploaded.metadata.public_url } }));
     setDraft((current) => multiple ? [...current.filter((item) => imageRefKey(item) !== key), ref] : [ref]);
@@ -644,6 +650,7 @@ function AssetPickerField({
         previewControlId={readText(option("preview_control_id"))}
         projectId={projectId}
         readonly={readonly}
+        searchScopeMode={assetPickerSearchScopeMode(option("search_scope"))}
         value={value}
         onChange={onChange}
       />
@@ -724,6 +731,7 @@ function AssetPickerDropdownField({
   previewControlId,
   projectId,
   readonly,
+  searchScopeMode,
   value,
   onChange,
 }: {
@@ -734,6 +742,7 @@ function AssetPickerDropdownField({
   previewControlId?: string;
   projectId?: string;
   readonly: boolean;
+  searchScopeMode: "combined" | "project";
   value: FormValue | undefined;
   onChange: (value: FormValue) => void;
 }) {
@@ -745,7 +754,7 @@ function AssetPickerDropdownField({
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const selectedAssetId = typeof value === "string" ? value : "";
-  const searchScope = assetSearchScopeForProject(projectId);
+  const searchScope = assetPickerSearchScope(projectId, searchScopeMode);
   const configuredTagNamesKey = stringArrayKey(filterTagNames);
   const configuredTagNames = useMemo(() => stringArrayFromKey(configuredTagNamesKey), [configuredTagNamesKey]);
   const selectedAsset = assets.find((asset) => asset.asset_id === selectedAssetId);
@@ -929,8 +938,9 @@ function AssetPickerDialog({
   const projectOptions = useMemo(() => assetProjectOptions(projects), [projects]);
   const selectedProject = projectOptions.find((item) => item.project_id === selectedProjectId);
   const selectedProjectName = selectedProject?.name?.trim() || (selectedProjectId === "global" ? "全局项目" : "项目资产");
-  const libraryScope = assetLibraryScope(selectedProjectId);
-  const libraryProjectId = libraryScope === "combined" ? selectedProjectId : undefined;
+  const librarySearchScope = assetSearchScopeForProject(selectedProjectId);
+  const libraryScope = librarySearchScope.scope;
+  const libraryProjectId = librarySearchScope.project_id;
   const configuredTagNamesKey = stringArrayKey(filterTagNames);
   const configuredTagNames = useMemo(() => stringArrayFromKey(configuredTagNamesKey), [configuredTagNamesKey]);
   const tagIdsKey = stringArrayKey(tagIds);
@@ -1204,7 +1214,13 @@ function isImageRef(value: unknown): value is ImageRef {
 }
 
 function imageRefFromAsset(asset: AssetRecord): ImageRef {
-  return { kind: "asset", asset_id: asset.asset_id, role: "reference" };
+  const projectId = asset.scope === "project" ? asset.project_id : undefined;
+  return {
+    kind: "asset",
+    asset_id: asset.asset_id,
+    ...(projectId ? { project_id: projectId } : {}),
+    role: "reference",
+  };
 }
 
 function imageRefPreviewFromAsset(asset: AssetRecord): ImageRefPreview {
@@ -1221,7 +1237,7 @@ function assetPickerSubtitle(asset: AssetRecord): string {
 }
 
 function imageRefKey(ref: ImageRef): string {
-  if (ref.kind === "asset") return `asset:${ref.asset_id ?? ""}`;
+  if (ref.kind === "asset") return `asset:${ref.project_id ?? ""}:${ref.asset_id ?? ""}`;
   return `data_uri:${ref.data?.slice(0, 64) ?? ""}`;
 }
 
@@ -1245,12 +1261,7 @@ function splitLines(value: string): string[] {
 }
 
 function assetScope(projectId: string | undefined, uploadScope: string): Exclude<AssetScope, "combined"> {
-  if (uploadScope === "global" || !projectId || projectId === "global") return "global";
   return "project";
-}
-
-function assetLibraryScope(projectId: string | undefined): AssetScope {
-  return assetSearchScopeForProject(projectId).scope;
 }
 
 function initialAssetLibraryProjectId(projectId: string | undefined): string {
@@ -1275,6 +1286,17 @@ function stringArrayOption(value: unknown): string[] {
   if (Array.isArray(value)) return value.map((item) => String(item).trim()).filter(Boolean);
   if (typeof value === "string" && value.trim()) return [value.trim()];
   return [];
+}
+
+function assetPickerSearchScopeMode(value: unknown): "combined" | "project" {
+  return value === "project" ? "project" : "combined";
+}
+
+function assetPickerSearchScope(projectId: string | undefined, mode: "combined" | "project") {
+  if (mode === "project") {
+    return { scope: "project" as const, project_id: projectId || "global" };
+  }
+  return assetSearchScopeForProject(projectId);
 }
 
 const STRING_ARRAY_KEY_SEPARATOR = "\u001f";
